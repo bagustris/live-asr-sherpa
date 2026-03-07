@@ -6,11 +6,11 @@ Usage:
     python3 main.py --wav path/to/audio.wav
 
     # Parakeet TDT (offline NeMo transducer):
-    python3 main.py --mic --model-type nemo_transducer
-    python3 main.py --wav audio.wav --model-type nemo_transducer
+    python3 main.py --mic --model-type offline-transducer
+    python3 main.py --wav audio.wav --model-type offline-transducer
 
     # Override model directory for a custom/new model:
-    python3 main.py --mic --model-dir models/my-new-model --model-type nemo_transducer
+    python3 main.py --mic --model-dir models/my-new-model --model-type offline-transducer
 
     Models are stored under  models/<model-name>/  at the project root:
       models/zipformer-en-2023/       (online, default)
@@ -46,8 +46,8 @@ def parse_args() -> argparse.Namespace:
         default=None,
         metavar="PATH",
         help=(
-            "Path to the model directory (default: models/zipformer-en-2023 for 'online', "
-            "models/parakeet-tdt-0.6b-v2 for 'nemo_transducer')"
+            "Path to the model directory (default: models/zipformer-en-2023 for 'online-transducer', "
+            "models/parakeet-tdt-0.6b-v2 for offline types)"
         ),
     )
     parser.add_argument("--sample-rate", type=int, default=16000, help="Audio sample rate (Hz)")
@@ -57,18 +57,29 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--threads", type=int, default=4, help="CPU thread count for ONNX runtime")
     parser.add_argument(
         "--model-type",
-        default="online",
-        choices=["online", "nemo_transducer"],
+        default="online-transducer",
+        choices=[
+            "online-transducer",
+            "online-paraformer",
+            "online-ctc",
+            "offline-transducer",
+            "offline-paraformer",
+            "offline-ctc",
+            "whisper",
+            "sense-voice",
+        ],
         help=(
-            "Model architecture: 'online' for streaming transducers (e.g. Zipformer), "
-            "'nemo_transducer' for offline NeMo transducers (e.g. Parakeet TDT)"
+            "Model architecture type (see https://k2-fsa.github.io/sherpa/onnx/pretrained_models/). "
+            "Streaming: online-transducer, online-paraformer, online-ctc. "
+            "Offline (requires VAD for live use): offline-transducer (e.g. Parakeet), "
+            "offline-paraformer, offline-ctc, whisper, sense-voice."
         ),
     )
     parser.add_argument(
         "--vad-model",
         default="",
         metavar="PATH",
-        help="Path to silero_vad.onnx; required when --model-type=nemo_transducer",
+        help="Path to silero_vad.onnx; auto-downloaded when needed for offline model types",
     )
     return parser.parse_args()
 
@@ -116,7 +127,7 @@ def _download_model(model_dir: str, model_type: str) -> None:
     """Download and extract the default model for the given model_type."""
     model_dir = Path(model_dir)
 
-    if model_type == "nemo_transducer":
+    if not model_type.startswith("online"):
         url = _PARAKEET_MODEL_URL
         archive_name = _PARAKEET_MODEL_ARCHIVE
         extracted_name = _PARAKEET_MODEL_EXTRACTED
@@ -154,7 +165,7 @@ def _validate_model(model_dir: str, model_type: str) -> None:
 
 
 def _validate_vad(vad_model: str, model_type: str, project_dir: Path) -> str:
-    if model_type != "nemo_transducer":
+    if model_type.startswith("online"):
         return vad_model
     if not vad_model:
         vad_path = project_dir / "models" / "silero_vad.onnx"
@@ -209,7 +220,7 @@ def main() -> None:
     if args.model_dir is None:
         raw_model_dir = (
             f"models/{_PARAKEET_TARGET}"
-            if args.model_type == "nemo_transducer"
+            if not args.model_type.startswith("online")
             else f"models/{_MODEL_TARGET}"
         )
     else:
@@ -230,19 +241,21 @@ def main() -> None:
     _validate_model(cfg.model_dir, cfg.model_type)
     cfg.vad_model = _validate_vad(cfg.vad_model, cfg.model_type, project_dir)
 
+
     if args.wav:
         _validate_wav(args.wav, cfg.sample_rate)
     else:
         _validate_mic()
 
-    print(f"[info] Loading model '{cfg.model_type}' ({cfg.num_threads} threads)…")
+    model_name = Path(cfg.model_dir).name
+    print(f"[info] Loading model '{model_name}' ({cfg.model_type}, {cfg.num_threads} threads)…")
 
     if args.wav:
         audio = read_wav(args.wav, target_sr=cfg.sample_rate, chunk_size=cfg.chunk_size)
     else:
         audio = mic_stream(sample_rate=cfg.sample_rate, chunk_size=cfg.chunk_size)
 
-    if cfg.model_type == "nemo_transducer":
+    if not cfg.model_type.startswith("online"):
         from asr_engine import build_offline_recognizer, build_vad
         from streaming import run_offline_vad_streaming
 
