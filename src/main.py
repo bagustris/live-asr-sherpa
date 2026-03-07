@@ -1,12 +1,21 @@
 """Streaming ASR — entry point.
 
 Usage:
+    # Zipformer (streaming, default):
     python3 main.py --mic
-    python3 main.py --wav path/to/audio.wav [--model-dir model] [--threads 4]
+    python3 main.py --wav path/to/audio.wav
 
     # Parakeet TDT (offline NeMo transducer):
-    python3 main.py --mic --model-dir /path/to/parakeet --model-type nemo_transducer --vad-model silero_vad.onnx
-    python3 main.py --wav audio.wav --model-dir /path/to/parakeet --model-type nemo_transducer --vad-model silero_vad.onnx
+    python3 main.py --mic --model-type nemo_transducer
+    python3 main.py --wav audio.wav --model-type nemo_transducer
+
+    # Override model directory for a custom/new model:
+    python3 main.py --mic --model-dir models/my-new-model --model-type nemo_transducer
+
+    Models are stored under  models/<model-name>/  at the project root:
+      models/zipformer-en-2023/       (online, default)
+      models/parakeet-tdt-0.6b-v2/   (nemo_transducer)
+      models/silero_vad.onnx          (VAD, shared)
 """
 
 import argparse
@@ -32,7 +41,15 @@ def parse_args() -> argparse.Namespace:
     mode.add_argument("--mic", action="store_true", help="Stream from microphone")
     mode.add_argument("--wav", metavar="PATH", help="Transcribe a WAV file")
 
-    parser.add_argument("--model-dir", default="model", help="Sherpa-ONNX model directory")
+    parser.add_argument(
+        "--model-dir",
+        default=None,
+        metavar="PATH",
+        help=(
+            "Path to the model directory (default: models/zipformer-en-2023 for 'online', "
+            "models/parakeet-tdt-0.6b-v2 for 'nemo_transducer')"
+        ),
+    )
     parser.add_argument("--sample-rate", type=int, default=16000, help="Audio sample rate (Hz)")
     parser.add_argument(
         "--chunk-size", type=float, default=0.16, help="Chunk size in seconds (0.1–0.2 recommended)"
@@ -62,6 +79,7 @@ _MODEL_URL = (
 )
 _MODEL_ARCHIVE = "sherpa-onnx-streaming-zipformer-en-2023-06-26.tar.bz2"
 _MODEL_EXTRACTED = "sherpa-onnx-streaming-zipformer-en-2023-06-26"
+_MODEL_TARGET = "zipformer-en-2023"
 
 _PARAKEET_MODEL_URL = (
     "https://github.com/k2-fsa/sherpa-onnx/releases/download/"
@@ -69,6 +87,7 @@ _PARAKEET_MODEL_URL = (
 )
 _PARAKEET_MODEL_ARCHIVE = "sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-fp16.tar.bz2"
 _PARAKEET_MODEL_EXTRACTED = "sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-fp16"
+_PARAKEET_TARGET = "parakeet-tdt-0.6b-v2"
 
 _VAD_URL = (
     "https://github.com/k2-fsa/sherpa-onnx/releases/download/"
@@ -106,18 +125,21 @@ def _download_model(model_dir: str, model_type: str) -> None:
         archive_name = _MODEL_ARCHIVE
         extracted_name = _MODEL_EXTRACTED
 
-    archive = model_dir.parent / archive_name
+    # Download into models/ alongside the target directory
+    models_dir = model_dir.parent
+    models_dir.mkdir(parents=True, exist_ok=True)
+    archive = models_dir / archive_name
     print(f"[info] Model not found.")
     _download_file(url, archive)
 
     print("[info] Extracting…")
     try:
         with tarfile.open(archive, "r:bz2") as tf:
-            tf.extractall(model_dir.parent, filter="data")
+            tf.extractall(models_dir, filter="data")
     except Exception as exc:  # noqa: BLE001
         sys.exit(f"[error] Extraction failed: {exc}")
 
-    extracted = model_dir.parent / extracted_name
+    extracted = models_dir / extracted_name
     if not extracted.is_dir():
         sys.exit(f"[error] Expected extracted directory '{extracted_name}' not found.")
 
@@ -131,12 +153,13 @@ def _validate_model(model_dir: str, model_type: str) -> None:
         _download_model(model_dir, model_type)
 
 
-def _validate_vad(vad_model: str, model_type: str, script_dir: Path) -> str:
+def _validate_vad(vad_model: str, model_type: str, project_dir: Path) -> str:
     if model_type != "nemo_transducer":
         return vad_model
     if not vad_model:
-        vad_path = script_dir / "silero_vad.onnx"
+        vad_path = project_dir / "models" / "silero_vad.onnx"
         if not vad_path.exists():
+            vad_path.parent.mkdir(parents=True, exist_ok=True)
             print("[info] VAD model not found, downloading silero_vad.onnx…")
             _download_file(_VAD_URL, vad_path)
         return str(vad_path)
@@ -180,16 +203,20 @@ def _validate_mic() -> None:
 def main() -> None:
     args = parse_args()
 
-    # Resolve model_dir relative to the script's directory so the model is
-    # found regardless of the working directory the user invokes from.
-    script_dir = Path(__file__).resolve().parent
-    # Use a type-specific default dir when the user didn't pass --model-dir explicitly
-    raw_model_dir = args.model_dir
-    if raw_model_dir == "model" and args.model_type == "nemo_transducer":
-        raw_model_dir = "model-parakeet"
+    # Resolve paths relative to the project root (one level above src/).
+    project_dir = Path(__file__).resolve().parent.parent
+    # Use a type-specific default dir when the user didn't pass --model-dir explicitly.
+    if args.model_dir is None:
+        raw_model_dir = (
+            f"models/{_PARAKEET_TARGET}"
+            if args.model_type == "nemo_transducer"
+            else f"models/{_MODEL_TARGET}"
+        )
+    else:
+        raw_model_dir = args.model_dir
     model_dir = Path(raw_model_dir)
     if not model_dir.is_absolute():
-        model_dir = script_dir / model_dir
+        model_dir = project_dir / model_dir
 
     cfg = Config(
         model_dir=str(model_dir),
@@ -201,7 +228,7 @@ def main() -> None:
     )
 
     _validate_model(cfg.model_dir, cfg.model_type)
-    cfg.vad_model = _validate_vad(cfg.vad_model, cfg.model_type, script_dir)
+    cfg.vad_model = _validate_vad(cfg.vad_model, cfg.model_type, project_dir)
 
     if args.wav:
         _validate_wav(args.wav, cfg.sample_rate)

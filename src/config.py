@@ -3,7 +3,7 @@ from dataclasses import dataclass
 
 @dataclass
 class Config:
-    model_dir: str = "model"
+    model_dir: str = "models/zipformer-en-2023"
     sample_rate: int = 16000
     chunk_size: float = 0.16   # seconds (~2560 samples at 16 kHz)
     num_threads: int = 4
@@ -12,3 +12,6 @@ class Config:
     model_type: str = "nemo_transducer"
     # Path to silero_vad.onnx; required when model_type != "online"
     vad_model: str = ""
+    vad_threshold: float = 0.5
+    vad_min_silence_duration: float = 0.5
+    vad_min_speech_duration: float = 0.25
