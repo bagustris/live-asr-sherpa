@@ -1,4 +1,4 @@
-# asr-so
+# Live ASR with Sherpa ONNX 
 
 *Minimal, production-quality streaming speech recognition on CPU*
 
@@ -88,6 +88,8 @@ src/
 ## Model
 
 Uses [sherpa-onnx-streaming-zipformer-en-2023-06-26](https://github.com/k2-fsa/sherpa-onnx/releases/tag/asr-models) — a streaming transducer optimized for low-latency CPU inference with competitive word error rate for English.
+
+How to swap in the model:  
 
 Endpoint detection rules:
 

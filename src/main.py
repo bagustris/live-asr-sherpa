@@ -3,6 +3,10 @@
 Usage:
     python3 main.py --mic
     python3 main.py --wav path/to/audio.wav [--model-dir model] [--threads 4]
+
+    # Parakeet TDT (offline NeMo transducer):
+    python3 main.py --mic --model-dir /path/to/parakeet --model-type nemo_transducer --vad-model silero_vad.onnx
+    python3 main.py --wav audio.wav --model-dir /path/to/parakeet --model-type nemo_transducer --vad-model silero_vad.onnx
 """
 
 import argparse
@@ -34,6 +38,21 @@ def parse_args() -> argparse.Namespace:
         "--chunk-size", type=float, default=0.16, help="Chunk size in seconds (0.1–0.2 recommended)"
     )
     parser.add_argument("--threads", type=int, default=4, help="CPU thread count for ONNX runtime")
+    parser.add_argument(
+        "--model-type",
+        default="online",
+        choices=["online", "nemo_transducer"],
+        help=(
+            "Model architecture: 'online' for streaming transducers (e.g. Zipformer), "
+            "'nemo_transducer' for offline NeMo transducers (e.g. Parakeet TDT)"
+        ),
+    )
+    parser.add_argument(
+        "--vad-model",
+        default="",
+        metavar="PATH",
+        help="Path to silero_vad.onnx; required when --model-type=nemo_transducer",
+    )
     return parser.parse_args()
 
 
@@ -44,12 +63,21 @@ _MODEL_URL = (
 _MODEL_ARCHIVE = "sherpa-onnx-streaming-zipformer-en-2023-06-26.tar.bz2"
 _MODEL_EXTRACTED = "sherpa-onnx-streaming-zipformer-en-2023-06-26"
 
+_PARAKEET_MODEL_URL = (
+    "https://github.com/k2-fsa/sherpa-onnx/releases/download/"
+    "asr-models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-fp16.tar.bz2"
+)
+_PARAKEET_MODEL_ARCHIVE = "sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-fp16.tar.bz2"
+_PARAKEET_MODEL_EXTRACTED = "sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-fp16"
 
-def _download_model(model_dir: str) -> None:
-    """Download and extract the default Zipformer model, then rename to model_dir."""
-    model_dir = Path(model_dir)
-    archive = model_dir.parent / _MODEL_ARCHIVE
-    print(f"[info] Model not found. Downloading from:\n  {_MODEL_URL}")
+_VAD_URL = (
+    "https://github.com/k2-fsa/sherpa-onnx/releases/download/"
+    "asr-models/silero_vad.onnx"
+)
+
+
+def _download_file(url: str, dest: Path) -> None:
+    print(f"[info] Downloading from:\n  {url}")
     print("[info] This may take a few minutes…")
 
     def _progress(block: int, block_size: int, total: int) -> None:
@@ -59,29 +87,62 @@ def _download_model(model_dir: str) -> None:
             sys.stdout.flush()
 
     try:
-        urllib.request.urlretrieve(_MODEL_URL, archive, reporthook=_progress)
+        urllib.request.urlretrieve(url, dest, reporthook=_progress)
     except Exception as exc:  # noqa: BLE001
         sys.exit(f"\n[error] Download failed: {exc}")
+    print()
 
-    print("\n[info] Extracting…")
+
+def _download_model(model_dir: str, model_type: str) -> None:
+    """Download and extract the default model for the given model_type."""
+    model_dir = Path(model_dir)
+
+    if model_type == "nemo_transducer":
+        url = _PARAKEET_MODEL_URL
+        archive_name = _PARAKEET_MODEL_ARCHIVE
+        extracted_name = _PARAKEET_MODEL_EXTRACTED
+    else:
+        url = _MODEL_URL
+        archive_name = _MODEL_ARCHIVE
+        extracted_name = _MODEL_EXTRACTED
+
+    archive = model_dir.parent / archive_name
+    print(f"[info] Model not found.")
+    _download_file(url, archive)
+
+    print("[info] Extracting…")
     try:
         with tarfile.open(archive, "r:bz2") as tf:
             tf.extractall(model_dir.parent, filter="data")
     except Exception as exc:  # noqa: BLE001
         sys.exit(f"[error] Extraction failed: {exc}")
 
-    extracted = model_dir.parent / _MODEL_EXTRACTED
+    extracted = model_dir.parent / extracted_name
     if not extracted.is_dir():
-        sys.exit(f"[error] Expected extracted directory '{_MODEL_EXTRACTED}' not found.")
+        sys.exit(f"[error] Expected extracted directory '{extracted_name}' not found.")
 
     extracted.rename(model_dir)
     archive.unlink(missing_ok=True)
     print(f"[info] Model saved to '{model_dir}'.\n")
 
 
-def _validate_model(model_dir: str) -> None:
+def _validate_model(model_dir: str, model_type: str) -> None:
     if not Path(model_dir).is_dir():
-        _download_model(model_dir)
+        _download_model(model_dir, model_type)
+
+
+def _validate_vad(vad_model: str, model_type: str, script_dir: Path) -> str:
+    if model_type != "nemo_transducer":
+        return vad_model
+    if not vad_model:
+        vad_path = script_dir / "silero_vad.onnx"
+        if not vad_path.exists():
+            print("[info] VAD model not found, downloading silero_vad.onnx…")
+            _download_file(_VAD_URL, vad_path)
+        return str(vad_path)
+    if not Path(vad_model).exists():
+        sys.exit(f"[error] VAD model not found: {vad_model}")
+    return vad_model
 
 
 def _validate_wav(path: str, sample_rate: int) -> None:
@@ -122,7 +183,11 @@ def main() -> None:
     # Resolve model_dir relative to the script's directory so the model is
     # found regardless of the working directory the user invokes from.
     script_dir = Path(__file__).resolve().parent
-    model_dir = Path(args.model_dir)
+    # Use a type-specific default dir when the user didn't pass --model-dir explicitly
+    raw_model_dir = args.model_dir
+    if raw_model_dir == "model" and args.model_type == "nemo_transducer":
+        raw_model_dir = "model-parakeet"
+    model_dir = Path(raw_model_dir)
     if not model_dir.is_absolute():
         model_dir = script_dir / model_dir
 
@@ -131,28 +196,54 @@ def main() -> None:
         sample_rate=args.sample_rate,
         chunk_size=args.chunk_size,
         num_threads=args.threads,
+        model_type=args.model_type,
+        vad_model=args.vad_model,
     )
 
-    _validate_model(cfg.model_dir)
+    _validate_model(cfg.model_dir, cfg.model_type)
+    cfg.vad_model = _validate_vad(cfg.vad_model, cfg.model_type, script_dir)
 
     if args.wav:
         _validate_wav(args.wav, cfg.sample_rate)
     else:
         _validate_mic()
 
-    model_name = model_dir.name
-    print(f"[info] Loading model '{model_name}' ({cfg.num_threads} threads)…")
-    recognizer = build_recognizer(cfg)
-    print("[info] Model ready.\n")
+    print(f"[info] Loading model '{cfg.model_type}' ({cfg.num_threads} threads)…")
 
     if args.wav:
-        print(f"[info] Transcribing: {args.wav}\n")
         audio = read_wav(args.wav, target_sr=cfg.sample_rate, chunk_size=cfg.chunk_size)
     else:
-        print("[info] Listening on microphone — press Ctrl+C to stop.\n")
         audio = mic_stream(sample_rate=cfg.sample_rate, chunk_size=cfg.chunk_size)
 
-    run_streaming(recognizer, audio, sample_rate=cfg.sample_rate)
+    if cfg.model_type == "nemo_transducer":
+        from asr_engine import build_offline_recognizer, build_vad
+        from streaming import run_offline_vad_streaming
+
+        recognizer = build_offline_recognizer(cfg)
+        vad = build_vad(cfg)
+        print("[info] Model ready.\n")
+
+        if args.wav:
+            print(f"[info] Transcribing: {args.wav}\n")
+        else:
+            print("[info] Listening on microphone — press Ctrl+C to stop.\n")
+
+        run_offline_vad_streaming(
+            recognizer=recognizer,
+            vad=vad,
+            audio_gen=audio,
+            sample_rate=cfg.sample_rate,
+        )
+    else:
+        recognizer = build_recognizer(cfg)
+        print("[info] Model ready.\n")
+
+        if args.wav:
+            print(f"[info] Transcribing: {args.wav}\n")
+        else:
+            print("[info] Listening on microphone — press Ctrl+C to stop.\n")
+
+        run_streaming(recognizer, audio, sample_rate=cfg.sample_rate)
 
 
 if __name__ == "__main__":
