@@ -9,8 +9,9 @@ import argparse
 import sys
 import tarfile
 import urllib.request
-import wave
 from pathlib import Path
+
+import soundfile as sf
 
 from audio import mic_stream, read_wav
 from asr_engine import build_recognizer
@@ -86,21 +87,21 @@ def _validate_model(model_dir: str) -> None:
 def _validate_wav(path: str, sample_rate: int) -> None:
     p = Path(path)
     if not p.exists():
-        sys.exit(f"[error] WAV file not found: {path}")
+        sys.exit(f"[error] Audio file not found: {path}")
     try:
-        with wave.open(path, "rb") as wf:
-            if wf.getnchannels() != 1:
+        with sf.SoundFile(path) as f:
+            if f.channels != 1:
                 sys.exit(
-                    f"[error] WAV must be mono (1 channel), got {wf.getnchannels()}.\n"
+                    f"[error] Audio must be mono (1 channel), got {f.channels}.\n"
                     f"  Convert: ffmpeg -i {path} -ar {sample_rate} -ac 1 out.wav"
                 )
-            if wf.getframerate() != sample_rate:
+            if f.samplerate != sample_rate:
                 sys.exit(
-                    f"[error] WAV sample rate must be {sample_rate} Hz, got {wf.getframerate()} Hz.\n"
+                    f"[error] Audio sample rate must be {sample_rate} Hz, got {f.samplerate} Hz.\n"
                     f"  Convert: ffmpeg -i {path} -ar {sample_rate} -ac 1 out.wav"
                 )
-    except wave.Error as exc:
-        sys.exit(f"[error] Cannot read WAV file: {exc}")
+    except Exception as exc:
+        sys.exit(f"[error] Cannot read audio file: {exc}")
 
 
 def _validate_mic() -> None:
@@ -139,7 +140,8 @@ def main() -> None:
     else:
         _validate_mic()
 
-    print(f"[info] Loading model from '{cfg.model_dir}' ({cfg.num_threads} threads)…")
+    model_name = model_dir.name
+    print(f"[info] Loading model '{model_name}' ({cfg.num_threads} threads)…")
     recognizer = build_recognizer(cfg)
     print("[info] Model ready.\n")
 

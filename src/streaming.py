@@ -38,13 +38,13 @@ def run_streaming(
                 # Segment finalized: clear partial line and print the full segment
                 if text:
                     _clear_line(last_partial)
-                    print(text)
+                    print(f"{_PREFIX}{text}")
                     sys.stdout.flush()
                 recognizer.reset(stream)
                 last_partial = ""
             elif text != last_partial:
                 # Show latest partial hypothesis in-place
-                sys.stdout.write(f"\r{text}")
+                sys.stdout.write(f"\r{_PREFIX}{text}")
                 sys.stdout.flush()
                 last_partial = text
 
@@ -54,12 +54,11 @@ def run_streaming(
         _flush_tail(recognizer, stream, sample_rate, last_partial)
 
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
+_PREFIX = "  "
+
 
 def _clear_line(previous: str) -> None:
-    sys.stdout.write(f"\r{' ' * max(len(previous), 1)}\r")
+    sys.stdout.write(f"\r{' ' * max(len(_PREFIX) + len(previous), 1)}\r")
     sys.stdout.flush()
 
 
@@ -78,6 +77,6 @@ def _flush_tail(
     text = recognizer.get_result(stream).strip()
     if text:
         _clear_line(last_partial)
-        print(text)
+        print(f"{_PREFIX}{text}")
     sys.stdout.write("\n")
     sys.stdout.flush()

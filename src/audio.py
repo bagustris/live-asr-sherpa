@@ -1,9 +1,9 @@
 import queue
-import wave
 from typing import Generator
 
 import numpy as np
 import sounddevice as sd
+import soundfile as sf
 
 
 def read_wav(
@@ -11,24 +11,23 @@ def read_wav(
     target_sr: int = 16000,
     chunk_size: float = 0.16,
 ) -> Generator[np.ndarray, None, None]:
-    """Read a mono 16-bit WAV file and yield float32 chunks."""
-    with wave.open(path, "rb") as wf:
-        if wf.getnchannels() != 1:
+    """Read a mono audio file (WAV, FLAC, etc.) and yield float32 chunks."""
+    with sf.SoundFile(path) as f:
+        if f.channels != 1:
             raise ValueError(
-                f"Expected mono WAV, got {wf.getnchannels()} channels. "
+                f"Expected mono audio, got {f.channels} channels. "
                 f"Re-sample with: ffmpeg -i <in> -ar {target_sr} -ac 1 out.wav"
             )
-        if wf.getframerate() != target_sr:
+        if f.samplerate != target_sr:
             raise ValueError(
-                f"Expected {target_sr} Hz WAV, got {wf.getframerate()} Hz. "
+                f"Expected {target_sr} Hz audio, got {f.samplerate} Hz. "
                 f"Re-sample with: ffmpeg -i <in> -ar {target_sr} -ac 1 out.wav"
             )
         chunk_frames = int(target_sr * chunk_size)
         while True:
-            raw = wf.readframes(chunk_frames)
-            if not raw:
+            samples = f.read(chunk_frames, dtype="float32")
+            if len(samples) == 0:
                 break
-            samples = np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32768.0
             yield samples
 
 
