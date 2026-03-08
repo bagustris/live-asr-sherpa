@@ -1,4 +1,4 @@
-# Live ASR with Sherpa ONNX 
+# Live ASR with Sherpa-ONNX
 
 *Minimal, production-quality streaming speech recognition on CPU*
 
@@ -6,10 +6,11 @@ A terminal-based Automatic Speech Recognition (ASR) application built with [Sher
 
 ## Features
 
-- **Real-time microphone transcription** — partial hypotheses update live with <500ms latency
-- **Offline WAV transcription** — process audio files through the same streaming pipeline
+- **Real-time microphone transcription** — partial hypotheses update live with <500 ms latency
+- **Offline WAV transcription** — process audio files through the same pipeline
+- **Unified model loading** — all sherpa-onnx model families supported via a single `--model-type` flag
 - **CPU-optimized** — runs efficiently on any modern CPU using ONNX Runtime
-- **Auto model download** — fetches the Zipformer model on first run
+- **Auto model download** — fetches the default Zipformer model on first run
 - **Endpoint detection** — intelligently segments speech with configurable silence rules
 - **Clean terminal output** — partial results overwrite in-place, finalized segments print on new lines
 
@@ -24,8 +25,7 @@ A terminal-based Automatic Speech Recognition (ASR) application built with [Sher
 ### 1. Install dependencies
 
 ```bash
-cd src
-pip install -r requirements.txt
+pip install -r src/requirements.txt
 ```
 
 ### 2. Run
@@ -48,21 +48,108 @@ python3 src/main.py --wav path/to/audio.wav
 > ffmpeg -i input.wav -ar 16000 -ac 1 output.wav
 > ```
 
-The model is downloaded automatically on first run (~300 MB). To use a custom model directory:
+The default Zipformer model (~300 MB) is downloaded automatically on first run.
 
+## Supported Models
+
+All models from the [Sherpa-ONNX model zoo](https://k2-fsa.github.io/sherpa/onnx/pretrained_models/) can be used. Download and extract a model into the `models/` directory, then pass the directory name via `--model-dir` and the architecture via `--model-type`.
+
+> [!TIP]
+> Models marked **auto** are downloaded automatically on first run. All others must be downloaded manually from the [Sherpa-ONNX releases page](https://github.com/k2-fsa/sherpa-onnx/releases/tag/asr-models).
+
+### Online (Streaming) Models
+
+Use these with the default pipeline (no `--offline` flag). They support real-time partial hypotheses.
+
+| Model | `--model-dir` | `--model-type` | Lang | Notes |
+|-------|--------------|----------------|------|-------|
+| Zipformer En 2023 | `models/zipformer-en-2023` | *(blank)* | en | Default; **auto-downloaded** |
+| Zipformer En 2024 | `models/sherpa-onnx-streaming-zipformer-en-2024-02-13` | `zipformer2` | en | Newer, slightly higher accuracy |
+| Conformer En | `models/sherpa-onnx-streaming-conformer-en-2023-05-09` | `conformer` | en | Conformer transducer |
+| Zipformer ZH/EN | `models/sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20` | `zipformer` | zh/en | Bilingual |
+| Paraformer ZH/EN | `models/sherpa-onnx-streaming-paraformer-bilingual-zh-en` | `paraformer` | zh/en | Streaming paraformer |
+| WeNet CTC En | `models/sherpa-onnx-streaming-wenet-librispeech` | `wenet_ctc` | en | WeNet CTC |
+| Zipformer2 CTC En | `models/sherpa-onnx-streaming-zipformer2-ctc-2024-09-18` | `zipformer2_ctc` | en | CTC variant |
+
+Example:
 ```bash
-python3 src/main.py --mic --model-dir /path/to/model
+python3 src/main.py --mic \
+  --model-dir models/sherpa-onnx-streaming-zipformer-en-2024-02-13 \
+  --model-type zipformer2
 ```
 
-### CLI Options
+### Offline Models
+
+Use these with `--offline`. Audio is VAD-segmented before recognition (higher accuracy, higher latency). A [Silero VAD](https://github.com/snakers4/silero-vad) model (`silero_vad.onnx`) is auto-downloaded when needed.
+
+| Model | `--model-dir` | `--model-type` | Lang | Notes |
+|-------|--------------|----------------|------|-------|
+| Parakeet TDT 0.6B FP16 | `models/parakeet-tdt-0.6b-v2` | `nemo_transducer` | en | **Auto-downloaded** (`--offline` default) |
+| Parakeet TDT 0.6B INT8 | `models/parakeet-tdt-0.6b-v2-int8` | `nemo_transducer` | en | **Auto-downloaded**; smaller & faster |
+| Whisper tiny.en | `models/sherpa-onnx-whisper-tiny.en` | `whisper` | en | Smallest Whisper |
+| Whisper base.en | `models/sherpa-onnx-whisper-base.en` | `whisper` | en | |
+| Whisper small.en | `models/sherpa-onnx-whisper-small.en` | `whisper` | en | Good accuracy/speed balance |
+| Whisper medium.en | `models/sherpa-onnx-whisper-medium.en` | `whisper` | en | Higher accuracy |
+| Whisper large-v3 | `models/sherpa-onnx-whisper-large-v3` | `whisper` | multi | Multilingual; use `--language` |
+| Paraformer ZH | `models/sherpa-onnx-paraformer-zh-2023-09-14` | `paraformer` | zh | |
+| NeMo CTC En | `models/sherpa-onnx-nemo-ctc-en-conformer-medium` | `nemo_ctc` | en | NeMo Conformer CTC |
+| SenseVoice | `models/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17` | `sense_voice` | multi | 5 languages; use `--language` |
+| Moonshine tiny | `models/sherpa-onnx-moonshine-tiny-en-int8` | `moonshine` | en | Very fast, English only |
+| Moonshine base | `models/sherpa-onnx-moonshine-base-en-int8` | `moonshine` | en | Better accuracy than tiny |
+| FireRedASR | `models/sherpa-onnx-fire-red-asr-large-zh-2025-02-16` | `fire_red_asr` | zh | |
+
+Examples:
+```bash
+# Parakeet TDT (auto-downloaded offline default)
+python3 src/main.py --mic --offline --model-type nemo_transducer
+
+# Parakeet TDT INT8 (smaller, auto-downloaded)
+python3 src/main.py --mic --offline \
+  --model-dir models/parakeet-tdt-0.6b-v2-int8 \
+  --model-type nemo_transducer
+
+# Whisper small (English)
+python3 src/main.py --mic --offline \
+  --model-dir models/sherpa-onnx-whisper-small.en \
+  --model-type whisper
+
+# Whisper large-v3 (multilingual)
+python3 src/main.py --mic --offline \
+  --model-dir models/sherpa-onnx-whisper-large-v3 \
+  --model-type whisper --language zh
+
+# SenseVoice (5 languages)
+python3 src/main.py --mic --offline \
+  --model-dir models/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17 \
+  --model-type sense_voice --language ja
+
+# Moonshine tiny
+python3 src/main.py --mic --offline \
+  --model-dir models/sherpa-onnx-moonshine-tiny-en-int8 \
+  --model-type moonshine
+```
+
+## CLI Options
 
 ```
---mic                 Stream from microphone
---wav PATH            Transcribe a WAV file
---model-dir PATH      Sherpa-ONNX model directory (default: model)
---sample-rate INT     Audio sample rate in Hz (default: 16000)
---chunk-size FLOAT    Chunk size in seconds (default: 0.16)
---threads INT         CPU thread count for ONNX runtime (default: 4)
+--mic                   Stream from microphone
+--wav PATH              Transcribe a WAV file
+--model-dir PATH        Sherpa-ONNX model directory
+                          Default (online):  models/zipformer-en-2023
+                          Default (offline): models/parakeet-tdt-0.6b-v2
+--model-type TYPE       Model architecture hint (leave blank for auto-detect)
+                          Online:  transducer, zipformer, zipformer2, conformer, lstm,
+                                   paraformer, ctc, wenet_ctc, zipformer2_ctc
+                          Offline: transducer, nemo_transducer, paraformer, whisper,
+                                   ctc, nemo_ctc, sense_voice, moonshine, fire_red_asr
+--offline               Use VAD-segmented offline pipeline instead of streaming
+--language LANG         Language code for Whisper / SenseVoice (default: en)
+--sample-rate INT       Audio sample rate in Hz (default: 16000)
+--chunk-size FLOAT      Chunk size in seconds (default: 0.16)
+--threads INT           CPU thread count for ONNX runtime (default: 4)
+--capture-rate HZ       Microphone capture rate — use 48000 for device compatibility
+--vad-model PATH        Path to silero_vad.onnx (auto-downloaded if not provided)
+--listening             Show a live RMS energy bar for mic level calibration
 ```
 
 ## Architecture
@@ -70,8 +157,8 @@ python3 src/main.py --mic --model-dir /path/to/model
 ```
 src/
 ├── main.py            # CLI entry point, model download, validation
-├── asr_engine.py      # Sherpa-ONNX recognizer setup & endpoint config
-├── streaming.py       # Real-time decode loop & terminal rendering
+├── asr_engine.py      # Unified model loading for all sherpa-onnx model types
+├── streaming.py       # Streaming decode loop & VAD-segmented offline loop
 ├── audio.py           # Microphone capture & WAV file reading
 ├── config.py          # Configuration dataclass
 └── requirements.txt   # Python dependencies
@@ -79,31 +166,16 @@ src/
 
 | Module | Responsibility |
 |--------|----------------|
-| `main.py` | Parses arguments, validates inputs, downloads model if missing, dispatches to streaming |
-| `asr_engine.py` | Builds the `OnlineRecognizer` with Zipformer transducer and endpoint detection rules |
-| `streaming.py` | Feeds audio chunks to the recognizer, renders partial/final hypotheses to the terminal |
+| `main.py` | Parses arguments, validates inputs, auto-downloads model/VAD, dispatches to streaming |
+| `asr_engine.py` | Builds `OnlineRecognizer` or `OfflineRecognizer` for any supported model type |
+| `streaming.py` | Feeds audio chunks to the recognizer; renders partial/final hypotheses to the terminal |
 | `audio.py` | Provides two generators: `mic_stream()` for live capture, `read_wav()` for file input |
-| `config.py` | Holds runtime parameters (sample rate, chunk size, thread count, model path) |
+| `config.py` | Holds runtime parameters (sample rate, chunk size, thread count, model path, language) |
 
-## Model
-
-Uses [sherpa-onnx-streaming-zipformer-en-2023-06-26](https://github.com/k2-fsa/sherpa-onnx/releases/tag/asr-models) — a streaming transducer optimized for low-latency CPU inference with competitive word error rate for English.
-
-How to swap in the model:  
-
-Endpoint detection rules:
+## Endpoint Detection (Online Mode)
 
 | Rule | Behavior |
 |------|----------|
-| Rule 1 | 2.4s trailing silence → hard endpoint |
-| Rule 2 | 1.2s silence after speech → early endpoint |
-| Rule 3 | 20s max utterance → forced endpoint |
-
-## Possible Improvements
-
-- **Quantized models** — INT8 quantization for faster inference on edge devices
-- **VAD integration** — WebRTC VAD to skip silence and reduce compute
-- **Word timestamps** — per-word timing for subtitle generation
-- **Confidence scores** — decode-time confidence for downstream filtering
-- **Multilingual support** — swap in non-English Sherpa-ONNX models
-- **Downstream NLP** — pipe transcripts to summarization, translation, or entity extraction
+| Rule 1 | 2.4 s trailing silence → hard endpoint |
+| Rule 2 | 1.2 s silence after sufficient speech → early endpoint |
+| Rule 3 | 300 s max utterance → forced endpoint (effectively disabled) |

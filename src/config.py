@@ -7,17 +7,21 @@ class Config:
     sample_rate: int = 16000
     chunk_size: float = 0.16   # seconds (~2560 samples at 16 kHz)
     num_threads: int = 4
-    # online-transducer  – streaming transducer (default, e.g. Zipformer)
-    # online-paraformer  – streaming Paraformer
-    # online-ctc         – streaming CTC (e.g. Zipformer-CTC)
-    # offline-transducer – offline transducer (e.g. NeMo Parakeet TDT)
-    # offline-paraformer – offline Paraformer
-    # offline-ctc        – offline CTC (NeMo, WeNet, icefall)
-    # whisper            – OpenAI Whisper
-    # sense-voice        – SenseVoice
-    model_type: str = "online-transducer"
-    # Path to silero_vad.onnx; required when model_type != "online"
+    # Passed directly to sherpa-onnx as the model_type hint.
+    # Online values:  "" (auto), transducer, zipformer, zipformer2, conformer, lstm,
+    #                 paraformer, ctc, wenet_ctc, zipformer2_ctc
+    # Offline values: "" (auto), transducer, nemo_transducer, paraformer, whisper,
+    #                 ctc, nemo_ctc, sense_voice, moonshine, fire_red_asr
+    # Leave blank to let sherpa-onnx auto-detect from model metadata.
+    model_type: str = ""
+    # Set to True to use the offline (VAD-segmented) pipeline instead of streaming.
+    offline: bool = False
+    # Path to silero_vad.onnx; required when offline=True
     vad_model: str = ""
     vad_threshold: float = 0.5
     vad_min_silence_duration: float = 0.5
     vad_min_speech_duration: float = 0.25
+    # Language code for Whisper and SenseVoice models (e.g. "en", "zh", "ja").
+    language: str = "en"
+    # Show a live RMS energy bar in the terminal for mic calibration.
+    show_mic_level: bool = False

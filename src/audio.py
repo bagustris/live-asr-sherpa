@@ -32,15 +32,19 @@ def read_wav(
 
 
 def mic_stream(
-    sample_rate: int = 16000,
-    chunk_size: float = 0.16,
+    capture_rate: int = 16000,
+    chunk_size: float = 0.1,
 ) -> Generator[np.ndarray, None, None]:
     """Capture microphone audio and yield float32 chunks via a queue.
+
+    capture_rate: sample rate for the microphone (default 16 kHz).
+    Use 48000 for better compatibility with system microphones that prefer
+    48/44.1 kHz — sherpa-onnx resamples to the model rate internally.
 
     Uses a callback-based InputStream so audio capture never blocks the
     decoding loop — chunks are queued and consumed independently.
     """
-    chunk_frames = int(sample_rate * chunk_size)
+    chunk_frames = int(capture_rate * chunk_size)
     q: queue.Queue[np.ndarray] = queue.Queue()
 
     def _callback(
@@ -52,7 +56,7 @@ def mic_stream(
         q.put(indata[:, 0].copy())
 
     with sd.InputStream(
-        samplerate=sample_rate,
+        samplerate=capture_rate,
         channels=1,
         dtype="float32",
         blocksize=chunk_frames,

@@ -9,6 +9,7 @@ def run_streaming(
     recognizer: sherpa_onnx.OnlineRecognizer,
     audio_gen: Generator[np.ndarray, None, None],
     sample_rate: int = 16000,
+    show_mic_level: bool = False,
 ) -> None:
     """Feed incremental audio chunks into the recognizer and render output.
 
@@ -34,6 +35,12 @@ def run_streaming(
 
             text = recognizer.get_result(stream).strip()
 
+            if show_mic_level and not text:
+                energy = float(np.sqrt(np.mean(chunk ** 2)))
+                bar = "█" * min(int(energy * 500), 40)
+                sys.stdout.write(f"\r{_PREFIX}mic: {bar:<40} {energy:.4f}")
+                sys.stdout.flush()
+
             if recognizer.is_endpoint(stream):
                 # Segment finalized: clear partial line and print the full segment
                 if text:
@@ -58,7 +65,8 @@ def run_offline_vad_streaming(
     recognizer: sherpa_onnx.OfflineRecognizer,
     vad: sherpa_onnx.VoiceActivityDetector,
     audio_gen: Generator[np.ndarray, None, None],
-    sample_rate: int = 16000,
+    sample_rate: int = 48000,
+    show_mic_level: bool = False,
 ) -> None:
     """VAD-segmented offline ASR for live audio (microphone or WAV file).
 
@@ -68,19 +76,19 @@ def run_offline_vad_streaming(
 
     Latency tradeoff: adds ~0.5 s silence at segment boundaries (VAD
     min_silence_duration) but gives higher accuracy than streaming models.
-    """
-    was_speech = False
 
+    show_mic_level: when True, renders a live RMS energy bar after each chunk
+    for microphone level calibration (enabled via --listening).
+    """
     try:
         for chunk in audio_gen:
             vad.accept_waveform(chunk)
 
-            # Show a live indicator while speech is being captured
-            now_speech = vad.is_speech_detected()
-            if now_speech and not was_speech:
-                sys.stdout.write(f"\r{_PREFIX}[listening…]")
+            if show_mic_level:
+                energy = float(np.sqrt(np.mean(chunk ** 2)))
+                bar = "█" * min(int(energy * 500), 40)
+                sys.stdout.write(f"\r{_PREFIX}mic: {bar:<40} {energy:.4f}")
                 sys.stdout.flush()
-            was_speech = now_speech
 
             # Process completed speech segments
             while not vad.empty():
@@ -121,9 +129,12 @@ def _decode_and_print(
 _PREFIX = "  "
 
 
-def _clear_line(previous: str) -> None:
-    sys.stdout.write(f"\r{' ' * max(len(_PREFIX) + len(previous), 1)}\r")
-    sys.stdout.flush()
+def _clear_line(partial: str) -> None:
+    """Overwrite the partial hypothesis line with spaces to prevent leftover text."""
+    if partial:
+        width = len(_PREFIX) + len(partial)
+        sys.stdout.write(f"\r{' ' * width}\r")
+        sys.stdout.flush()
 
 
 def _flush_tail(
@@ -133,7 +144,6 @@ def _flush_tail(
     last_partial: str,
 ) -> None:
     """Flush any audio left in the recognizer pipeline after the loop ends."""
-    # Feed a short silence tail to trigger decoding of the final frames
     tail = np.zeros(int(sample_rate * 0.5), dtype=np.float32)
     stream.accept_waveform(sample_rate, tail)
     while recognizer.is_ready(stream):

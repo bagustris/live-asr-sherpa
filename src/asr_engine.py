@@ -13,40 +13,171 @@ def _find(directory: Path, pattern: str) -> str:
     return str(matches[0])
 
 
+# ── Online (streaming) model type routing ────────────────────────────────────
+# Supported --model-type values for online mode:
+#   transducer variants : "" (auto), transducer, zipformer, zipformer2, conformer, lstm
+#   paraformer          : streaming paraformer (encoder + decoder, no joiner)
+#   ctc                 : generic online CTC
+#   wenet_ctc           : WeNet CTC models
+#   zipformer2_ctc      : Zipformer2 CTC models
+
+_ONLINE_PARAFORMER = {"paraformer"}
+_ONLINE_CTC = {"ctc"}
+_ONLINE_WENET_CTC = {"wenet_ctc"}
+_ONLINE_ZIPFORMER2_CTC = {"zipformer2_ctc"}
+
+# ── Offline model type routing ───────────────────────────────────────────────
+# Supported --model-type values for offline mode:
+#   transducer variants : "" (auto), transducer, nemo_transducer
+#   paraformer          : offline paraformer (single model file)
+#   whisper             : OpenAI Whisper (encoder + decoder)
+#   ctc / nemo_ctc      : CTC / NVIDIA NeMo CTC (single model file)
+#   sense_voice         : FunAudioLLM SenseVoice (single model file)
+#   moonshine           : UsefulSensors Moonshine (4 separate files)
+#   fire_red_asr        : FireRedASR (encoder + decoder)
+
+_OFFLINE_PARAFORMER = {"paraformer"}
+_OFFLINE_WHISPER = {"whisper"}
+_OFFLINE_CTC = {"ctc", "nemo_ctc"}
+_OFFLINE_SENSE_VOICE = {"sense_voice"}
+_OFFLINE_MOONSHINE = {"moonshine"}
+_OFFLINE_FIRE_RED_ASR = {"fire_red_asr"}
+
+_ENDPOINT = dict(
+    enable_endpoint_detection=True,
+    rule1_min_trailing_silence=2.4,
+    rule2_min_trailing_silence=1.2,
+    rule3_min_utterance_length=300.0,  # effectively disabled (upstream recommendation)
+)
+
+
 def build_recognizer(cfg: Config) -> sherpa_onnx.OnlineRecognizer:
-    """Load a Sherpa-ONNX streaming transducer (Zipformer/Conformer) recognizer.
+    """Load a Sherpa-ONNX streaming recognizer for any supported online model type.
 
     Endpoint rules (tradeoff: adds ~1–2 s boundary latency, prevents runaway lines):
       rule1: 2.4 s silence → hard endpoint
       rule2: 1.2 s silence after sufficient speech → early endpoint
-      rule3: force endpoint after 20 s utterance (prevents infinite segments)
+      rule3: force endpoint after 300 s utterance (effectively disabled)
     """
     d = Path(cfg.model_dir)
+    mt = cfg.model_type.lower()
+    tokens = _find(d, "tokens.txt")
+
+    if mt in _ONLINE_PARAFORMER:
+        return sherpa_onnx.OnlineRecognizer.from_paraformer(
+            tokens=tokens,
+            encoder=_find(d, "encoder*.onnx"),
+            decoder=_find(d, "decoder*.onnx"),
+            num_threads=cfg.num_threads,
+            sample_rate=cfg.sample_rate,
+            feature_dim=80,
+            decoding_method="greedy_search",
+            **_ENDPOINT,
+        )
+    if mt in _ONLINE_WENET_CTC:
+        return sherpa_onnx.OnlineRecognizer.from_wenet_ctc(
+            tokens=tokens,
+            model=_find(d, "model*.onnx"),
+            num_threads=cfg.num_threads,
+            sample_rate=cfg.sample_rate,
+            feature_dim=80,
+            **_ENDPOINT,
+        )
+    if mt in _ONLINE_ZIPFORMER2_CTC:
+        return sherpa_onnx.OnlineRecognizer.from_zipformer2_ctc(
+            tokens=tokens,
+            model=_find(d, "model*.onnx"),
+            num_threads=cfg.num_threads,
+            sample_rate=cfg.sample_rate,
+            feature_dim=80,
+            **_ENDPOINT,
+        )
+    if mt in _ONLINE_CTC:
+        return sherpa_onnx.OnlineRecognizer.from_ctc(
+            tokens=tokens,
+            model=_find(d, "model*.onnx"),
+            num_threads=cfg.num_threads,
+            sample_rate=cfg.sample_rate,
+            feature_dim=80,
+            **_ENDPOINT,
+        )
+    # Default: transducer (zipformer, zipformer2, conformer, lstm, or auto-detect)
     return sherpa_onnx.OnlineRecognizer.from_transducer(
-        tokens=_find(d, "tokens.txt"),
+        tokens=tokens,
         encoder=_find(d, "encoder*.onnx"),
         decoder=_find(d, "decoder*.onnx"),
         joiner=_find(d, "joiner*.onnx"),
         num_threads=cfg.num_threads,
         sample_rate=cfg.sample_rate,
         feature_dim=80,
-        enable_endpoint_detection=True,
-        rule1_min_trailing_silence=2.4,
-        rule2_min_trailing_silence=1.2,
-        rule3_min_utterance_length=20.0,
         decoding_method="greedy_search",
+        model_type=cfg.model_type,
+        **_ENDPOINT,
     )
 
 
 def build_offline_recognizer(cfg: Config) -> sherpa_onnx.OfflineRecognizer:
-    """Load a Sherpa-ONNX offline NeMo transducer (e.g. Parakeet TDT).
+    """Load a Sherpa-ONNX offline recognizer for any supported offline model type.
 
-    Uses OfflineRecognizer with model_type="nemo_transducer". Pair this with
-    build_vad() and run_offline_vad_streaming() for live microphone use.
+    Pair with build_vad() and run_offline_vad_streaming() for live microphone use.
     """
     d = Path(cfg.model_dir)
+    mt = cfg.model_type.lower()
+    tokens = _find(d, "tokens.txt")
+
+    if mt in _OFFLINE_WHISPER:
+        return sherpa_onnx.OfflineRecognizer.from_whisper(
+            tokens=tokens,
+            encoder=_find(d, "encoder*.onnx"),
+            decoder=_find(d, "decoder*.onnx"),
+            num_threads=cfg.num_threads,
+            language=cfg.language,
+            task="transcribe",
+        )
+    if mt in _OFFLINE_PARAFORMER:
+        return sherpa_onnx.OfflineRecognizer.from_paraformer(
+            tokens=tokens,
+            model=_find(d, "model*.onnx"),
+            num_threads=cfg.num_threads,
+            sample_rate=cfg.sample_rate,
+            feature_dim=80,
+            decoding_method="greedy_search",
+        )
+    if mt in _OFFLINE_CTC:
+        return sherpa_onnx.OfflineRecognizer.from_ctc(
+            tokens=tokens,
+            model=_find(d, "model*.onnx"),
+            num_threads=cfg.num_threads,
+            sample_rate=cfg.sample_rate,
+            feature_dim=80,
+        )
+    if mt in _OFFLINE_SENSE_VOICE:
+        return sherpa_onnx.OfflineRecognizer.from_sense_voice(
+            tokens=tokens,
+            model=_find(d, "model*.onnx"),
+            num_threads=cfg.num_threads,
+            language=cfg.language,
+            use_itn=True,
+        )
+    if mt in _OFFLINE_MOONSHINE:
+        return sherpa_onnx.OfflineRecognizer.from_moonshine(
+            tokens=tokens,
+            preprocessor=_find(d, "preprocess*.onnx"),
+            encoder=_find(d, "encode.onnx"),
+            uncached_decoder=_find(d, "uncached_decode*.onnx"),
+            cached_decoder=_find(d, "cached_decode*.onnx"),
+            num_threads=cfg.num_threads,
+        )
+    if mt in _OFFLINE_FIRE_RED_ASR:
+        return sherpa_onnx.OfflineRecognizer.from_fire_red_asr(
+            tokens=tokens,
+            encoder=_find(d, "encoder*.onnx"),
+            decoder=_find(d, "decoder*.onnx"),
+            num_threads=cfg.num_threads,
+        )
+    # Default: transducer (nemo_transducer or auto-detect)
     return sherpa_onnx.OfflineRecognizer.from_transducer(
-        tokens=_find(d, "tokens.txt"),
+        tokens=tokens,
         encoder=_find(d, "encoder*.onnx"),
         decoder=_find(d, "decoder*.onnx"),
         joiner=_find(d, "joiner*.onnx"),
@@ -54,16 +185,16 @@ def build_offline_recognizer(cfg: Config) -> sherpa_onnx.OfflineRecognizer:
         sample_rate=cfg.sample_rate,
         feature_dim=80,
         decoding_method="greedy_search",
-        model_type="nemo_transducer",
+        model_type=cfg.model_type,
     )
 
 
 def build_vad(cfg: Config) -> sherpa_onnx.VoiceActivityDetector:
     """Build a Silero VAD for segmenting live audio into utterances.
 
-    Required for offline models (model_type != "online") because they cannot
-    decode incrementally — the VAD accumulates audio until silence is detected,
-    then the full segment is sent to the offline recognizer.
+    Required for offline models because they cannot decode incrementally —
+    the VAD accumulates audio until silence is detected, then the full
+    segment is sent to the offline recognizer.
     """
     if not cfg.vad_model:
         raise ValueError(
@@ -75,9 +206,9 @@ def build_vad(cfg: Config) -> sherpa_onnx.VoiceActivityDetector:
     vad_config = sherpa_onnx.VadModelConfig(
         silero_vad=sherpa_onnx.SileroVadModelConfig(
             model=cfg.vad_model,
-            threshold=0.5,
-            min_silence_duration=0.5,
-            min_speech_duration=0.25,
+            threshold=cfg.vad_threshold,
+            min_silence_duration=cfg.vad_min_silence_duration,
+            min_speech_duration=cfg.vad_min_speech_duration,
         ),
         sample_rate=cfg.sample_rate,
         num_threads=cfg.num_threads,
