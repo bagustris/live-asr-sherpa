@@ -26,7 +26,7 @@ A terminal-based Automatic Speech Recognition (ASR) application built with [Sher
 ### 1. Install dependencies
 
 ```bash
-pip install -r src/requirements.txt
+pip install -r requirements.txt
 ```
 
 > **Note:** `rich` is included as a dependency for styled terminal output.
