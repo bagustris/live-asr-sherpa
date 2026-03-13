@@ -2,6 +2,7 @@ import sys
 from concurrent.futures import ThreadPoolExecutor, Future
 from typing import Generator, Optional
 
+import logging
 import numpy as np
 import sherpa_onnx
 from rich.console import Console
@@ -93,12 +94,17 @@ def run_streaming(
         if not pending_text:
             return
         speaker_id = None
-        if pending_future is not None:
+        if pending_future is not None and pending_future.done():
             try:
-                result = pending_future.result(timeout=5.0)
+                result = pending_future.result()
                 speaker_id = _dominant_speaker(result)
-            except Exception:
-                pass
+            except Exception as exc:
+                logging.debug(
+                    "Diarization failed for utterance %r: %s",
+                    pending_text,
+                    exc,
+                    exc_info=True,
+                )
         _rich_print(pending_text, speaker_id)
 
     pending_text = ""
