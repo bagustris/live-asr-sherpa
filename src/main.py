@@ -236,6 +236,29 @@ def _download_file(url: str, dest: Path) -> None:
     print()
 
 
+def _safe_tar_members(tf: tarfile.TarFile, dest_dir: Path):
+    """Yield only safe members for extraction into dest_dir.
+
+    This emulates the safety guarantees of `filter="data"` on Python < 3.12:
+    - prevent path traversal (no entries may escape dest_dir)
+    - skip device files
+    """
+    dest_dir_resolved = dest_dir.resolve()
+    for member in tf.getmembers():
+        # Skip device files and other special devices
+        if member.isdev():
+            continue
+
+        member_path = (dest_dir / member.name).resolve()
+        try:
+            member_path.relative_to(dest_dir_resolved)
+        except ValueError:
+            # This member would escape dest_dir (e.g., via .. or absolute path)
+            continue
+
+        yield member
+
+
 def _download_model(model_dir: str, model_type: str) -> None:
     """Download and extract the default model for the given model_type."""
     model_dir = Path(model_dir)
@@ -268,7 +291,10 @@ def _download_model(model_dir: str, model_type: str) -> None:
     _info("Extracting…")
     try:
         with tarfile.open(archive, "r:bz2") as tf:
-            tf.extractall(models_dir, filter="data")
+            if sys.version_info >= (3, 12):
+                tf.extractall(models_dir, filter="data")
+            else:
+                tf.extractall(models_dir, members=_safe_tar_members(tf, models_dir))
     except Exception as exc:  # noqa: BLE001
         _error(f"Extraction failed: {exc}")
 
