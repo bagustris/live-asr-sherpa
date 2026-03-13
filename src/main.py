@@ -301,6 +301,29 @@ def _validate_vad(vad_model: str, offline: bool, project_dir: Path) -> str:
     return vad_model
 
 
+def _safe_extract_tar(tar: tarfile.TarFile, path: Path) -> None:
+    """Safely extract tar contents to `path`, preventing path traversal and links.
+
+    This emulates the behavior of `filter="data"` available in Python 3.12+,
+    but is compatible with Python 3.8+.
+    """
+    base_path = path.resolve()
+    for member in tar.getmembers():
+        # Skip symlinks and hard links for safety.
+        if member.issym() or member.islnk():
+            continue
+
+        member_path = (base_path / member.name).resolve()
+        try:
+            # Ensure the target path is within the intended base directory.
+            member_path.relative_to(base_path)
+        except ValueError:
+            # Path traversal attempt or otherwise outside base directory; skip.
+            continue
+
+        tar.extract(member, path=base_path)
+
+
 def _validate_diarization_models(
     seg_model: str, emb_model: str, project_dir: Path
 ) -> tuple[str, str]:
@@ -319,7 +342,7 @@ def _validate_diarization_models(
             _info("Extracting segmentation model…")
             try:
                 with tarfile.open(archive, "r:bz2") as tf:
-                    tf.extractall(models_dir, filter="data")
+                    _safe_extract_tar(tf, models_dir)
             except Exception as exc:  # noqa: BLE001
                 _error(f"Extraction failed: {exc}")
             archive.unlink(missing_ok=True)
