@@ -86,14 +86,25 @@ def _speaker_colour(speaker_id: int) -> str:
     return _SPEAKER_COLOURS[speaker_id % len(_SPEAKER_COLOURS)]
 
 
-def _rich_print(text: str, speaker_id: Optional[int] = None) -> None:
-    """Print a finalised line, optionally coloured by speaker."""
+def _rich_print(
+    text: str,
+    speaker_id: Optional[int] = None,
+    show_speaker_tag: bool = False,
+) -> None:
+    """Print a finalised line, optionally coloured (and tagged) by speaker.
+
+    When *speaker_id* is set, the text is coloured with that speaker's colour.
+    The ``[Speaker N]`` label prefix is only shown when *show_speaker_tag* is
+    ``True`` (default: colour-only, no tag).
+    """
     if speaker_id is not None:
-        label = f"[Speaker {speaker_id:02d}] "
         colour = _speaker_colour(speaker_id)
         t = Text()
-        t.append(f"{_PREFIX}{label}", style=f"bold {colour}")
-        t.append(text)
+        if show_speaker_tag:
+            t.append(f"{_PREFIX}[Speaker {speaker_id}] ", style=f"bold {colour}")
+            t.append(text, style=colour)
+        else:
+            t.append(f"{_PREFIX}{text}", style=colour)
         _console.print(t)
     else:
         _console.print(f"{_PREFIX}{text}")
@@ -118,6 +129,7 @@ def run_streaming(
     sample_rate: int = 16000,
     show_mic_level: bool = False,
     diarization: Optional[sherpa_onnx.OfflineSpeakerDiarization] = None,
+    show_speaker_tag: bool = False,
 ) -> None:
     """Feed incremental audio chunks into the recognizer and render output.
 
@@ -129,6 +141,8 @@ def run_streaming(
     When *diarization* is provided the accumulated audio for each utterance is
     sent to the diarization pipeline in a background thread so that it runs
     concurrently with the next ASR utterance, keeping added latency near zero.
+    Each speaker's output is colour-coded; when *show_speaker_tag* is ``True``
+    a ``[Speaker N]`` prefix is also printed.
     """
     stream = recognizer.create_stream()
     last_partial = ""
@@ -158,7 +172,7 @@ def run_streaming(
                     exc,
                     exc_info=True,
                 )
-        _rich_print(pending_text, speaker_id)
+        _rich_print(pending_text, speaker_id, show_speaker_tag=show_speaker_tag)
 
     pending_text = ""
 
@@ -236,11 +250,14 @@ def run_offline_vad_streaming(
     sample_rate: int = 48000,
     show_mic_level: bool = False,
     diarization: Optional[sherpa_onnx.OfflineSpeakerDiarization] = None,
+    show_speaker_tag: bool = False,
 ) -> None:
     """VAD-segmented offline ASR with optional concurrent speaker diarization.
 
     For each speech segment the ASR and diarization models run concurrently
     in a ThreadPoolExecutor so that neither doubles the per-segment latency.
+    Each speaker's output is colour-coded; when *show_speaker_tag* is ``True``
+    a ``[Speaker N]`` prefix is also printed.
     """
     executor: Optional[ThreadPoolExecutor] = ThreadPoolExecutor(max_workers=2) if diarization else None
 
@@ -258,7 +275,7 @@ def run_offline_vad_streaming(
                 segment = vad.front
                 samples = np.array(segment.samples, dtype=np.float32)
                 vad.pop()
-                _decode_and_print(recognizer, samples, sample_rate, diarization, executor)
+                _decode_and_print(recognizer, samples, sample_rate, diarization, executor, show_speaker_tag)
 
     except KeyboardInterrupt:
         pass
@@ -268,7 +285,7 @@ def run_offline_vad_streaming(
             segment = vad.front
             samples = np.array(segment.samples, dtype=np.float32)
             vad.pop()
-            _decode_and_print(recognizer, samples, sample_rate, diarization, executor)
+            _decode_and_print(recognizer, samples, sample_rate, diarization, executor, show_speaker_tag)
         sys.stdout.write("\n")
         sys.stdout.flush()
         if executor is not None:
@@ -281,6 +298,7 @@ def _decode_and_print(
     sample_rate: int,
     diarization: Optional[sherpa_onnx.OfflineSpeakerDiarization] = None,
     executor: Optional[ThreadPoolExecutor] = None,
+    show_speaker_tag: bool = False,
 ) -> None:
     """Run ASR (and optionally diarization) on *samples* and print the result.
 
@@ -300,7 +318,7 @@ def _decode_and_print(
     if text:
         sys.stdout.write(f"\r{' ' * 20}\r")
         sys.stdout.flush()
-        _rich_print(text, speaker_id)
+        _rich_print(text, speaker_id, show_speaker_tag=show_speaker_tag)
 
 
 def _run_asr(

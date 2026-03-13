@@ -29,6 +29,9 @@ Usage:
     # Speaker diarization with known speaker count:
     python3 main.py --mic --offline --diarization --num-speakers 2
 
+    # Speaker diarization with [Speaker N] tag prefix:
+    python3 main.py --mic --offline --diarization --speaker-tag
+
     Models are stored under  models/<model-name>/  at the project root:
       models/zipformer-en-2023/            (online transducer, default)
       models/parakeet-tdt-0.6b-v2/         (offline, fp16 — larger, more accurate)
@@ -143,6 +146,14 @@ def parse_args() -> argparse.Namespace:
             "Enable speaker diarization. Colours each speaker's output differently. "
             "Works with both online and offline pipelines. "
             "Diarization models are auto-downloaded on first use."
+        ),
+    )
+    parser.add_argument(
+        "--speaker-tag",
+        action="store_true",
+        help=(
+            "Show a [Speaker N] prefix before each diarized utterance "
+            "(requires --diarization). By default only the text colour differs per speaker."
         ),
     )
     parser.add_argument(
@@ -520,6 +531,7 @@ def main() -> None:
             sample_rate=capture_rate,
             show_mic_level=cfg.show_mic_level,
             diarization=diarizer,
+            show_speaker_tag=args.speaker_tag,
         )
     else:
         recognizer = build_recognizer(cfg)
@@ -539,6 +551,7 @@ def main() -> None:
             sample_rate=capture_rate,
             show_mic_level=cfg.show_mic_level,
             diarization=diarizer,
+            show_speaker_tag=args.speaker_tag,
         )
 
 
