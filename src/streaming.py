@@ -1,3 +1,4 @@
+import os
 import sys
 from concurrent.futures import ThreadPoolExecutor, Future
 from typing import Generator, Optional
@@ -12,19 +13,71 @@ import shutil
 # ── Rich console (no markup auto-escaping needed; we build Text objects) ────
 _console = Console(highlight=False, markup=False)
 
-# Colours cycled through for speakers 0, 1, 2, …
-_SPEAKER_COLOURS = [
-    "cyan",
-    "magenta",
-    "yellow",
-    "green",
-    "blue",
-    "red",
+
+def _is_dark_terminal() -> bool:
+    """Detect whether the terminal has a dark background.
+
+    Primary signal: the COLORFGBG environment variable (set by many
+    xterm-compatible terminals). Its format is ``foreground;background`` where
+    the background field is a standard ANSI colour index:
+
+    +---------+-------------------------------------------+-----------+
+    | Index   | Colour                                    | BG type   |
+    +=========+===========================================+===========+
+    | 0–6     | black, red, green, yellow, blue,          | dark      |
+    |         | magenta, cyan                             |           |
+    +---------+-------------------------------------------+-----------+
+    | 7       | white / light-grey                        | light     |
+    +---------+-------------------------------------------+-----------+
+    | 8–15    | bright variants (bright-black … white)    | light     |
+    +---------+-------------------------------------------+-----------+
+
+    Falls back to ``True`` (dark) when the signal is absent — dark backgrounds
+    are the common default in developer environments.
+    """
+    colorfgbg = os.environ.get("COLORFGBG", "")
+    if colorfgbg:
+        try:
+            bg = int(colorfgbg.split(";")[-1])
+            # Indices 0-6: standard dark colours (black … cyan) → dark bg.
+            # Index 7 (white) and 8-15 (bright variants) → treat as light.
+            return bg <= 6
+        except (ValueError, IndexError):
+            pass
+    return True  # Safe default: most developer terminals use a dark background.
+
+
+# ── Speaker colour palettes ──────────────────────────────────────────────────
+# Dark-background palette: bright/saturated colours contrast well against dark.
+_DARK_SPEAKER_COLOURS = [
     "bright_cyan",
     "bright_magenta",
     "bright_yellow",
     "bright_green",
+    "bright_blue",
+    "bright_red",
+    "cyan",
+    "magenta",
+    "yellow",
+    "green",
 ]
+
+# Light-background palette: darker/richer shades that contrast against white.
+_LIGHT_SPEAKER_COLOURS = [
+    "dark_cyan",
+    "dark_magenta",
+    "dark_green",
+    "blue",
+    "red",
+    "dark_orange",
+    "dark_violet",
+    "dark_goldenrod",
+    "teal",
+    "purple",
+]
+
+# Palette chosen once at import time based on the detected terminal background.
+_SPEAKER_COLOURS = _DARK_SPEAKER_COLOURS if _is_dark_terminal() else _LIGHT_SPEAKER_COLOURS
 
 _PREFIX = "  "
 
