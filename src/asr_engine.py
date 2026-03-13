@@ -214,3 +214,40 @@ def build_vad(cfg: Config) -> sherpa_onnx.VoiceActivityDetector:
         num_threads=cfg.num_threads,
     )
     return sherpa_onnx.VoiceActivityDetector(vad_config, buffer_size_in_seconds=60)
+
+
+def build_diarization(cfg: Config) -> sherpa_onnx.OfflineSpeakerDiarization:
+    """Build an OfflineSpeakerDiarization pipeline using pyannote segmentation.
+
+    Models required (auto-downloaded by main.py when --diarization is set):
+      - diarization_seg_model: path to pyannote model.onnx
+      - diarization_emb_model: path to speaker embedding extractor .onnx
+    """
+    if not cfg.diarization_seg_model or not cfg.diarization_emb_model:
+        raise ValueError(
+            "Both diarization_seg_model and diarization_emb_model must be set."
+        )
+    config = sherpa_onnx.OfflineSpeakerDiarizationConfig(
+        segmentation=sherpa_onnx.OfflineSpeakerSegmentationModelConfig(
+            pyannote=sherpa_onnx.OfflineSpeakerSegmentationPyannoteModelConfig(
+                model=cfg.diarization_seg_model,
+            ),
+            num_threads=cfg.num_threads,
+        ),
+        embedding=sherpa_onnx.SpeakerEmbeddingExtractorConfig(
+            model=cfg.diarization_emb_model,
+            num_threads=cfg.num_threads,
+        ),
+        clustering=sherpa_onnx.FastClusteringConfig(
+            num_clusters=cfg.diarization_num_speakers,
+            threshold=cfg.diarization_cluster_threshold,
+        ),
+        min_duration_on=0.3,
+        min_duration_off=0.5,
+    )
+    if not config.validate():
+        raise RuntimeError(
+            "Diarization config is invalid. "
+            "Check that the model files exist and are valid .onnx files."
+        )
+    return sherpa_onnx.OfflineSpeakerDiarization(config)

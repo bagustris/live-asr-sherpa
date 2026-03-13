@@ -25,3 +25,13 @@ class Config:
     language: str = "en"
     # Show a live RMS energy bar in the terminal for mic calibration.
     show_mic_level: bool = False
+    # Speaker diarization options (requires --diarization flag)
+    diarization: bool = False
+    # Path to pyannote segmentation model file (model.onnx inside the extracted tar).
+    diarization_seg_model: str = ""
+    # Path to speaker embedding extractor model file (.onnx).
+    diarization_emb_model: str = ""
+    # Number of speakers; -1 = auto-detect via clustering threshold.
+    diarization_num_speakers: int = -1
+    # Clustering threshold when num_speakers == -1 (lower → more speakers).
+    diarization_cluster_threshold: float = 0.5

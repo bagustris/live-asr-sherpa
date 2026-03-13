@@ -8,11 +8,12 @@ A terminal-based Automatic Speech Recognition (ASR) application built with [Sher
 
 - **Real-time microphone transcription** — partial hypotheses update live with <500 ms latency
 - **Offline WAV transcription** — process audio files through the same pipeline
+- **Speaker diarization** — colour-coded per-speaker output; ASR and diarization run concurrently to keep latency low
 - **Unified model loading** — all sherpa-onnx model families supported via a single `--model-type` flag
 - **CPU-optimized** — runs efficiently on any modern CPU using ONNX Runtime
-- **Auto model download** — fetches the default Zipformer model on first run
+- **Auto model download** — fetches the default Zipformer model on first run; diarization models also auto-downloaded
 - **Endpoint detection** — intelligently segments speech with configurable silence rules
-- **Clean terminal output** — partial results overwrite in-place, finalized segments print on new lines
+- **Rich terminal output** — colour-coded speaker labels and styled status messages via the `rich` library
 
 ## Prerequisites
 
@@ -27,6 +28,8 @@ A terminal-based Automatic Speech Recognition (ASR) application built with [Sher
 ```bash
 pip install -r src/requirements.txt
 ```
+
+> **Note:** `rich` is included as a dependency for styled terminal output.
 
 ### 2. Run
 
@@ -49,6 +52,31 @@ python3 src/main.py --wav path/to/audio.wav
 > ```
 
 The default Zipformer model (~300 MB) is downloaded automatically on first run.
+
+## Speaker Diarization
+
+Add `--diarization` to any command to colour-code the transcript by speaker. Two lightweight models are downloaded automatically on first use (~7 MB segmentation + ~23 MB embedding):
+
+```bash
+# Offline with diarization (auto-downloads all models)
+python3 src/main.py --mic --offline --diarization
+
+# If you know how many speakers will be present:
+python3 src/main.py --mic --offline --diarization --num-speakers 2
+
+# WAV file with diarization
+python3 src/main.py --wav meeting.wav --offline --diarization --num-speakers 3
+```
+
+Each speaker's transcript is printed in a distinct colour:
+
+```
+  [Speaker 00] Good morning everyone.
+  [Speaker 01] Thanks for joining the call.
+  [Speaker 00] Let's get started.
+```
+
+Diarization and ASR run **concurrently** (using a background thread pool), so the combined latency is approximately `max(ASR_time, diarization_time)` rather than the sum.
 
 ## Supported Models
 
@@ -150,6 +178,12 @@ python3 src/main.py --mic --offline \
 --capture-rate HZ       Microphone capture rate — use 48000 for device compatibility
 --vad-model PATH        Path to silero_vad.onnx (auto-downloaded if not provided)
 --listening             Show a live RMS energy bar for mic level calibration
+--diarization           Enable speaker diarization with colour-coded output
+--num-speakers N        Number of speakers (-1 = auto-detect, default: -1)
+--diarization-seg-model PATH
+                        Pyannote segmentation model.onnx (auto-downloaded if absent)
+--diarization-emb-model PATH
+                        Speaker embedding extractor .onnx (auto-downloaded if absent)
 ```
 
 ## Architecture
@@ -157,8 +191,8 @@ python3 src/main.py --mic --offline \
 ```
 src/
 ├── main.py            # CLI entry point, model download, validation
-├── asr_engine.py      # Unified model loading for all sherpa-onnx model types
-├── streaming.py       # Streaming decode loop & VAD-segmented offline loop
+├── asr_engine.py      # Unified model loading for all sherpa-onnx model types + diarization
+├── streaming.py       # Streaming decode loop & VAD-segmented offline loop; rich output
 ├── audio.py           # Microphone capture & WAV file reading
 ├── config.py          # Configuration dataclass
 └── requirements.txt   # Python dependencies
@@ -166,11 +200,11 @@ src/
 
 | Module | Responsibility |
 |--------|----------------|
-| `main.py` | Parses arguments, validates inputs, auto-downloads model/VAD, dispatches to streaming |
-| `asr_engine.py` | Builds `OnlineRecognizer` or `OfflineRecognizer` for any supported model type |
-| `streaming.py` | Feeds audio chunks to the recognizer; renders partial/final hypotheses to the terminal |
+| `main.py` | Parses arguments, validates inputs, auto-downloads model/VAD/diarization models, dispatches to streaming |
+| `asr_engine.py` | Builds `OnlineRecognizer`, `OfflineRecognizer`, `VoiceActivityDetector`, or `OfflineSpeakerDiarization` |
+| `streaming.py` | Feeds audio chunks to the recognizer; runs ASR and diarization concurrently; renders colour-coded output via `rich` |
 | `audio.py` | Provides two generators: `mic_stream()` for live capture, `read_wav()` for file input |
-| `config.py` | Holds runtime parameters (sample rate, chunk size, thread count, model path, language) |
+| `config.py` | Holds runtime parameters (sample rate, chunk size, thread count, model path, language, diarization settings) |
 
 ## Endpoint Detection (Online Mode)
 

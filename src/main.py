@@ -23,11 +23,19 @@ Usage:
     # Custom model directory:
     python3 main.py --mic --model-dir models/my-model --offline --model-type nemo_transducer
 
+    # Speaker diarization (offline, auto-downloads lightweight models):
+    python3 main.py --mic --offline --diarization
+
+    # Speaker diarization with known speaker count:
+    python3 main.py --mic --offline --diarization --num-speakers 2
+
     Models are stored under  models/<model-name>/  at the project root:
       models/zipformer-en-2023/            (online transducer, default)
       models/parakeet-tdt-0.6b-v2/         (offline, fp16 — larger, more accurate)
       models/parakeet-tdt-0.6b-v2-int8/    (offline, int8 — smaller & faster)
       models/silero_vad.onnx               (VAD, shared for offline use)
+      models/sherpa-onnx-pyannote-segmentation-3-0/model.onnx  (diarization segmentation)
+      models/nemo_en_speakerverification_speakernet.onnx        (diarization embedding)
 
     Online --model-type values:  (blank), transducer, zipformer, zipformer2,
                                  conformer, lstm, paraformer, ctc, wenet_ctc,
@@ -44,11 +52,23 @@ import urllib.request
 from pathlib import Path
 
 import soundfile as sf
+from rich.console import Console
 
-from asr_engine import build_offline_recognizer, build_recognizer, build_vad
+from asr_engine import build_diarization, build_offline_recognizer, build_recognizer, build_vad
 from audio import mic_stream, read_wav
 from config import Config
 from streaming import run_offline_vad_streaming, run_streaming
+
+_console = Console()
+
+
+def _info(msg: str) -> None:
+    _console.print(f"[bold green]\\[info][/bold green] {msg}")
+
+
+def _error(msg: str) -> None:
+    _console.print(f"[bold red]\\[error][/bold red] {msg}", file=sys.stderr)
+    sys.exit(1)
 
 
 def parse_args() -> argparse.Namespace:
@@ -116,6 +136,37 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Show a live RMS energy bar for microphone level calibration",
     )
+    parser.add_argument(
+        "--diarization",
+        action="store_true",
+        help=(
+            "Enable speaker diarization. Colours each speaker's output differently. "
+            "Works with both online and offline pipelines. "
+            "Diarization models are auto-downloaded on first use."
+        ),
+    )
+    parser.add_argument(
+        "--num-speakers",
+        type=int,
+        default=-1,
+        metavar="N",
+        help=(
+            "Known number of speakers for diarization (-1 = auto-detect via "
+            "clustering threshold). Providing the correct count improves accuracy."
+        ),
+    )
+    parser.add_argument(
+        "--diarization-seg-model",
+        default="",
+        metavar="PATH",
+        help="Path to pyannote segmentation model.onnx (auto-downloaded if not provided)",
+    )
+    parser.add_argument(
+        "--diarization-emb-model",
+        default="",
+        metavar="PATH",
+        help="Path to speaker embedding extractor .onnx (auto-downloaded if not provided)",
+    )
     return parser.parse_args()
 
 
@@ -151,10 +202,26 @@ _VAD_URL = (
     "asr-models/silero_vad.onnx"
 )
 
+# ── Diarization model URLs (lightest available models) ───────────────────────
+_DIAR_SEG_URL = (
+    "https://github.com/k2-fsa/sherpa-onnx/releases/download/"
+    "speaker-segmentation-models/sherpa-onnx-pyannote-segmentation-3-0.tar.bz2"
+)
+_DIAR_SEG_ARCHIVE = "sherpa-onnx-pyannote-segmentation-3-0.tar.bz2"
+_DIAR_SEG_EXTRACTED = "sherpa-onnx-pyannote-segmentation-3-0"
+_DIAR_SEG_MODEL_FILE = "model.onnx"
+
+# Lightest speaker embedding extractor (~22 MB)
+_DIAR_EMB_URL = (
+    "https://github.com/k2-fsa/sherpa-onnx/releases/download/"
+    "speaker-recongition-models/nemo_en_speakerverification_speakernet.onnx"
+)
+_DIAR_EMB_FILE = "nemo_en_speakerverification_speakernet.onnx"
+
 
 def _download_file(url: str, dest: Path) -> None:
-    print(f"[info] Downloading from:\n  {url}")
-    print("[info] This may take a few minutes…")
+    _info(f"Downloading from:\n  {url}")
+    _info("This may take a few minutes…")
 
     def _progress(block: int, block_size: int, total: int) -> None:
         if total > 0:
@@ -165,7 +232,7 @@ def _download_file(url: str, dest: Path) -> None:
     try:
         urllib.request.urlretrieve(url, dest, reporthook=_progress)
     except Exception as exc:  # noqa: BLE001
-        sys.exit(f"\n[error] Download failed: {exc}")
+        _error(f"Download failed: {exc}")
     print()
 
 
@@ -195,23 +262,23 @@ def _download_model(model_dir: str, model_type: str) -> None:
     models_dir = model_dir.parent
     models_dir.mkdir(parents=True, exist_ok=True)
     archive = models_dir / archive_name
-    print(f"[info] Model not found.")
+    _info("Model not found.")
     _download_file(url, archive)
 
-    print("[info] Extracting…")
+    _info("Extracting…")
     try:
         with tarfile.open(archive, "r:bz2") as tf:
             tf.extractall(models_dir, filter="data")
     except Exception as exc:  # noqa: BLE001
-        sys.exit(f"[error] Extraction failed: {exc}")
+        _error(f"Extraction failed: {exc}")
 
     extracted = models_dir / extracted_name
     if not extracted.is_dir():
-        sys.exit(f"[error] Expected extracted directory '{extracted_name}' not found.")
+        _error(f"Expected extracted directory '{extracted_name}' not found.")
 
     extracted.rename(model_dir)
     archive.unlink(missing_ok=True)
-    print(f"[info] Model saved to '{model_dir}'.\n")
+    _info(f"Model saved to '{model_dir}'.\n")
 
 
 def _validate_model(model_dir: str, model_type: str) -> None:
@@ -226,32 +293,76 @@ def _validate_vad(vad_model: str, offline: bool, project_dir: Path) -> str:
         vad_path = project_dir / "models" / "silero_vad.onnx"
         if not vad_path.exists():
             vad_path.parent.mkdir(parents=True, exist_ok=True)
-            print("[info] VAD model not found, downloading silero_vad.onnx…")
+            _info("VAD model not found, downloading silero_vad.onnx…")
             _download_file(_VAD_URL, vad_path)
         return str(vad_path)
     if not Path(vad_model).exists():
-        sys.exit(f"[error] VAD model not found: {vad_model}")
+        _error(f"VAD model not found: {vad_model}")
     return vad_model
+
+
+def _validate_diarization_models(
+    seg_model: str, emb_model: str, project_dir: Path
+) -> tuple[str, str]:
+    """Return paths to diarization models, downloading them if necessary."""
+    models_dir = project_dir / "models"
+
+    # Segmentation model
+    if not seg_model:
+        seg_dir = models_dir / _DIAR_SEG_EXTRACTED
+        seg_path = seg_dir / _DIAR_SEG_MODEL_FILE
+        if not seg_path.exists():
+            seg_dir.parent.mkdir(parents=True, exist_ok=True)
+            _info("Diarization segmentation model not found, downloading…")
+            archive = models_dir / _DIAR_SEG_ARCHIVE
+            _download_file(_DIAR_SEG_URL, archive)
+            _info("Extracting segmentation model…")
+            try:
+                with tarfile.open(archive, "r:bz2") as tf:
+                    tf.extractall(models_dir, filter="data")
+            except Exception as exc:  # noqa: BLE001
+                _error(f"Extraction failed: {exc}")
+            archive.unlink(missing_ok=True)
+            if not seg_path.exists():
+                _error(f"Segmentation model not found after extraction: {seg_path}")
+            _info(f"Segmentation model saved to '{seg_path}'.")
+        seg_model = str(seg_path)
+    elif not Path(seg_model).exists():
+        _error(f"Diarization segmentation model not found: {seg_model}")
+
+    # Embedding model
+    if not emb_model:
+        emb_path = models_dir / _DIAR_EMB_FILE
+        if not emb_path.exists():
+            models_dir.mkdir(parents=True, exist_ok=True)
+            _info("Diarization embedding model not found, downloading…")
+            _download_file(_DIAR_EMB_URL, emb_path)
+            _info(f"Embedding model saved to '{emb_path}'.")
+        emb_model = str(emb_path)
+    elif not Path(emb_model).exists():
+        _error(f"Diarization embedding model not found: {emb_model}")
+
+    return seg_model, emb_model
 
 
 def _validate_wav(path: str, sample_rate: int) -> None:
     p = Path(path)
     if not p.exists():
-        sys.exit(f"[error] Audio file not found: {path}")
+        _error(f"Audio file not found: {path}")
     try:
         with sf.SoundFile(path) as f:
             if f.channels != 1:
-                sys.exit(
-                    f"[error] Audio must be mono (1 channel), got {f.channels}.\n"
+                _error(
+                    f"Audio must be mono (1 channel), got {f.channels}.\n"
                     f"  Convert: ffmpeg -i {path} -ar {sample_rate} -ac 1 out.wav"
                 )
             if f.samplerate != sample_rate:
-                sys.exit(
-                    f"[error] Audio sample rate must be {sample_rate} Hz, got {f.samplerate} Hz.\n"
+                _error(
+                    f"Audio sample rate must be {sample_rate} Hz, got {f.samplerate} Hz.\n"
                     f"  Convert: ffmpeg -i {path} -ar {sample_rate} -ac 1 out.wav"
                 )
     except Exception as exc:
-        sys.exit(f"[error] Cannot read audio file: {exc}")
+        _error(f"Cannot read audio file: {exc}")
 
 
 def _validate_mic() -> None:
@@ -261,9 +372,9 @@ def _validate_mic() -> None:
         devices = sd.query_devices()
         inputs = [d for d in devices if d["max_input_channels"] > 0]
         if not inputs:
-            sys.exit("[error] No input audio device found.")
+            _error("No input audio device found.")
     except Exception as exc:  # noqa: BLE001
-        sys.exit(f"[error] Microphone check failed: {exc}")
+        _error(f"Microphone check failed: {exc}")
 
 
 def main() -> None:
@@ -294,6 +405,10 @@ def main() -> None:
         vad_model=args.vad_model,
         language=args.language,
         show_mic_level=args.listening,
+        diarization=args.diarization,
+        diarization_seg_model=args.diarization_seg_model,
+        diarization_emb_model=args.diarization_emb_model,
+        diarization_num_speakers=args.num_speakers,
     )
 
     _validate_model(cfg.model_dir, cfg.model_type)
@@ -306,8 +421,8 @@ def main() -> None:
         cfg.model_type.lower() in _OFFLINE_ONLY_TYPES
         or any(pat in model_name_lower for pat in _OFFLINE_ONLY_NAME_PATTERNS)
     ):
-        print(
-            f"[info] Model '{Path(cfg.model_dir).name}' is offline-only — "
+        _info(
+            f"Model '{Path(cfg.model_dir).name}' is offline-only — "
             "enabling --offline automatically."
         )
         cfg.offline = True
@@ -319,8 +434,15 @@ def main() -> None:
     else:
         _validate_mic()
 
+    # Validate / download diarization models if requested.
+    diarizer = None
+    if cfg.diarization:
+        cfg.diarization_seg_model, cfg.diarization_emb_model = _validate_diarization_models(
+            cfg.diarization_seg_model, cfg.diarization_emb_model, project_dir
+        )
+
     model_name = Path(cfg.model_dir).name
-    print(f"[info] Loading model '{model_name}' ({cfg.num_threads} threads)…")
+    _info(f"Loading model '{model_name}' ({cfg.num_threads} threads)…")
 
     if args.wav:
         audio = read_wav(args.wav, target_sr=cfg.sample_rate, chunk_size=cfg.chunk_size)
@@ -332,12 +454,15 @@ def main() -> None:
     if cfg.offline:
         recognizer = build_offline_recognizer(cfg)
         vad = build_vad(cfg)
-        print("[info] Model ready.\n")
+        if cfg.diarization:
+            _info("Loading diarization models…")
+            diarizer = build_diarization(cfg)
+        _info("Model ready.\n")
 
         if args.wav:
-            print(f"[info] Transcribing: {args.wav}\n")
+            _info(f"Transcribing: {args.wav}\n")
         else:
-            print("[info] Listening on microphone — press Ctrl+C to stop.\n")
+            _info("Listening on microphone — press Ctrl+C to stop.\n")
 
         run_offline_vad_streaming(
             recognizer=recognizer,
@@ -345,18 +470,29 @@ def main() -> None:
             audio_gen=audio,
             sample_rate=capture_rate,
             show_mic_level=cfg.show_mic_level,
+            diarization=diarizer,
         )
     else:
         recognizer = build_recognizer(cfg)
-        print("[info] Model ready.\n")
+        if cfg.diarization:
+            _info("Loading diarization models…")
+            diarizer = build_diarization(cfg)
+        _info("Model ready.\n")
 
         if args.wav:
-            print(f"[info] Transcribing: {args.wav}\n")
+            _info(f"Transcribing: {args.wav}\n")
         else:
-            print("[info] Listening on microphone — press Ctrl+C to stop.\n")
+            _info("Listening on microphone — press Ctrl+C to stop.\n")
 
-        run_streaming(recognizer, audio, sample_rate=capture_rate, show_mic_level=cfg.show_mic_level)
+        run_streaming(
+            recognizer,
+            audio,
+            sample_rate=capture_rate,
+            show_mic_level=cfg.show_mic_level,
+            diarization=diarizer,
+        )
 
 
 if __name__ == "__main__":
     main()
+
