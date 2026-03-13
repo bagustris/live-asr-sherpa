@@ -139,11 +139,18 @@ def run_streaming(
                     _clear_line(last_partial)
                     # Flush the previous utterance (diarization may now be done).
                     _flush_pending(pending, pending_text)
-                    # Submit diarization for this utterance.
+                    # Submit diarization for this utterance, but avoid queueing
+                    # multiple diarization tasks when using a single worker.
                     if diarization is not None and audio_buf:
                         seg_audio = np.concatenate(audio_buf)
-                        pending = _submit_diarization(seg_audio)
-                        pending_text = text
+                        if pending is None or pending.done():
+                            pending = _submit_diarization(seg_audio)
+                            pending_text = text
+                        else:
+                            # Diarization worker is still busy; skip diarization
+                            # for this utterance and flush plain text immediately.
+                            _flush_pending(None, text)
+                            pending_text = ""
                     else:
                         pending = None
                         pending_text = text
