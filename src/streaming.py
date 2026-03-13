@@ -6,6 +6,7 @@ import numpy as np
 import sherpa_onnx
 from rich.console import Console
 from rich.text import Text
+import shutil
 
 # ── Rich console (no markup auto-escaping needed; we build Text objects) ────
 _console = Console(highlight=False, markup=False)
@@ -122,6 +123,13 @@ def run_streaming(
 
             if recognizer.is_endpoint(stream):
                 if text:
+                    if show_mic_level:
+                        try:
+                            width = shutil.get_terminal_size(fallback=(80, 20)).columns
+                        except OSError:
+                            width = 80
+                        sys.stdout.write("\r" + " " * width + "\r")
+                        sys.stdout.flush()
                     _clear_line(last_partial)
                     # Flush the previous utterance (diarization may now be done).
                     _flush_pending(pending, pending_text)
