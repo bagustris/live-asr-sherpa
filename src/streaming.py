@@ -8,7 +8,7 @@ from rich.console import Console
 from rich.text import Text
 
 # ── Rich console (no markup auto-escaping needed; we build Text objects) ────
-_console = Console(highlight=False)
+_console = Console(highlight=False, markup=False)
 
 # Colours cycled through for speakers 0, 1, 2, …
 _SPEAKER_COLOURS = [
