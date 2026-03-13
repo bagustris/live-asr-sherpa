@@ -108,47 +108,99 @@ class TestParseArgs:
             args = main_module.parse_args()
         assert args.model_dir is None
 
+    def test_default_vad_model_is_silero(self):
+        with patch("sys.argv", ["main.py", "--mic"]):
+            args = main_module.parse_args()
+        assert args.vad_model == "silero"
+
+    def test_vad_model_ten_vad(self):
+        with patch("sys.argv", ["main.py", "--mic", "--vad-model", "ten-vad"]):
+            args = main_module.parse_args()
+        assert args.vad_model == "ten-vad"
+
+    def test_vad_model_invalid_choice_exits(self):
+        with patch("sys.argv", ["main.py", "--mic", "--vad-model", "invalid"]):
+            with pytest.raises(SystemExit):
+                main_module.parse_args()
+
+    def test_default_ten_vad_model_is_int8(self):
+        with patch("sys.argv", ["main.py", "--mic"]):
+            args = main_module.parse_args()
+        assert args.ten_vad_model == "ten-vad.int8.onnx"
+
+    def test_ten_vad_model_full_onnx(self):
+        with patch("sys.argv", ["main.py", "--mic", "--ten-vad-model", "ten-vad.onnx"]):
+            args = main_module.parse_args()
+        assert args.ten_vad_model == "ten-vad.onnx"
+
 
 # ---------------------------------------------------------------------------
 # _validate_vad
 # ---------------------------------------------------------------------------
 
 class TestValidateVad:
-    def test_returns_given_model_when_not_offline(self):
-        result = main_module._validate_vad("some_vad.onnx", False, Path("/proj"))
-        assert result == "some_vad.onnx"
-
-    def test_returns_empty_when_not_offline_and_no_model(self):
-        result = main_module._validate_vad("", False, Path("/proj"))
+    def test_returns_empty_when_not_offline_silero(self):
+        result = main_module._validate_vad("silero", "ten-vad.int8.onnx", False, Path("/proj"))
         assert result == ""
 
-    def test_downloads_vad_when_offline_and_no_model(self, tmp_path):
+    def test_returns_empty_when_not_offline_ten_vad(self):
+        result = main_module._validate_vad("ten-vad", "ten-vad.int8.onnx", False, Path("/proj"))
+        assert result == ""
+
+    def test_downloads_silero_when_offline_and_no_file(self, tmp_path):
         with patch.object(main_module, "_download_file") as mock_dl:
-            result = main_module._validate_vad("", True, tmp_path)
+            result = main_module._validate_vad("silero", "ten-vad.int8.onnx", True, tmp_path)
 
         expected_path = str(tmp_path / "models" / "silero_vad.onnx")
         assert result == expected_path
         mock_dl.assert_called_once()
 
-    def test_returns_existing_vad_when_offline(self, tmp_path):
-        vad = tmp_path / "silero_vad.onnx"
-        vad.touch()
-        result = main_module._validate_vad(str(vad), True, tmp_path)
-        assert result == str(vad)
-
-    def test_does_not_download_when_vad_already_exists_offline(self, tmp_path):
+    def test_does_not_download_silero_when_already_exists(self, tmp_path):
         vad_path = tmp_path / "models" / "silero_vad.onnx"
         vad_path.parent.mkdir()
         vad_path.touch()
 
         with patch.object(main_module, "_download_file") as mock_dl:
-            main_module._validate_vad("", True, tmp_path)
+            result = main_module._validate_vad("silero", "ten-vad.int8.onnx", True, tmp_path)
+
+        mock_dl.assert_not_called()
+        assert result == str(vad_path)
+
+    def test_downloads_ten_vad_int8_when_offline_and_no_file(self, tmp_path):
+        with patch.object(main_module, "_download_file") as mock_dl:
+            result = main_module._validate_vad("ten-vad", "ten-vad.int8.onnx", True, tmp_path)
+
+        expected_path = str(tmp_path / "models" / "ten-vad.int8.onnx")
+        assert result == expected_path
+        mock_dl.assert_called_once()
+
+    def test_downloads_ten_vad_onnx_variant_when_specified(self, tmp_path):
+        with patch.object(main_module, "_download_file") as mock_dl:
+            result = main_module._validate_vad("ten-vad", "ten-vad.onnx", True, tmp_path)
+
+        expected_path = str(tmp_path / "models" / "ten-vad.onnx")
+        assert result == expected_path
+        mock_dl.assert_called_once()
+        url_used = mock_dl.call_args[0][0]
+        assert "ten-vad.onnx" in url_used
+        assert "int8" not in url_used
+
+    def test_does_not_download_ten_vad_when_already_exists(self, tmp_path):
+        vad_path = tmp_path / "models" / "ten-vad.int8.onnx"
+        vad_path.parent.mkdir()
+        vad_path.touch()
+
+        with patch.object(main_module, "_download_file") as mock_dl:
+            main_module._validate_vad("ten-vad", "ten-vad.int8.onnx", True, tmp_path)
 
         mock_dl.assert_not_called()
 
-    def test_exits_when_specified_vad_not_found(self, tmp_path):
-        with pytest.raises(SystemExit):
-            main_module._validate_vad("nonexistent.onnx", True, tmp_path)
+    def test_ten_vad_url_differs_between_variants(self):
+        int8_url = main_module._TEN_VAD_MODEL_URLS["ten-vad.int8.onnx"]
+        full_url = main_module._TEN_VAD_MODEL_URLS["ten-vad.onnx"]
+        assert int8_url != full_url
+        assert "int8" in int8_url
+        assert "int8" not in full_url
 
 
 # ---------------------------------------------------------------------------

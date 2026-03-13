@@ -124,9 +124,18 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--vad-model",
-        default="",
-        metavar="PATH",
-        help="Path to silero_vad.onnx; auto-downloaded when needed for offline model types",
+        default="silero",
+        choices=["silero", "ten-vad"],
+        help="VAD model type to use for offline segmentation (default: silero).",
+    )
+    parser.add_argument(
+        "--ten-vad-model",
+        default="ten-vad.int8.onnx",
+        choices=["ten-vad.onnx", "ten-vad.int8.onnx"],
+        help=(
+            "Ten-VAD model variant to use when --vad-model is ten-vad "
+            "(default: ten-vad.int8.onnx)."
+        ),
     )
     parser.add_argument(
         "--language",
@@ -212,6 +221,17 @@ _VAD_URL = (
     "https://github.com/k2-fsa/sherpa-onnx/releases/download/"
     "asr-models/silero_vad.onnx"
 )
+
+_TEN_VAD_MODEL_URLS = {
+    "ten-vad.onnx": (
+        "https://github.com/k2-fsa/sherpa-onnx/releases/download/"
+        "asr-models/ten-vad.onnx"
+    ),
+    "ten-vad.int8.onnx": (
+        "https://github.com/k2-fsa/sherpa-onnx/releases/download/"
+        "asr-models/ten-vad.int8.onnx"
+    ),
+}
 
 # ── Diarization model URLs (lightest available models) ───────────────────────
 _DIAR_SEG_URL = (
@@ -323,19 +343,23 @@ def _validate_model(model_dir: str, model_type: str) -> None:
         _download_model(model_dir, model_type)
 
 
-def _validate_vad(vad_model: str, offline: bool, project_dir: Path) -> str:
+def _validate_vad(vad_type: str, ten_vad_model: str, offline: bool, project_dir: Path) -> str:
     if not offline:
-        return vad_model
-    if not vad_model:
-        vad_path = project_dir / "models" / "silero_vad.onnx"
+        return ""
+    if vad_type == "ten-vad":
+        vad_path = project_dir / "models" / ten_vad_model
         if not vad_path.exists():
             vad_path.parent.mkdir(parents=True, exist_ok=True)
-            _info("VAD model not found, downloading silero_vad.onnx…")
-            _download_file(_VAD_URL, vad_path)
+            _info(f"VAD model not found, downloading {ten_vad_model}…")
+            _download_file(_TEN_VAD_MODEL_URLS[ten_vad_model], vad_path)
         return str(vad_path)
-    if not Path(vad_model).exists():
-        _error(f"VAD model not found: {vad_model}")
-    return vad_model
+    # silero (default)
+    vad_path = project_dir / "models" / "silero_vad.onnx"
+    if not vad_path.exists():
+        vad_path.parent.mkdir(parents=True, exist_ok=True)
+        _info("VAD model not found, downloading silero_vad.onnx…")
+        _download_file(_VAD_URL, vad_path)
+    return str(vad_path)
 
 
 def _safe_extract_tar(tar: tarfile.TarFile, path: Path) -> None:
@@ -462,7 +486,8 @@ def main() -> None:
         num_threads=args.threads,
         model_type=args.model_type,
         offline=args.offline,
-        vad_model=args.vad_model,
+        vad_type=args.vad_model,   # --vad-model selects the VAD type ("silero" or "ten-vad")
+        ten_vad_model=args.ten_vad_model,
         language=args.language,
         show_mic_level=args.listening,
         diarization=args.diarization,
@@ -487,7 +512,7 @@ def main() -> None:
         )
         cfg.offline = True
 
-    cfg.vad_model = _validate_vad(cfg.vad_model, cfg.offline, project_dir)
+    cfg.vad_model = _validate_vad(cfg.vad_type, cfg.ten_vad_model, cfg.offline, project_dir)
 
     if args.wav:
         _validate_wav(args.wav, cfg.sample_rate)

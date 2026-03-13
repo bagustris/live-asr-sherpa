@@ -16,8 +16,12 @@ class Config:
     model_type: str = ""
     # Set to True to use the offline (VAD-segmented) pipeline instead of streaming.
     offline: bool = False
-    # Path to silero_vad.onnx; required when offline=True
+    # VAD type to use: "silero" (default) or "ten-vad".
+    vad_type: str = "silero"
+    # Path to the resolved VAD model .onnx file; populated by main._validate_vad().
     vad_model: str = ""
+    # Ten-VAD model file variant: "ten-vad.onnx" or "ten-vad.int8.onnx" (default).
+    ten_vad_model: str = "ten-vad.int8.onnx"
     vad_threshold: float = 0.5
     vad_min_silence_duration: float = 0.5
     vad_min_speech_duration: float = 0.25

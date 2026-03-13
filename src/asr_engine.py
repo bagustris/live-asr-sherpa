@@ -190,7 +190,7 @@ def build_offline_recognizer(cfg: Config) -> sherpa_onnx.OfflineRecognizer:
 
 
 def build_vad(cfg: Config) -> sherpa_onnx.VoiceActivityDetector:
-    """Build a Silero VAD for segmenting live audio into utterances.
+    """Build a VAD (Silero or Ten-VAD) for segmenting live audio into utterances.
 
     Required for offline models because they cannot decode incrementally —
     the VAD accumulates audio until silence is detected, then the full
@@ -199,20 +199,30 @@ def build_vad(cfg: Config) -> sherpa_onnx.VoiceActivityDetector:
     if not cfg.vad_model:
         raise ValueError(
             "--vad-model is required for offline model types.\n"
-            "Download silero_vad.onnx with:\n"
-            "  wget https://github.com/k2-fsa/sherpa-onnx/releases/download/"
-            "asr-models/silero_vad.onnx"
+            "Choose a VAD type with --vad-model silero (default) or --vad-model ten-vad."
         )
-    vad_config = sherpa_onnx.VadModelConfig(
-        silero_vad=sherpa_onnx.SileroVadModelConfig(
-            model=cfg.vad_model,
-            threshold=cfg.vad_threshold,
-            min_silence_duration=cfg.vad_min_silence_duration,
-            min_speech_duration=cfg.vad_min_speech_duration,
-        ),
-        sample_rate=cfg.sample_rate,
-        num_threads=cfg.num_threads,
-    )
+    if cfg.vad_type == "ten-vad":
+        vad_config = sherpa_onnx.VadModelConfig(
+            ten_vad=sherpa_onnx.TenVadModelConfig(
+                model=cfg.vad_model,
+                threshold=cfg.vad_threshold,
+                min_silence_duration=cfg.vad_min_silence_duration,
+                min_speech_duration=cfg.vad_min_speech_duration,
+            ),
+            sample_rate=cfg.sample_rate,
+            num_threads=cfg.num_threads,
+        )
+    else:
+        vad_config = sherpa_onnx.VadModelConfig(
+            silero_vad=sherpa_onnx.SileroVadModelConfig(
+                model=cfg.vad_model,
+                threshold=cfg.vad_threshold,
+                min_silence_duration=cfg.vad_min_silence_duration,
+                min_speech_duration=cfg.vad_min_speech_duration,
+            ),
+            sample_rate=cfg.sample_rate,
+            num_threads=cfg.num_threads,
+        )
     return sherpa_onnx.VoiceActivityDetector(vad_config, buffer_size_in_seconds=60)
 
 
