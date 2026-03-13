@@ -1,15 +1,135 @@
+import os
 import sys
-from typing import Generator
+from concurrent.futures import ThreadPoolExecutor, Future
+from typing import Generator, Optional
 
+import logging
 import numpy as np
 import sherpa_onnx
+from rich.console import Console
+from rich.text import Text
+import shutil
 
+# ── Rich console (no markup auto-escaping needed; we build Text objects) ────
+_console = Console(highlight=False, markup=False)
+
+
+def _is_dark_terminal() -> bool:
+    """Detect whether the terminal has a dark background.
+
+    Primary signal: the COLORFGBG environment variable (set by many
+    xterm-compatible terminals). Its format is ``foreground;background`` where
+    the background field is a standard ANSI colour index:
+
+    +---------+-------------------------------------------+-----------+
+    | Index   | Colour                                    | BG type   |
+    +=========+===========================================+===========+
+    | 0–6     | black, red, green, yellow, blue,          | dark      |
+    |         | magenta, cyan                             |           |
+    +---------+-------------------------------------------+-----------+
+    | 7       | white / light-grey                        | light     |
+    +---------+-------------------------------------------+-----------+
+    | 8–15    | bright variants (bright-black … white)    | light     |
+    +---------+-------------------------------------------+-----------+
+
+    Falls back to ``True`` (dark) when the signal is absent — dark backgrounds
+    are the common default in developer environments.
+    """
+    colorfgbg = os.environ.get("COLORFGBG", "")
+    if colorfgbg:
+        try:
+            bg = int(colorfgbg.split(";")[-1])
+            # Indices 0-6: standard dark colours (black … cyan) → dark bg.
+            # Index 7 (white) and 8-15 (bright variants) → treat as light.
+            return bg <= 6
+        except (ValueError, IndexError):
+            pass
+    return True  # Safe default: most developer terminals use a dark background.
+
+
+# ── Speaker colour palettes ──────────────────────────────────────────────────
+# Dark-background palette: bright/saturated colours contrast well against dark.
+_DARK_SPEAKER_COLOURS = [
+    "bright_cyan",
+    "bright_magenta",
+    "bright_yellow",
+    "bright_green",
+    "bright_blue",
+    "bright_red",
+    "cyan",
+    "magenta",
+    "yellow",
+    "green",
+]
+
+# Light-background palette: darker/richer shades that contrast against white.
+_LIGHT_SPEAKER_COLOURS = [
+    "dark_cyan",
+    "dark_magenta",
+    "dark_green",
+    "blue",
+    "red",
+    "dark_orange",
+    "dark_violet",
+    "dark_goldenrod",
+    "teal",
+    "purple",
+]
+
+# Palette chosen once at import time based on the detected terminal background.
+_SPEAKER_COLOURS = _DARK_SPEAKER_COLOURS if _is_dark_terminal() else _LIGHT_SPEAKER_COLOURS
+
+_PREFIX = "  "
+
+
+def _speaker_colour(speaker_id: int) -> str:
+    return _SPEAKER_COLOURS[speaker_id % len(_SPEAKER_COLOURS)]
+
+
+def _rich_print(
+    text: str,
+    speaker_id: Optional[int] = None,
+    show_speaker_tag: bool = False,
+) -> None:
+    """Print a finalised line, optionally coloured (and tagged) by speaker.
+
+    When *speaker_id* is set, the text is coloured with that speaker's colour.
+    The ``[Speaker N]`` label prefix is only shown when *show_speaker_tag* is
+    ``True`` (default: colour-only, no tag).
+    """
+    if speaker_id is not None:
+        colour = _speaker_colour(speaker_id)
+        t = Text()
+        if show_speaker_tag:
+            t.append(f"{_PREFIX}[Speaker {speaker_id}] ", style=f"bold {colour}")
+            t.append(text, style=colour)
+        else:
+            t.append(f"{_PREFIX}{text}", style=colour)
+        _console.print(t)
+    else:
+        _console.print(f"{_PREFIX}{text}")
+
+
+def _dominant_speaker(result: sherpa_onnx.OfflineSpeakerDiarizationResult) -> int:
+    """Return the speaker id that covers the most time in this segment."""
+    segments = result.sort_by_start_time()
+    if not segments:
+        return 0
+    duration: dict[int, float] = {}
+    for seg in segments:
+        duration[seg.speaker] = duration.get(seg.speaker, 0.0) + (seg.end - seg.start)
+    return max(duration, key=duration.__getitem__)
+
+
+# ── Online (streaming) recogniser loop ──────────────────────────────────────
 
 def run_streaming(
     recognizer: sherpa_onnx.OnlineRecognizer,
     audio_gen: Generator[np.ndarray, None, None],
     sample_rate: int = 16000,
     show_mic_level: bool = False,
+    diarization: Optional[sherpa_onnx.OfflineSpeakerDiarization] = None,
+    show_speaker_tag: bool = False,
 ) -> None:
     """Feed incremental audio chunks into the recognizer and render output.
 
@@ -18,18 +138,51 @@ def run_streaming(
         (near-zero latency feedback, avoids line spam).
       - Finalized segments: printed on a new line when an endpoint is detected.
 
-    Tradeoff: endpoint detection adds ~1–2 s silence at segment boundaries
-    but keeps each printed line readable. Disable via enable_endpoint_detection
-    in asr_engine.py for continuous single-line output instead.
+    When *diarization* is provided the accumulated audio for each utterance is
+    sent to the diarization pipeline in a background thread so that it runs
+    concurrently with the next ASR utterance, keeping added latency near zero.
+    Each speaker's output is colour-coded; when *show_speaker_tag* is ``True``
+    a ``[Speaker N]`` prefix is also printed.
     """
     stream = recognizer.create_stream()
     last_partial = ""
+    # Buffer raw audio for the current utterance (used for diarization).
+    audio_buf: list[np.ndarray] = []
+    executor: Optional[ThreadPoolExecutor] = ThreadPoolExecutor(max_workers=1) if diarization is not None else None
+    pending: Optional[Future] = None  # diarization future for the *previous* utterance
+
+    def _submit_diarization(samples: np.ndarray) -> Optional[Future]:
+        if executor is None or diarization is None:
+            return None
+        return executor.submit(diarization.process, samples)
+
+    def _flush_pending(pending_future: Optional[Future], pending_text: str) -> None:
+        """Print the pending utterance with its diarization label (if available)."""
+        if not pending_text:
+            return
+        speaker_id = None
+        if pending_future is not None and pending_future.done():
+            try:
+                result = pending_future.result()
+                speaker_id = _dominant_speaker(result)
+            except Exception as exc:
+                logging.debug(
+                    "Diarization failed for utterance %r: %s",
+                    pending_text,
+                    exc,
+                    exc_info=True,
+                )
+        _rich_print(pending_text, speaker_id, show_speaker_tag=show_speaker_tag)
+
+    pending_text = ""
 
     try:
         for chunk in audio_gen:
             stream.accept_waveform(sample_rate, chunk)
+            if diarization is not None:
+                audio_buf.append(chunk)
 
-            # Decode all queued frames immediately — avoid internal buffer build-up
+            # Decode all queued frames immediately
             while recognizer.is_ready(stream):
                 recognizer.decode_stream(stream)
 
@@ -42,15 +195,38 @@ def run_streaming(
                 sys.stdout.flush()
 
             if recognizer.is_endpoint(stream):
-                # Segment finalized: clear partial line and print the full segment
                 if text:
+                    if show_mic_level:
+                        try:
+                            width = shutil.get_terminal_size(fallback=(80, 20)).columns
+                        except OSError:
+                            width = 80
+                        sys.stdout.write("\r" + " " * width + "\r")
+                        sys.stdout.flush()
                     _clear_line(last_partial)
-                    print(f"{_PREFIX}{text}")
-                    sys.stdout.flush()
+                    # Flush the previous utterance (diarization may now be done).
+                    _flush_pending(pending, pending_text)
+                    # Submit diarization for this utterance, but avoid queueing
+                    # multiple diarization tasks when using a single worker.
+                    if diarization is not None and audio_buf:
+                        seg_audio = np.concatenate(audio_buf)
+                        if pending is None or pending.done():
+                            pending = _submit_diarization(seg_audio)
+                            pending_text = text
+                        else:
+                            # Diarization worker is still busy; skip diarization
+                            # for this utterance and flush plain text immediately.
+                            _flush_pending(None, text)
+                            pending_text = ""
+                    else:
+                        pending = None
+                        pending_text = text
+                        _flush_pending(None, pending_text)
+                        pending_text = ""
                 recognizer.reset(stream)
+                audio_buf.clear()
                 last_partial = ""
             elif text != last_partial:
-                # Show latest partial hypothesis in-place
                 sys.stdout.write(f"\r{_PREFIX}{text}")
                 sys.stdout.flush()
                 last_partial = text
@@ -59,7 +235,13 @@ def run_streaming(
         pass
     finally:
         _flush_tail(recognizer, stream, sample_rate, last_partial)
+        # Flush the last pending diarization result.
+        _flush_pending(pending, pending_text)
+        if executor is not None:
+            executor.shutdown(wait=True)
 
+
+# ── Offline VAD-segmented loop ───────────────────────────────────────────────
 
 def run_offline_vad_streaming(
     recognizer: sherpa_onnx.OfflineRecognizer,
@@ -67,19 +249,18 @@ def run_offline_vad_streaming(
     audio_gen: Generator[np.ndarray, None, None],
     sample_rate: int = 48000,
     show_mic_level: bool = False,
+    diarization: Optional[sherpa_onnx.OfflineSpeakerDiarization] = None,
+    show_speaker_tag: bool = False,
 ) -> None:
-    """VAD-segmented offline ASR for live audio (microphone or WAV file).
+    """VAD-segmented offline ASR with optional concurrent speaker diarization.
 
-    Strategy: feed audio chunks into the VAD; when the VAD marks a speech
-    segment as complete (silence detected after speech), run the offline
-    recognizer on the accumulated samples and print the result.
-
-    Latency tradeoff: adds ~0.5 s silence at segment boundaries (VAD
-    min_silence_duration) but gives higher accuracy than streaming models.
-
-    show_mic_level: when True, renders a live RMS energy bar after each chunk
-    for microphone level calibration (enabled via --listening).
+    For each speech segment the ASR and diarization models run concurrently
+    in a ThreadPoolExecutor so that neither doubles the per-segment latency.
+    Each speaker's output is colour-coded; when *show_speaker_tag* is ``True``
+    a ``[Speaker N]`` prefix is also printed.
     """
+    executor: Optional[ThreadPoolExecutor] = ThreadPoolExecutor(max_workers=2) if diarization else None
+
     try:
         for chunk in audio_gen:
             vad.accept_waveform(chunk)
@@ -90,43 +271,65 @@ def run_offline_vad_streaming(
                 sys.stdout.write(f"\r{_PREFIX}mic: {bar:<40} {energy:.4f}")
                 sys.stdout.flush()
 
-            # Process completed speech segments
             while not vad.empty():
                 segment = vad.front
                 samples = np.array(segment.samples, dtype=np.float32)
                 vad.pop()
-                _decode_and_print(recognizer, samples, sample_rate)
+                _decode_and_print(recognizer, samples, sample_rate, diarization, executor, show_speaker_tag)
 
     except KeyboardInterrupt:
         pass
     finally:
-        # Flush any speech still buffered in the VAD
         vad.flush()
         while not vad.empty():
             segment = vad.front
             samples = np.array(segment.samples, dtype=np.float32)
             vad.pop()
-            _decode_and_print(recognizer, samples, sample_rate)
+            _decode_and_print(recognizer, samples, sample_rate, diarization, executor, show_speaker_tag)
         sys.stdout.write("\n")
         sys.stdout.flush()
+        if executor is not None:
+            executor.shutdown(wait=True)
 
 
 def _decode_and_print(
     recognizer: sherpa_onnx.OfflineRecognizer,
     samples: np.ndarray,
     sample_rate: int,
+    diarization: Optional[sherpa_onnx.OfflineSpeakerDiarization] = None,
+    executor: Optional[ThreadPoolExecutor] = None,
+    show_speaker_tag: bool = False,
 ) -> None:
+    """Run ASR (and optionally diarization) on *samples* and print the result.
+
+    ASR and diarization are submitted concurrently to *executor* so that the
+    combined latency is max(asr_time, diarization_time) rather than the sum.
+    """
+    if diarization is not None and executor is not None:
+        asr_future = executor.submit(_run_asr, recognizer, samples, sample_rate)
+        diar_future = executor.submit(diarization.process, samples)
+        text = asr_future.result()
+        diar_result = diar_future.result()
+        speaker_id: Optional[int] = _dominant_speaker(diar_result) if text else None
+    else:
+        text = _run_asr(recognizer, samples, sample_rate)
+        speaker_id = None
+
+    if text:
+        sys.stdout.write(f"\r{' ' * 20}\r")
+        sys.stdout.flush()
+        _rich_print(text, speaker_id, show_speaker_tag=show_speaker_tag)
+
+
+def _run_asr(
+    recognizer: sherpa_onnx.OfflineRecognizer,
+    samples: np.ndarray,
+    sample_rate: int,
+) -> str:
     stream = recognizer.create_stream()
     stream.accept_waveform(sample_rate, samples)
     recognizer.decode_stream(stream)
-    text = stream.result.text.strip()
-    if text:
-        sys.stdout.write(f"\r{' ' * 20}\r")
-        print(f"{_PREFIX}{text}")
-        sys.stdout.flush()
-
-
-_PREFIX = "  "
+    return stream.result.text.strip()
 
 
 def _clear_line(partial: str) -> None:
@@ -151,6 +354,6 @@ def _flush_tail(
     text = recognizer.get_result(stream).strip()
     if text:
         _clear_line(last_partial)
-        print(f"{_PREFIX}{text}")
+        _console.print(f"{_PREFIX}{text}")
     sys.stdout.write("\n")
     sys.stdout.flush()
