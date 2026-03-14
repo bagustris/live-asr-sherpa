@@ -111,12 +111,12 @@ class TestParseArgs:
     def test_default_vad_model_is_silero(self):
         with patch("sys.argv", ["main.py", "--mic"]):
             args = main_module.parse_args()
-        assert args.vad_model == "silero"
+        assert args.vad_type == "silero"
 
     def test_vad_model_ten_vad(self):
         with patch("sys.argv", ["main.py", "--mic", "--vad-model", "ten-vad"]):
             args = main_module.parse_args()
-        assert args.vad_model == "ten-vad"
+        assert args.vad_type == "ten-vad"
 
     def test_vad_model_invalid_choice_exits(self):
         with patch("sys.argv", ["main.py", "--mic", "--vad-model", "invalid"]):
@@ -201,6 +201,14 @@ class TestValidateVad:
         assert int8_url != full_url
         assert "int8" in int8_url
         assert "int8" not in full_url
+
+    def test_unknown_vad_type_exits(self, tmp_path):
+        with pytest.raises(SystemExit):
+            main_module._validate_vad("unknown-vad", "ten-vad.int8.onnx", True, tmp_path)
+
+    def test_unknown_ten_vad_model_exits(self, tmp_path):
+        with pytest.raises(SystemExit):
+            main_module._validate_vad("ten-vad", "unknown-model.onnx", True, tmp_path)
 
 
 # ---------------------------------------------------------------------------

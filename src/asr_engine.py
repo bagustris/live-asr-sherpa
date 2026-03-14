@@ -198,8 +198,8 @@ def build_vad(cfg: Config) -> sherpa_onnx.VoiceActivityDetector:
     """
     if not cfg.vad_model:
         raise ValueError(
-            "--vad-model is required for offline model types.\n"
-            "Choose a VAD type with --vad-model silero (default) or --vad-model ten-vad."
+            "cfg.vad_model path is empty — the resolved VAD model path must be set "
+            "before calling build_vad() (normally done by main._validate_vad())."
         )
     if cfg.vad_type == "ten-vad":
         vad_config = sherpa_onnx.VadModelConfig(
@@ -212,7 +212,7 @@ def build_vad(cfg: Config) -> sherpa_onnx.VoiceActivityDetector:
             sample_rate=cfg.sample_rate,
             num_threads=cfg.num_threads,
         )
-    else:
+    elif cfg.vad_type == "silero":
         vad_config = sherpa_onnx.VadModelConfig(
             silero_vad=sherpa_onnx.SileroVadModelConfig(
                 model=cfg.vad_model,
@@ -222,6 +222,10 @@ def build_vad(cfg: Config) -> sherpa_onnx.VoiceActivityDetector:
             ),
             sample_rate=cfg.sample_rate,
             num_threads=cfg.num_threads,
+        )
+    else:
+        raise ValueError(
+            f"Unknown vad_type '{cfg.vad_type}'. Supported: 'silero', 'ten-vad'."
         )
     return sherpa_onnx.VoiceActivityDetector(vad_config, buffer_size_in_seconds=60)
 

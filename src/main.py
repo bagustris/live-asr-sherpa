@@ -63,6 +63,7 @@ from config import Config
 from streaming import run_offline_vad_streaming, run_streaming
 
 _console = Console()
+_err_console = Console(stderr=True)
 
 
 def _info(msg: str) -> None:
@@ -70,7 +71,7 @@ def _info(msg: str) -> None:
 
 
 def _error(msg: str) -> None:
-    _console.print(f"[bold red]\\[error][/bold red] {msg}", file=sys.stderr)
+    _err_console.print(f"[bold red]\\[error][/bold red] {msg}")
     sys.exit(1)
 
 
@@ -124,6 +125,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--vad-model",
+        dest="vad_type",
         default="silero",
         choices=["silero", "ten-vad"],
         help="VAD model type to use for offline segmentation (default: silero).",
@@ -346,14 +348,21 @@ def _validate_model(model_dir: str, model_type: str) -> None:
 def _validate_vad(vad_type: str, ten_vad_model: str, offline: bool, project_dir: Path) -> str:
     if not offline:
         return ""
+    if vad_type not in {"silero", "ten-vad"}:
+        _error(f"Unknown --vad-model type '{vad_type}'. Supported: silero, ten-vad.")
     if vad_type == "ten-vad":
+        if ten_vad_model not in _TEN_VAD_MODEL_URLS:
+            _error(
+                f"Unknown --ten-vad-model '{ten_vad_model}'. "
+                f"Supported: {', '.join(_TEN_VAD_MODEL_URLS)}."
+            )
         vad_path = project_dir / "models" / ten_vad_model
         if not vad_path.exists():
             vad_path.parent.mkdir(parents=True, exist_ok=True)
             _info(f"VAD model not found, downloading {ten_vad_model}…")
             _download_file(_TEN_VAD_MODEL_URLS[ten_vad_model], vad_path)
         return str(vad_path)
-    # silero (default)
+    # silero
     vad_path = project_dir / "models" / "silero_vad.onnx"
     if not vad_path.exists():
         vad_path.parent.mkdir(parents=True, exist_ok=True)
@@ -486,7 +495,7 @@ def main() -> None:
         num_threads=args.threads,
         model_type=args.model_type,
         offline=args.offline,
-        vad_type=args.vad_model,   # --vad-model selects the VAD type ("silero" or "ten-vad")
+        vad_type=args.vad_type,
         ten_vad_model=args.ten_vad_model,
         language=args.language,
         show_mic_level=args.listening,

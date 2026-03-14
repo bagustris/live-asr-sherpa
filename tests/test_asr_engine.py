@@ -39,7 +39,7 @@ class TestFind:
 class TestBuildVad:
     def test_raises_when_vad_model_is_empty(self):
         cfg = Config(vad_model="", vad_type="silero")
-        with pytest.raises(ValueError, match="--vad-model"):
+        with pytest.raises(ValueError, match="cfg.vad_model"):
             asr_engine.build_vad(cfg)
 
     def test_builds_silero_vad_when_model_provided(self, tmp_path):
@@ -105,7 +105,14 @@ class TestBuildVad:
 
     def test_vad_error_message_includes_vad_model_hint(self):
         cfg = Config(vad_model="", vad_type="silero")
-        with pytest.raises(ValueError, match="--vad-model"):
+        with pytest.raises(ValueError, match="cfg.vad_model"):
+            asr_engine.build_vad(cfg)
+
+    def test_raises_for_unknown_vad_type(self, tmp_path):
+        vad_path = tmp_path / "vad.onnx"
+        vad_path.touch()
+        cfg = Config(vad_model=str(vad_path), vad_type="unknown-vad")
+        with pytest.raises(ValueError, match="Unknown vad_type"):
             asr_engine.build_vad(cfg)
 
     def test_vad_config_receives_correct_sample_rate(self, tmp_path):
