@@ -31,6 +31,14 @@ def test_default_vad_model_is_empty():
     assert Config().vad_model == ""
 
 
+def test_default_vad_type_is_silero():
+    assert Config().vad_type == "silero"
+
+
+def test_default_ten_vad_model_is_int8():
+    assert Config().ten_vad_model == "ten-vad.int8.onnx"
+
+
 def test_default_vad_threshold():
     assert Config().vad_threshold == 0.5
 
@@ -90,8 +98,8 @@ def test_config_has_expected_fields():
     field_names = {f.name for f in fields(Config)}
     expected = {
         "model_dir", "sample_rate", "chunk_size", "num_threads",
-        "model_type", "offline", "vad_model", "vad_threshold",
-        "vad_min_silence_duration", "vad_min_speech_duration",
+        "model_type", "offline", "vad_model", "vad_type", "ten_vad_model",
+        "vad_threshold", "vad_min_silence_duration", "vad_min_speech_duration",
         "language", "show_mic_level",
     }
     assert expected.issubset(field_names)

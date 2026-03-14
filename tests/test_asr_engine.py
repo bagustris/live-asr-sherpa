@@ -38,15 +38,15 @@ class TestFind:
 
 class TestBuildVad:
     def test_raises_when_vad_model_is_empty(self):
-        cfg = Config(vad_model="")
-        with pytest.raises(ValueError, match="--vad-model"):
+        cfg = Config(vad_model="", vad_type="silero")
+        with pytest.raises(ValueError, match="cfg.vad_model"):
             asr_engine.build_vad(cfg)
 
-    def test_builds_vad_when_model_provided(self, tmp_path):
+    def test_builds_silero_vad_when_model_provided(self, tmp_path):
         vad_path = tmp_path / "silero_vad.onnx"
         vad_path.touch()
-        cfg = Config(vad_model=str(vad_path), sample_rate=16000, num_threads=2,
-                     vad_threshold=0.5, vad_min_silence_duration=0.5,
+        cfg = Config(vad_model=str(vad_path), vad_type="silero", sample_rate=16000,
+                     num_threads=2, vad_threshold=0.5, vad_min_silence_duration=0.5,
                      vad_min_speech_duration=0.25)
 
         mock_vad = MagicMock()
@@ -57,16 +57,69 @@ class TestBuildVad:
 
         assert result is mock_vad
 
-    def test_vad_error_message_includes_download_hint(self):
-        cfg = Config(vad_model="")
-        with pytest.raises(ValueError, match="silero_vad.onnx"):
+    def test_builds_ten_vad_when_vad_type_is_ten_vad(self, tmp_path):
+        vad_path = tmp_path / "ten-vad.int8.onnx"
+        vad_path.touch()
+        cfg = Config(vad_model=str(vad_path), vad_type="ten-vad", sample_rate=16000,
+                     num_threads=2, vad_threshold=0.5, vad_min_silence_duration=0.5,
+                     vad_min_speech_duration=0.25)
+
+        mock_vad = MagicMock()
+        with patch("asr_engine.sherpa_onnx.VadModelConfig"), \
+             patch("asr_engine.sherpa_onnx.TenVadModelConfig") as mock_ten, \
+             patch("asr_engine.sherpa_onnx.VoiceActivityDetector", return_value=mock_vad):
+            result = asr_engine.build_vad(cfg)
+
+        mock_ten.assert_called_once()
+        assert result is mock_vad
+
+    def test_silero_vad_uses_silero_config(self, tmp_path):
+        vad_path = tmp_path / "silero_vad.onnx"
+        vad_path.touch()
+        cfg = Config(vad_model=str(vad_path), vad_type="silero", sample_rate=16000,
+                     num_threads=2, vad_threshold=0.5)
+
+        with patch("asr_engine.sherpa_onnx.VadModelConfig"), \
+             patch("asr_engine.sherpa_onnx.SileroVadModelConfig") as mock_silero, \
+             patch("asr_engine.sherpa_onnx.TenVadModelConfig") as mock_ten, \
+             patch("asr_engine.sherpa_onnx.VoiceActivityDetector"):
+            asr_engine.build_vad(cfg)
+
+        mock_silero.assert_called_once()
+        mock_ten.assert_not_called()
+
+    def test_ten_vad_does_not_use_silero_config(self, tmp_path):
+        vad_path = tmp_path / "ten-vad.int8.onnx"
+        vad_path.touch()
+        cfg = Config(vad_model=str(vad_path), vad_type="ten-vad", sample_rate=16000,
+                     num_threads=2, vad_threshold=0.5)
+
+        with patch("asr_engine.sherpa_onnx.VadModelConfig"), \
+             patch("asr_engine.sherpa_onnx.SileroVadModelConfig") as mock_silero, \
+             patch("asr_engine.sherpa_onnx.TenVadModelConfig") as mock_ten, \
+             patch("asr_engine.sherpa_onnx.VoiceActivityDetector"):
+            asr_engine.build_vad(cfg)
+
+        mock_ten.assert_called_once()
+        mock_silero.assert_not_called()
+
+    def test_vad_error_message_includes_vad_model_hint(self):
+        cfg = Config(vad_model="", vad_type="silero")
+        with pytest.raises(ValueError, match="cfg.vad_model"):
+            asr_engine.build_vad(cfg)
+
+    def test_raises_for_unknown_vad_type(self, tmp_path):
+        vad_path = tmp_path / "vad.onnx"
+        vad_path.touch()
+        cfg = Config(vad_model=str(vad_path), vad_type="unknown-vad")
+        with pytest.raises(ValueError, match="Unknown vad_type"):
             asr_engine.build_vad(cfg)
 
     def test_vad_config_receives_correct_sample_rate(self, tmp_path):
         vad_path = tmp_path / "vad.onnx"
         vad_path.touch()
-        cfg = Config(vad_model=str(vad_path), sample_rate=48000, num_threads=4,
-                     vad_threshold=0.6)
+        cfg = Config(vad_model=str(vad_path), vad_type="silero", sample_rate=48000,
+                     num_threads=4, vad_threshold=0.6)
 
         captured = {}
 

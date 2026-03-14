@@ -1,0 +1,21 @@
+[project]
+name = "live-asr-sherpa"
+version = "0.1.0"
+description = "Live streaming ASR using sherpa-onnx pretrained models"
+requires-python = ">=3.9"
+dependencies = [
+    "sherpa-onnx>=1.12.28",
+    "sounddevice>=0.5.5",
+    "soundfile>=0.13.1",
+    "numpy>=2.2.6",
+    "rich>=13.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-cov",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
