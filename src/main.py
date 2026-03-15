@@ -247,7 +247,7 @@ _DIAR_SEG_MODEL_FILE = "model.onnx"
 # Lightest speaker embedding extractor (~22 MB)
 _DIAR_EMB_URL = (
     "https://github.com/k2-fsa/sherpa-onnx/releases/download/"
-    "speaker-recognition-models/nemo_en_speakerverification_speakernet.onnx"
+    "speaker-recongition-models/nemo_en_speakerverification_speakernet.onnx"
 )
 _DIAR_EMB_FILE = "nemo_en_speakerverification_speakernet.onnx"
 
