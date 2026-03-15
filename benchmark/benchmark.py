@@ -163,10 +163,9 @@ def load_audio(path: str, target_sr: int = 16000) -> Tuple[np.ndarray, float]:
             import resampy
             audio = resampy.resample(audio, sr, target_sr)
         except ImportError:
-            print(
-                f"Warning: resampy not installed; cannot resample {sr}→{target_sr} Hz "
-                "for {path}. Install with: pip install resampy",
-                file=sys.stderr,
+            raise RuntimeError(
+                f"Cannot resample {sr}→{target_sr} Hz for {path}: "
+                "resampy not installed. Install with: pip install resampy"
             )
 
     duration = len(audio) / target_sr
@@ -206,7 +205,7 @@ def transcribe_online(
         while recognizer.is_ready(stream):
             recognizer.decode_stream(stream)
         if recognizer.is_endpoint(stream):
-            text = recognizer.get_result(stream).text.strip()
+            text = recognizer.get_result(stream).strip()
             if text:
                 texts.append(text)
             recognizer.reset(stream)
@@ -216,7 +215,7 @@ def transcribe_online(
     stream.accept_waveform(sample_rate, tail)
     while recognizer.is_ready(stream):
         recognizer.decode_stream(stream)
-    text = recognizer.get_result(stream).text.strip()
+    text = recognizer.get_result(stream).strip()
     if text:
         texts.append(text)
 

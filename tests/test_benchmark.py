@@ -170,23 +170,18 @@ def test_transcribe_offline_calls_decode_stream():
 # transcribe_online
 # ---------------------------------------------------------------------------
 
-def _make_online_recognizer(text="online text", endpoint_after=None):
+def _make_online_recognizer(text="online text"):
     """Build a mock OnlineRecognizer.
 
-    endpoint_after: if not None, is_endpoint returns True after this many
-    calls, then False thereafter.
+    get_result() returns a str (matching real sherpa-onnx OnlineRecognizer behaviour).
     """
-    mock_result = MagicMock()
-    mock_result.text = text
-
     mock_stream = MagicMock()
-    mock_stream.result = mock_result
 
     recognizer = MagicMock()
     recognizer.create_stream.return_value = mock_stream
     recognizer.is_ready.return_value = False
     recognizer.is_endpoint.return_value = False
-    recognizer.get_result.return_value = mock_result
+    recognizer.get_result.return_value = text  # str, not object
 
     return recognizer
 
@@ -204,12 +199,10 @@ def test_transcribe_online_collects_endpoint_text():
     texts = ["first segment", ""]
     call_count = [0]
 
-    mock_result = MagicMock()
-
     def _get_result(_stream):
         idx = min(call_count[0], len(texts) - 1)
-        mock_result.text = texts[idx]
-        return mock_result
+        call_count[0] += 1
+        return texts[idx]  # str, not object
 
     endpoint_calls = [0]
 
@@ -226,6 +219,31 @@ def test_transcribe_online_collects_endpoint_text():
     audio = np.zeros(3200, dtype=np.float32)  # 0.2s at 16 kHz
     result = bm.transcribe_online(rec, audio, 16000, chunk_size=0.1)
     assert "first segment" in result
+
+
+def test_load_audio_raises_when_resample_needed_and_resampy_missing(tmp_path):
+    """load_audio raises RuntimeError when sr != target_sr and resampy is absent."""
+    import soundfile as sf
+
+    path = str(tmp_path / "audio48k.wav")
+    sf.write(path, np.zeros(48000, dtype=np.float32), 48000)
+
+    with patch.dict("sys.modules", {"resampy": None}):
+        with pytest.raises(RuntimeError, match="resampy not installed"):
+            bm.load_audio(path, target_sr=16000)
+
+
+def test_load_audio_no_error_when_sample_rates_match(tmp_path):
+    """load_audio does not attempt resampling when sr == target_sr."""
+    import soundfile as sf
+
+    path = str(tmp_path / "audio16k.wav")
+    sf.write(path, np.zeros(16000, dtype=np.float32), 16000)
+
+    # Should succeed even if resampy is unavailable
+    with patch.dict("sys.modules", {"resampy": None}):
+        audio, duration = bm.load_audio(path, target_sr=16000)
+    assert duration == pytest.approx(1.0)
 
 
 # ---------------------------------------------------------------------------
