@@ -23,8 +23,8 @@ class Config:
     # Ten-VAD model file variant: "ten-vad.onnx" or "ten-vad.int8.onnx" (default).
     ten_vad_model: str = "ten-vad.int8.onnx"
     vad_threshold: float = 0.5
-    vad_min_silence_duration: float = 0.5
-    vad_min_speech_duration: float = 0.25
+    vad_min_silence_duration: float = 0.2  #0.5
+    vad_min_speech_duration: float = 0.05  #0.25
     # Language code for Whisper and SenseVoice models (e.g. "en", "zh", "ja").
     language: str = "en"
     # Show a live RMS energy bar in the terminal for mic calibration.
