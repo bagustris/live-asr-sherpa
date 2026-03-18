@@ -1,6 +1,6 @@
 from dataclasses import fields
 
-from config import Config
+from sherox.config import Config, SegmentConfig, TtsConfig
 
 
 def test_default_model_dir():
@@ -102,4 +102,111 @@ def test_config_has_expected_fields():
         "vad_threshold", "vad_min_silence_duration", "vad_min_speech_duration",
         "language", "show_mic_level",
     }
+    assert expected.issubset(field_names)
+
+
+# ── SegmentConfig ─────────────────────────────────────────────────────────────
+
+def test_segment_default_vad_type():
+    assert SegmentConfig().vad_type == "silero"
+
+
+def test_segment_default_ten_vad_model():
+    assert SegmentConfig().ten_vad_model == "ten-vad.int8.onnx"
+
+
+def test_segment_default_threshold():
+    assert SegmentConfig().vad_threshold == 0.5
+
+
+def test_segment_default_sample_rate():
+    assert SegmentConfig().sample_rate == 16000
+
+
+def test_segment_default_num_threads():
+    assert SegmentConfig().num_threads == 4
+
+
+def test_segment_default_show_timestamps():
+    assert SegmentConfig().show_timestamps is True
+
+
+def test_segment_default_output_dir_is_empty():
+    assert SegmentConfig().output_dir == ""
+
+
+def test_segment_custom_values():
+    cfg = SegmentConfig(
+        vad_type="ten-vad",
+        vad_threshold=0.7,
+        sample_rate=48000,
+        output_dir="/tmp/segs",
+    )
+    assert cfg.vad_type == "ten-vad"
+    assert cfg.vad_threshold == 0.7
+    assert cfg.sample_rate == 48000
+    assert cfg.output_dir == "/tmp/segs"
+
+
+def test_segment_has_expected_fields():
+    field_names = {f.name for f in fields(SegmentConfig)}
+    expected = {
+        "vad_type", "vad_model", "ten_vad_model",
+        "vad_threshold", "vad_min_silence_duration", "vad_min_speech_duration",
+        "sample_rate", "capture_rate", "num_threads", "chunk_size",
+        "show_timestamps", "show_mic_level", "output_dir",
+    }
+    assert expected.issubset(field_names)
+
+
+# ── TtsConfig ─────────────────────────────────────────────────────────────────
+
+def test_tts_default_language():
+    assert TtsConfig().language == "ind"
+
+
+def test_tts_default_speaker_id():
+    assert TtsConfig().speaker_id == 0
+
+
+def test_tts_default_speed():
+    assert TtsConfig().speed == 1.0
+
+
+def test_tts_default_output():
+    assert TtsConfig().output == "output.wav"
+
+
+def test_tts_default_play_is_false():
+    assert TtsConfig().play is False
+
+
+def test_tts_default_num_threads():
+    assert TtsConfig().num_threads == 4
+
+
+def test_tts_default_model_dir_is_empty():
+    assert TtsConfig().model_dir == ""
+
+
+def test_tts_custom_values():
+    cfg = TtsConfig(
+        language="ind",
+        speaker_id=1,
+        speed=0.8,
+        output="out.wav",
+        play=True,
+        num_threads=2,
+    )
+    assert cfg.language == "ind"
+    assert cfg.speaker_id == 1
+    assert cfg.speed == 0.8
+    assert cfg.output == "out.wav"
+    assert cfg.play is True
+    assert cfg.num_threads == 2
+
+
+def test_tts_has_expected_fields():
+    field_names = {f.name for f in fields(TtsConfig)}
+    expected = {"model_dir", "language", "speaker_id", "speed", "output", "play", "num_threads"}
     assert expected.issubset(field_names)

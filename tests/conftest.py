@@ -3,9 +3,8 @@ from pathlib import Path
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 
-# Allow test modules to import from src/ the same way the source files do
-# (i.e. `from config import Config` rather than `from src.config import Config`)
-sys.path.insert(0, str(_REPO_ROOT / "src"))
+# Add repo root so `from sherox.x import ...` works without installing the package.
+sys.path.insert(0, str(_REPO_ROOT))
 
 # Allow test modules to import from benchmark/
 sys.path.insert(0, str(_REPO_ROOT / "benchmark"))

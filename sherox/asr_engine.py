@@ -2,7 +2,7 @@ from pathlib import Path
 
 import sherpa_onnx
 
-from config import Config
+from .config import Config
 
 
 def _find(directory: Path, pattern: str) -> str:

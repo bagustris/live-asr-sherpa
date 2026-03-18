@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, call, patch
 import numpy as np
 import pytest
 
-from streaming import (
+from sherox.streaming import (
     _PREFIX,
     _clear_line,
     _flush_tail,
@@ -112,7 +112,7 @@ class TestRunStreaming:
         )
         rec.is_endpoint.return_value = True
 
-        with patch("streaming._flush_tail"):
+        with patch("sherox.streaming._flush_tail"):
             run_streaming(rec, iter([np.zeros(2560, dtype="float32")]))
 
         assert "hello world" in capsys.readouterr().out
@@ -122,7 +122,7 @@ class TestRunStreaming:
         rec.get_result.return_value = MagicMock(strip=MagicMock(return_value=""))
         rec.is_endpoint.return_value = True
 
-        with patch("streaming._flush_tail"):
+        with patch("sherox.streaming._flush_tail"):
             run_streaming(rec, iter([np.zeros(2560, dtype="float32")]))
 
         assert capsys.readouterr().out == ""
@@ -135,7 +135,7 @@ class TestRunStreaming:
         ]
         rec.is_endpoint.return_value = False
 
-        with patch("streaming._flush_tail"):
+        with patch("sherox.streaming._flush_tail"):
             run_streaming(rec, iter([np.zeros(2560, dtype="float32"),
                                      np.zeros(2560, dtype="float32")]))
 
@@ -148,7 +148,7 @@ class TestRunStreaming:
         rec.get_result.return_value = MagicMock(strip=MagicMock(return_value="text"))
         rec.is_endpoint.return_value = True
 
-        with patch("streaming._flush_tail"):
+        with patch("sherox.streaming._flush_tail"):
             run_streaming(rec, iter([np.zeros(2560, dtype="float32")]))
 
         rec.reset.assert_called_once_with(stream)
@@ -159,7 +159,7 @@ class TestRunStreaming:
         rec.is_endpoint.return_value = False
         chunks = [np.zeros(2560, dtype="float32")] * 3
 
-        with patch("streaming._flush_tail"):
+        with patch("sherox.streaming._flush_tail"):
             run_streaming(rec, iter(chunks), sample_rate=16000)
 
         assert stream.accept_waveform.call_count == 3
@@ -173,7 +173,7 @@ class TestRunStreaming:
             yield np.zeros(2560, dtype="float32")
             raise KeyboardInterrupt
 
-        with patch("streaming._flush_tail"):
+        with patch("sherox.streaming._flush_tail"):
             run_streaming(rec, interrupt_gen())  # must not propagate
 
     def test_flush_tail_always_called(self):
@@ -181,7 +181,7 @@ class TestRunStreaming:
         rec.get_result.return_value = MagicMock(strip=MagicMock(return_value=""))
         rec.is_endpoint.return_value = False
 
-        with patch("streaming._flush_tail") as mock_flush:
+        with patch("sherox.streaming._flush_tail") as mock_flush:
             run_streaming(rec, iter([np.zeros(2560, dtype="float32")]))
 
         mock_flush.assert_called_once()
@@ -191,7 +191,7 @@ class TestRunStreaming:
         rec.get_result.return_value = MagicMock(strip=MagicMock(return_value=""))
         rec.is_endpoint.return_value = False
 
-        with patch("streaming._flush_tail"):
+        with patch("sherox.streaming._flush_tail"):
             run_streaming(
                 rec,
                 iter([np.ones(2560, dtype="float32") * 0.1]),
@@ -205,7 +205,7 @@ class TestRunStreaming:
         rec.get_result.return_value = MagicMock(strip=MagicMock(return_value=""))
         rec.is_endpoint.return_value = False
 
-        with patch("streaming._flush_tail"):
+        with patch("sherox.streaming._flush_tail"):
             run_streaming(
                 rec,
                 iter([np.ones(2560, dtype="float32") * 0.1]),

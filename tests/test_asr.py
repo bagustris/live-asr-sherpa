@@ -3,7 +3,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-import main as main_module
+import sherox.asr as main_module
 
 
 # ---------------------------------------------------------------------------
@@ -12,124 +12,124 @@ import main as main_module
 
 class TestParseArgs:
     def test_mic_mode(self):
-        with patch("sys.argv", ["main.py", "--mic"]):
+        with patch("sys.argv", ["sherox.asr", "--mic"]):
             args = main_module.parse_args()
         assert args.mic is True
         assert args.wav is None
 
     def test_wav_mode(self):
-        with patch("sys.argv", ["main.py", "--wav", "audio.wav"]):
+        with patch("sys.argv", ["sherox.asr", "--wav", "audio.wav"]):
             args = main_module.parse_args()
         assert args.wav == "audio.wav"
         assert args.mic is False
 
     def test_mic_and_wav_are_mutually_exclusive(self):
-        with patch("sys.argv", ["main.py", "--mic", "--wav", "audio.wav"]):
+        with patch("sys.argv", ["sherox.asr", "--mic", "--wav", "audio.wav"]):
             with pytest.raises(SystemExit):
                 main_module.parse_args()
 
     def test_requires_mic_or_wav(self):
-        with patch("sys.argv", ["main.py"]):
+        with patch("sys.argv", ["sherox.asr"]):
             with pytest.raises(SystemExit):
                 main_module.parse_args()
 
     def test_default_sample_rate(self):
-        with patch("sys.argv", ["main.py", "--mic"]):
+        with patch("sys.argv", ["sherox.asr", "--mic"]):
             args = main_module.parse_args()
         assert args.sample_rate == 16000
 
     def test_default_chunk_size(self):
-        with patch("sys.argv", ["main.py", "--mic"]):
+        with patch("sys.argv", ["sherox.asr", "--mic"]):
             args = main_module.parse_args()
         assert args.chunk_size == 0.16
 
     def test_default_threads(self):
-        with patch("sys.argv", ["main.py", "--mic"]):
+        with patch("sys.argv", ["sherox.asr", "--mic"]):
             args = main_module.parse_args()
         assert args.threads == 4
 
     def test_default_model_type_is_empty(self):
-        with patch("sys.argv", ["main.py", "--mic"]):
+        with patch("sys.argv", ["sherox.asr", "--mic"]):
             args = main_module.parse_args()
         assert args.model_type == ""
 
     def test_default_offline_is_false(self):
-        with patch("sys.argv", ["main.py", "--mic"]):
+        with patch("sys.argv", ["sherox.asr", "--mic"]):
             args = main_module.parse_args()
         assert args.offline is False
 
     def test_default_language(self):
-        with patch("sys.argv", ["main.py", "--mic"]):
+        with patch("sys.argv", ["sherox.asr", "--mic"]):
             args = main_module.parse_args()
         assert args.language == "en"
 
     def test_default_listening_is_false(self):
-        with patch("sys.argv", ["main.py", "--mic"]):
+        with patch("sys.argv", ["sherox.asr", "--mic"]):
             args = main_module.parse_args()
         assert args.listening is False
 
     def test_custom_model_type(self):
-        with patch("sys.argv", ["main.py", "--mic", "--model-type", "whisper"]):
+        with patch("sys.argv", ["sherox.asr", "--mic", "--model-type", "whisper"]):
             args = main_module.parse_args()
         assert args.model_type == "whisper"
 
     def test_offline_flag(self):
-        with patch("sys.argv", ["main.py", "--mic", "--offline"]):
+        with patch("sys.argv", ["sherox.asr", "--mic", "--offline"]):
             args = main_module.parse_args()
         assert args.offline is True
 
     def test_custom_language(self):
-        with patch("sys.argv", ["main.py", "--mic", "--language", "zh"]):
+        with patch("sys.argv", ["sherox.asr", "--mic", "--language", "zh"]):
             args = main_module.parse_args()
         assert args.language == "zh"
 
     def test_custom_threads(self):
-        with patch("sys.argv", ["main.py", "--mic", "--threads", "8"]):
+        with patch("sys.argv", ["sherox.asr", "--mic", "--threads", "8"]):
             args = main_module.parse_args()
         assert args.threads == 8
 
     def test_custom_sample_rate(self):
-        with patch("sys.argv", ["main.py", "--mic", "--sample-rate", "48000"]):
+        with patch("sys.argv", ["sherox.asr", "--mic", "--sample-rate", "48000"]):
             args = main_module.parse_args()
         assert args.sample_rate == 48000
 
     def test_listening_flag(self):
-        with patch("sys.argv", ["main.py", "--mic", "--listening"]):
+        with patch("sys.argv", ["sherox.asr", "--mic", "--listening"]):
             args = main_module.parse_args()
         assert args.listening is True
 
     def test_custom_model_dir(self):
-        with patch("sys.argv", ["main.py", "--mic", "--model-dir", "models/custom"]):
+        with patch("sys.argv", ["sherox.asr", "--mic", "--model-dir", "models/custom"]):
             args = main_module.parse_args()
         assert args.model_dir == "models/custom"
 
     def test_default_model_dir_is_none(self):
-        with patch("sys.argv", ["main.py", "--mic"]):
+        with patch("sys.argv", ["sherox.asr", "--mic"]):
             args = main_module.parse_args()
         assert args.model_dir is None
 
     def test_default_vad_model_is_silero(self):
-        with patch("sys.argv", ["main.py", "--mic"]):
+        with patch("sys.argv", ["sherox.asr", "--mic"]):
             args = main_module.parse_args()
         assert args.vad_type == "silero"
 
     def test_vad_model_ten_vad(self):
-        with patch("sys.argv", ["main.py", "--mic", "--vad-model", "ten-vad"]):
+        with patch("sys.argv", ["sherox.asr", "--mic", "--vad-model", "ten-vad"]):
             args = main_module.parse_args()
         assert args.vad_type == "ten-vad"
 
     def test_vad_model_invalid_choice_exits(self):
-        with patch("sys.argv", ["main.py", "--mic", "--vad-model", "invalid"]):
+        with patch("sys.argv", ["sherox.asr", "--mic", "--vad-model", "invalid"]):
             with pytest.raises(SystemExit):
                 main_module.parse_args()
 
     def test_default_ten_vad_model_is_int8(self):
-        with patch("sys.argv", ["main.py", "--mic"]):
+        with patch("sys.argv", ["sherox.asr", "--mic"]):
             args = main_module.parse_args()
         assert args.ten_vad_model == "ten-vad.int8.onnx"
 
     def test_ten_vad_model_full_onnx(self):
-        with patch("sys.argv", ["main.py", "--mic", "--ten-vad-model", "ten-vad.onnx"]):
+        with patch("sys.argv", ["sherox.asr", "--mic", "--ten-vad-model", "ten-vad.onnx"]):
             args = main_module.parse_args()
         assert args.ten_vad_model == "ten-vad.onnx"
 
@@ -232,27 +232,27 @@ class TestValidateWav:
     def test_exits_on_multichannel_audio(self, tmp_path):
         wav = tmp_path / "audio.wav"
         wav.touch()
-        with patch("main.sf.SoundFile", return_value=_mock_sf(2, 16000)):
+        with patch("sherox.asr.sf.SoundFile", return_value=_mock_sf(2, 16000)):
             with pytest.raises(SystemExit):
                 main_module._validate_wav(str(wav), 16000)
 
     def test_exits_on_wrong_sample_rate(self, tmp_path):
         wav = tmp_path / "audio.wav"
         wav.touch()
-        with patch("main.sf.SoundFile", return_value=_mock_sf(1, 44100)):
+        with patch("sherox.asr.sf.SoundFile", return_value=_mock_sf(1, 44100)):
             with pytest.raises(SystemExit):
                 main_module._validate_wav(str(wav), 16000)
 
     def test_passes_for_valid_mono_16khz_audio(self, tmp_path):
         wav = tmp_path / "audio.wav"
         wav.touch()
-        with patch("main.sf.SoundFile", return_value=_mock_sf(1, 16000)):
+        with patch("sherox.asr.sf.SoundFile", return_value=_mock_sf(1, 16000)):
             main_module._validate_wav(str(wav), 16000)  # should not raise
 
     def test_exits_when_soundfile_raises(self, tmp_path):
         wav = tmp_path / "audio.wav"
         wav.touch()
-        with patch("main.sf.SoundFile", side_effect=Exception("corrupt")):
+        with patch("sherox.asr.sf.SoundFile", side_effect=Exception("corrupt")):
             with pytest.raises(SystemExit):
                 main_module._validate_wav(str(wav), 16000)
 

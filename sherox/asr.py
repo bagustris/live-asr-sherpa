@@ -2,35 +2,35 @@
 
 Usage:
     # Zipformer streaming (default, auto-detects model type):
-    python3 main.py --mic
-    python3 main.py --wav path/to/audio.wav
+    sherox.asr --mic
+    sherox.asr --wav path/to/audio.wav
 
     # Hint the architecture explicitly (speeds up model loading):
-    python3 main.py --mic --model-type zipformer2
+    sherox.asr --mic --model-type zipformer2
 
     # Parakeet TDT fp16 (offline, better accuracy):
-    python3 main.py --mic --offline --model-type nemo_transducer
+    sherox.asr --mic --offline --model-type nemo_transducer
 
     # Parakeet TDT int8 (offline, smaller & faster, slightly less accurate):
-    python3 main.py --mic --offline --model-type nemo_transducer --model-dir models/parakeet-tdt-0.6b-v2-int8
+    sherox.asr --mic --offline --model-type nemo_transducer --model-dir models/parakeet-tdt-0.6b-v2-int8
 
     # Whisper (offline):
-    python3 main.py --mic --offline --model-type whisper --language en
+    sherox.asr --mic --offline --model-type whisper --language en
 
     # SenseVoice (offline):
-    python3 main.py --mic --offline --model-type sense_voice
+    sherox.asr --mic --offline --model-type sense_voice
 
     # Custom model directory:
-    python3 main.py --mic --model-dir models/my-model --offline --model-type nemo_transducer
+    sherox.asr --mic --model-dir models/my-model --offline --model-type nemo_transducer
 
     # Speaker diarization (offline, auto-downloads lightweight models):
-    python3 main.py --mic --offline --diarization
+    sherox.asr --mic --offline --diarization
 
     # Speaker diarization with known speaker count:
-    python3 main.py --mic --offline --diarization --num-speakers 2
+    sherox.asr --mic --offline --diarization --num-speakers 2
 
     # Speaker diarization with [Speaker N] tag prefix:
-    python3 main.py --mic --offline --diarization --speaker-tag
+    sherox.asr --mic --offline --diarization --speaker-tag
 
     Models are stored under  models/<model-name>/  at the project root:
       models/zipformer-en-2023/            (online transducer, default)
@@ -57,10 +57,10 @@ from pathlib import Path
 import soundfile as sf
 from rich.console import Console
 
-from asr_engine import build_diarization, build_offline_recognizer, build_recognizer, build_vad
-from audio import mic_stream, read_wav
-from config import Config
-from streaming import run_offline_vad_streaming, run_streaming
+from .asr_engine import build_diarization, build_offline_recognizer, build_recognizer, build_vad
+from .audio import mic_stream, read_wav
+from .config import Config
+from .streaming import run_offline_vad_streaming, run_streaming
 
 _console = Console()
 _err_console = Console(stderr=True)
@@ -547,6 +547,9 @@ def main() -> None:
 
     if cfg.offline:
         recognizer = build_offline_recognizer(cfg)
+        # Build VAD with the actual input sample rate (wav → sample_rate, mic → capture_rate)
+        # so VadModelConfig.sample_rate matches what is fed to accept_waveform().
+        cfg.sample_rate = capture_rate
         vad = build_vad(cfg)
         if cfg.diarization:
             _info("Loading diarization models…")

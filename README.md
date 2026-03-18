@@ -1,8 +1,10 @@
 # Live ASR with Sherpa-ONNX
 
-*Minimal, production-quality streaming speech recognition on CPU*
+*Minimal, light, live speech recognition (and others) on Laptop's CPU*
 
-A terminal-based Automatic Speech Recognition (ASR) application built with [Sherpa-ONNX](https://github.com/k2-fsa/sherpa-onnx). Transcribe speech in real-time from your microphone or offline from WAV files — no GPU required.
+A terminal-based Automatic Speech Recognition (ASR) application built with [Sherpa-ONNX](https://github.com/k2-fsa/sherpa-onnx). Transcribe speech in real-time from your microphone or offline from WAV files — no GPU required. It also support diarization, TTS, and speech segmentation.  
+
+Documentation:  [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/bagustris/live-asr-sherpa).
 
 ## Features
 

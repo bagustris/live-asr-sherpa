@@ -1,7 +1,7 @@
 [project]
-name = "live-asr-sherpa"
-version = "0.1.0"
-description = "Live streaming ASR using sherpa-onnx pretrained models"
+name = "sherox"
+version = "0.2.0"
+description = "SHErpa OnnX toolkit — streaming ASR, VAD segmentation, and TTS"
 requires-python = ">=3.9"
 dependencies = [
     "sherpa-onnx>=1.12.28",
@@ -11,12 +11,21 @@ dependencies = [
     "rich>=13.0.0",
 ]
 
+[project.scripts]
+"sherox.asr"     = "sherox.asr:main"
+"sherox.segment" = "sherox.segment:main"
+"sherox.tts"     = "sherox.tts:main"
+
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0",
     "pytest-cov",
     "editdistance>=0.6.0",
 ]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["sherox*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

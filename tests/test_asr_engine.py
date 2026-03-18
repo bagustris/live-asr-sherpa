@@ -3,8 +3,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-import asr_engine
-from config import Config
+import sherox.asr_engine as asr_engine
+from sherox.config import Config
 
 
 # ---------------------------------------------------------------------------
@@ -50,9 +50,9 @@ class TestBuildVad:
                      vad_min_speech_duration=0.25)
 
         mock_vad = MagicMock()
-        with patch("asr_engine.sherpa_onnx.VadModelConfig"), \
-             patch("asr_engine.sherpa_onnx.SileroVadModelConfig"), \
-             patch("asr_engine.sherpa_onnx.VoiceActivityDetector", return_value=mock_vad):
+        with patch("sherox.asr_engine.sherpa_onnx.VadModelConfig"), \
+             patch("sherox.asr_engine.sherpa_onnx.SileroVadModelConfig"), \
+             patch("sherox.asr_engine.sherpa_onnx.VoiceActivityDetector", return_value=mock_vad):
             result = asr_engine.build_vad(cfg)
 
         assert result is mock_vad
@@ -65,9 +65,9 @@ class TestBuildVad:
                      vad_min_speech_duration=0.25)
 
         mock_vad = MagicMock()
-        with patch("asr_engine.sherpa_onnx.VadModelConfig"), \
-             patch("asr_engine.sherpa_onnx.TenVadModelConfig") as mock_ten, \
-             patch("asr_engine.sherpa_onnx.VoiceActivityDetector", return_value=mock_vad):
+        with patch("sherox.asr_engine.sherpa_onnx.VadModelConfig"), \
+             patch("sherox.asr_engine.sherpa_onnx.TenVadModelConfig") as mock_ten, \
+             patch("sherox.asr_engine.sherpa_onnx.VoiceActivityDetector", return_value=mock_vad):
             result = asr_engine.build_vad(cfg)
 
         mock_ten.assert_called_once()
@@ -79,10 +79,10 @@ class TestBuildVad:
         cfg = Config(vad_model=str(vad_path), vad_type="silero", sample_rate=16000,
                      num_threads=2, vad_threshold=0.5)
 
-        with patch("asr_engine.sherpa_onnx.VadModelConfig"), \
-             patch("asr_engine.sherpa_onnx.SileroVadModelConfig") as mock_silero, \
-             patch("asr_engine.sherpa_onnx.TenVadModelConfig") as mock_ten, \
-             patch("asr_engine.sherpa_onnx.VoiceActivityDetector"):
+        with patch("sherox.asr_engine.sherpa_onnx.VadModelConfig"), \
+             patch("sherox.asr_engine.sherpa_onnx.SileroVadModelConfig") as mock_silero, \
+             patch("sherox.asr_engine.sherpa_onnx.TenVadModelConfig") as mock_ten, \
+             patch("sherox.asr_engine.sherpa_onnx.VoiceActivityDetector"):
             asr_engine.build_vad(cfg)
 
         mock_silero.assert_called_once()
@@ -94,10 +94,10 @@ class TestBuildVad:
         cfg = Config(vad_model=str(vad_path), vad_type="ten-vad", sample_rate=16000,
                      num_threads=2, vad_threshold=0.5)
 
-        with patch("asr_engine.sherpa_onnx.VadModelConfig"), \
-             patch("asr_engine.sherpa_onnx.SileroVadModelConfig") as mock_silero, \
-             patch("asr_engine.sherpa_onnx.TenVadModelConfig") as mock_ten, \
-             patch("asr_engine.sherpa_onnx.VoiceActivityDetector"):
+        with patch("sherox.asr_engine.sherpa_onnx.VadModelConfig"), \
+             patch("sherox.asr_engine.sherpa_onnx.SileroVadModelConfig") as mock_silero, \
+             patch("sherox.asr_engine.sherpa_onnx.TenVadModelConfig") as mock_ten, \
+             patch("sherox.asr_engine.sherpa_onnx.VoiceActivityDetector"):
             asr_engine.build_vad(cfg)
 
         mock_ten.assert_called_once()
@@ -127,10 +127,10 @@ class TestBuildVad:
             captured["sample_rate"] = sample_rate
             return MagicMock()
 
-        with patch("asr_engine.sherpa_onnx.SileroVadModelConfig"), \
-             patch("asr_engine.sherpa_onnx.VadModelConfig",
+        with patch("sherox.asr_engine.sherpa_onnx.SileroVadModelConfig"), \
+             patch("sherox.asr_engine.sherpa_onnx.VadModelConfig",
                    side_effect=capture_vad_config), \
-             patch("asr_engine.sherpa_onnx.VoiceActivityDetector"):
+             patch("sherox.asr_engine.sherpa_onnx.VoiceActivityDetector"):
             asr_engine.build_vad(cfg)
 
         assert captured["sample_rate"] == 48000
@@ -155,7 +155,7 @@ class TestBuildRecognizer:
         cfg = Config(model_dir=str(tmp_path), model_type="")
 
         mock_rec = MagicMock()
-        with patch("asr_engine.sherpa_onnx.OnlineRecognizer") as mock_cls:
+        with patch("sherox.asr_engine.sherpa_onnx.OnlineRecognizer") as mock_cls:
             mock_cls.from_transducer.return_value = mock_rec
             result = asr_engine.build_recognizer(cfg)
 
@@ -166,7 +166,7 @@ class TestBuildRecognizer:
         _touch_files(tmp_path, "tokens.txt", "encoder.onnx", "decoder.onnx", "joiner.onnx")
         cfg = Config(model_dir=str(tmp_path), model_type="zipformer2")
 
-        with patch("asr_engine.sherpa_onnx.OnlineRecognizer") as mock_cls:
+        with patch("sherox.asr_engine.sherpa_onnx.OnlineRecognizer") as mock_cls:
             mock_cls.from_transducer.return_value = MagicMock()
             asr_engine.build_recognizer(cfg)
 
@@ -177,7 +177,7 @@ class TestBuildRecognizer:
         _touch_files(tmp_path, "tokens.txt", "encoder.onnx", "decoder.onnx")
         cfg = Config(model_dir=str(tmp_path), model_type="paraformer")
 
-        with patch("asr_engine.sherpa_onnx.OnlineRecognizer") as mock_cls:
+        with patch("sherox.asr_engine.sherpa_onnx.OnlineRecognizer") as mock_cls:
             mock_cls.from_paraformer.return_value = MagicMock()
             asr_engine.build_recognizer(cfg)
 
@@ -187,7 +187,7 @@ class TestBuildRecognizer:
         _touch_files(tmp_path, "tokens.txt", "model.onnx")
         cfg = Config(model_dir=str(tmp_path), model_type="wenet_ctc")
 
-        with patch("asr_engine.sherpa_onnx.OnlineRecognizer") as mock_cls:
+        with patch("sherox.asr_engine.sherpa_onnx.OnlineRecognizer") as mock_cls:
             mock_cls.from_wenet_ctc.return_value = MagicMock()
             asr_engine.build_recognizer(cfg)
 
@@ -197,7 +197,7 @@ class TestBuildRecognizer:
         _touch_files(tmp_path, "tokens.txt", "model.onnx")
         cfg = Config(model_dir=str(tmp_path), model_type="zipformer2_ctc")
 
-        with patch("asr_engine.sherpa_onnx.OnlineRecognizer") as mock_cls:
+        with patch("sherox.asr_engine.sherpa_onnx.OnlineRecognizer") as mock_cls:
             mock_cls.from_zipformer2_ctc.return_value = MagicMock()
             asr_engine.build_recognizer(cfg)
 
@@ -207,7 +207,7 @@ class TestBuildRecognizer:
         _touch_files(tmp_path, "tokens.txt", "model.onnx")
         cfg = Config(model_dir=str(tmp_path), model_type="ctc")
 
-        with patch("asr_engine.sherpa_onnx.OnlineRecognizer") as mock_cls:
+        with patch("sherox.asr_engine.sherpa_onnx.OnlineRecognizer") as mock_cls:
             mock_cls.from_ctc.return_value = MagicMock()
             asr_engine.build_recognizer(cfg)
 
@@ -217,7 +217,7 @@ class TestBuildRecognizer:
         _touch_files(tmp_path, "tokens.txt", "model.onnx")
         cfg = Config(model_dir=str(tmp_path), model_type="CTC")
 
-        with patch("asr_engine.sherpa_onnx.OnlineRecognizer") as mock_cls:
+        with patch("sherox.asr_engine.sherpa_onnx.OnlineRecognizer") as mock_cls:
             mock_cls.from_ctc.return_value = MagicMock()
             asr_engine.build_recognizer(cfg)
 
@@ -233,7 +233,7 @@ class TestBuildOfflineRecognizer:
         _touch_files(tmp_path, "tokens.txt", "encoder.onnx", "decoder.onnx", "joiner.onnx")
         cfg = Config(model_dir=str(tmp_path), model_type="")
 
-        with patch("asr_engine.sherpa_onnx.OfflineRecognizer") as mock_cls:
+        with patch("sherox.asr_engine.sherpa_onnx.OfflineRecognizer") as mock_cls:
             mock_cls.from_transducer.return_value = MagicMock()
             asr_engine.build_offline_recognizer(cfg)
 
@@ -243,7 +243,7 @@ class TestBuildOfflineRecognizer:
         _touch_files(tmp_path, "tokens.txt", "encoder.onnx", "decoder.onnx")
         cfg = Config(model_dir=str(tmp_path), model_type="whisper", language="en")
 
-        with patch("asr_engine.sherpa_onnx.OfflineRecognizer") as mock_cls:
+        with patch("sherox.asr_engine.sherpa_onnx.OfflineRecognizer") as mock_cls:
             mock_cls.from_whisper.return_value = MagicMock()
             asr_engine.build_offline_recognizer(cfg)
 
@@ -253,7 +253,7 @@ class TestBuildOfflineRecognizer:
         _touch_files(tmp_path, "tokens.txt", "encoder.onnx", "decoder.onnx")
         cfg = Config(model_dir=str(tmp_path), model_type="whisper", language="zh")
 
-        with patch("asr_engine.sherpa_onnx.OfflineRecognizer") as mock_cls:
+        with patch("sherox.asr_engine.sherpa_onnx.OfflineRecognizer") as mock_cls:
             mock_cls.from_whisper.return_value = MagicMock()
             asr_engine.build_offline_recognizer(cfg)
 
@@ -264,7 +264,7 @@ class TestBuildOfflineRecognizer:
         _touch_files(tmp_path, "tokens.txt", "model.onnx")
         cfg = Config(model_dir=str(tmp_path), model_type="paraformer")
 
-        with patch("asr_engine.sherpa_onnx.OfflineRecognizer") as mock_cls:
+        with patch("sherox.asr_engine.sherpa_onnx.OfflineRecognizer") as mock_cls:
             mock_cls.from_paraformer.return_value = MagicMock()
             asr_engine.build_offline_recognizer(cfg)
 
@@ -274,7 +274,7 @@ class TestBuildOfflineRecognizer:
         _touch_files(tmp_path, "tokens.txt", "model.onnx")
         cfg = Config(model_dir=str(tmp_path), model_type="ctc")
 
-        with patch("asr_engine.sherpa_onnx.OfflineRecognizer") as mock_cls:
+        with patch("sherox.asr_engine.sherpa_onnx.OfflineRecognizer") as mock_cls:
             mock_cls.from_ctc.return_value = MagicMock()
             asr_engine.build_offline_recognizer(cfg)
 
@@ -284,7 +284,7 @@ class TestBuildOfflineRecognizer:
         _touch_files(tmp_path, "tokens.txt", "model.onnx")
         cfg = Config(model_dir=str(tmp_path), model_type="nemo_ctc")
 
-        with patch("asr_engine.sherpa_onnx.OfflineRecognizer") as mock_cls:
+        with patch("sherox.asr_engine.sherpa_onnx.OfflineRecognizer") as mock_cls:
             mock_cls.from_ctc.return_value = MagicMock()
             asr_engine.build_offline_recognizer(cfg)
 
@@ -294,7 +294,7 @@ class TestBuildOfflineRecognizer:
         _touch_files(tmp_path, "tokens.txt", "model.onnx")
         cfg = Config(model_dir=str(tmp_path), model_type="sense_voice")
 
-        with patch("asr_engine.sherpa_onnx.OfflineRecognizer") as mock_cls:
+        with patch("sherox.asr_engine.sherpa_onnx.OfflineRecognizer") as mock_cls:
             mock_cls.from_sense_voice.return_value = MagicMock()
             asr_engine.build_offline_recognizer(cfg)
 
@@ -305,7 +305,7 @@ class TestBuildOfflineRecognizer:
                      "uncached_decoder.onnx", "cached_decoder.onnx")
         cfg = Config(model_dir=str(tmp_path), model_type="moonshine")
 
-        with patch("asr_engine.sherpa_onnx.OfflineRecognizer") as mock_cls:
+        with patch("sherox.asr_engine.sherpa_onnx.OfflineRecognizer") as mock_cls:
             mock_cls.from_moonshine.return_value = MagicMock()
             asr_engine.build_offline_recognizer(cfg)
 
@@ -315,7 +315,7 @@ class TestBuildOfflineRecognizer:
         _touch_files(tmp_path, "tokens.txt", "encoder.onnx", "decoder.onnx")
         cfg = Config(model_dir=str(tmp_path), model_type="fire_red_asr")
 
-        with patch("asr_engine.sherpa_onnx.OfflineRecognizer") as mock_cls:
+        with patch("sherox.asr_engine.sherpa_onnx.OfflineRecognizer") as mock_cls:
             mock_cls.from_fire_red_asr.return_value = MagicMock()
             asr_engine.build_offline_recognizer(cfg)
 
@@ -325,7 +325,7 @@ class TestBuildOfflineRecognizer:
         _touch_files(tmp_path, "tokens.txt", "encoder.onnx", "decoder.onnx")
         cfg = Config(model_dir=str(tmp_path), model_type="WHISPER", language="en")
 
-        with patch("asr_engine.sherpa_onnx.OfflineRecognizer") as mock_cls:
+        with patch("sherox.asr_engine.sherpa_onnx.OfflineRecognizer") as mock_cls:
             mock_cls.from_whisper.return_value = MagicMock()
             asr_engine.build_offline_recognizer(cfg)
 
