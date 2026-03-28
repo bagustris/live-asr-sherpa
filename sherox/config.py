@@ -21,6 +21,7 @@ class Config:
     #          paraformer, ctc, wenet_ctc, zipformer2_ctc
     # Offline: "" (auto), transducer, nemo_transducer, paraformer, whisper,
     #          ctc, nemo_ctc, sense_voice, moonshine, fire_red_asr
+    # ReazonSpeech (offline): ja, ja-en, ja-en-mls-5k
     model_type: str = ""
 
     offline: bool = False

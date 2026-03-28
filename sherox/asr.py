@@ -20,6 +20,18 @@ Usage:
     # SenseVoice (offline):
     sherox.asr --mic --offline --model-type sense_voice
 
+    # ReazonSpeech Japanese (offline):
+    sherox.asr --mic --model-type ja
+    sherox.asr --wav path/to/audio.wav --model-type ja
+
+    # ReazonSpeech bilingual Japanese-English (offline):
+    sherox.asr --mic --model-type ja-en
+    sherox.asr --wav path/to/audio.wav --model-type ja-en
+
+    # ReazonSpeech bilingual trained on ReazonSpeech + MLS English 5k (offline):
+    sherox.asr --mic --model-type ja-en-mls-5k
+    sherox.asr --wav path/to/audio.wav --model-type ja-en-mls-5k
+
     # Custom model directory:
     sherox.asr --mic --model-dir models/my-model --offline --model-type nemo_transducer
 
@@ -36,6 +48,9 @@ Usage:
       models/zipformer-en-2023/            (online transducer, default)
       models/parakeet-tdt-0.6b-v2/         (offline, fp16 — larger, more accurate)
       models/parakeet-tdt-0.6b-v2-int8/    (offline, int8 — smaller & faster)
+      models/reazonspeech-ja/              (offline, ReazonSpeech Japanese)
+      models/reazonspeech-ja-en/           (offline, ReazonSpeech bilingual ja-en)
+      models/reazonspeech-ja-en-mls-5k/    (offline, ReazonSpeech + MLS 5k bilingual)
       models/silero_vad.onnx               (VAD, shared for offline use)
       models/sherpa-onnx-pyannote-segmentation-3-0/model.onnx  (diarization segmentation)
       models/nemo_en_speakerverification_speakernet.onnx        (diarization embedding)
@@ -45,7 +60,7 @@ Usage:
                                  zipformer2_ctc
     Offline --model-type values: (blank), transducer, nemo_transducer, paraformer,
                                  whisper, ctc, nemo_ctc, sense_voice, moonshine,
-                                 fire_red_asr
+                                 fire_red_asr, ja, ja-en, ja-en-mls-5k
 """
 
 import argparse
@@ -108,6 +123,8 @@ def parse_args() -> argparse.Namespace:
             "ctc, wenet_ctc, zipformer2_ctc. "
             "Offline: transducer, nemo_transducer, paraformer, whisper, ctc, nemo_ctc, "
             "sense_voice, moonshine, fire_red_asr. "
+            "ReazonSpeech (offline): ja (Japanese), ja-en (bilingual Japanese-English), "
+            "ja-en-mls-5k (bilingual trained on ReazonSpeech + MLS English 5k). "
             "See https://k2-fsa.github.io/sherpa/onnx/pretrained_models/"
         ),
     )
@@ -219,6 +236,30 @@ _PARAKEET_INT8_TARGET = "parakeet-tdt-0.6b-v2-int8"
 # Default offline model (fp16)
 _PARAKEET_TARGET = _PARAKEET_FP16_TARGET
 
+# ── ReazonSpeech model URLs ───────────────────────────────────────────────────
+# ja: Japanese-only model (https://huggingface.co/reazon-research/reazonspeech-k2-v2)
+_REAZON_JA_URL = (
+    "https://github.com/k2-fsa/sherpa-onnx/releases/download/"
+    "asr-models/sherpa-onnx-zipformer-ja-reazonspeech-2024-08-01.tar.bz2"
+)
+_REAZON_JA_ARCHIVE = "sherpa-onnx-zipformer-ja-reazonspeech-2024-08-01.tar.bz2"
+_REAZON_JA_EXTRACTED = "sherpa-onnx-zipformer-ja-reazonspeech-2024-08-01"
+_REAZON_JA_TARGET = "reazonspeech-ja"
+
+# ja-en: bilingual Japanese-English model
+# (https://huggingface.co/reazon-research/reazonspeech-k2-v2-ja-en)
+# ja-en-mls-5k: bilingual trained on ReazonSpeech + MLS English 5k hours
+# (https://huggingface.co/reazon-research/reazonspeech-k2-v2-ja-en-mls-5k-corrected)
+# Both are served from the same sherpa-onnx release archive.
+_REAZON_JA_EN_URL = (
+    "https://github.com/k2-fsa/sherpa-onnx/releases/download/"
+    "asr-models/sherpa-onnx-zipformer-ja-en-reazonspeech-2025-01-17.tar.bz2"
+)
+_REAZON_JA_EN_ARCHIVE = "sherpa-onnx-zipformer-ja-en-reazonspeech-2025-01-17.tar.bz2"
+_REAZON_JA_EN_EXTRACTED = "sherpa-onnx-zipformer-ja-en-reazonspeech-2025-01-17"
+_REAZON_JA_EN_TARGET = "reazonspeech-ja-en"
+_REAZON_JA_EN_MLS_TARGET = "reazonspeech-ja-en-mls-5k"
+
 _VAD_URL = (
     "https://github.com/k2-fsa/sherpa-onnx/releases/download/"
     "asr-models/silero_vad.onnx"
@@ -296,8 +337,20 @@ def _download_model(model_dir: str, model_type: str) -> None:
     """Download and extract the default model for the given model_type."""
     model_dir = Path(model_dir)
 
+    # ReazonSpeech Japanese model
+    if model_type == "ja" or model_dir.name == _REAZON_JA_TARGET:
+        url = _REAZON_JA_URL
+        archive_name = _REAZON_JA_ARCHIVE
+        extracted_name = _REAZON_JA_EXTRACTED
+    # ReazonSpeech bilingual ja-en and ja-en-mls-5k (same sherpa-onnx archive)
+    elif model_type in ("ja-en", "ja-en-mls-5k") or model_dir.name in (
+        _REAZON_JA_EN_TARGET, _REAZON_JA_EN_MLS_TARGET
+    ):
+        url = _REAZON_JA_EN_URL
+        archive_name = _REAZON_JA_EN_ARCHIVE
+        extracted_name = _REAZON_JA_EN_EXTRACTED
     # Use parakeet as the default offline model download target
-    if model_type == "nemo_transducer" or model_dir.name in (
+    elif model_type == "nemo_transducer" or model_dir.name in (
         _PARAKEET_FP16_TARGET, _PARAKEET_INT8_TARGET
     ):
         # Choose variant based on directory name
@@ -477,11 +530,16 @@ def main() -> None:
     project_dir = Path(__file__).resolve().parent.parent
     # Use a type-specific default dir when the user didn't pass --model-dir explicitly.
     if args.model_dir is None:
-        raw_model_dir = (
-            f"models/{_PARAKEET_TARGET}"
-            if args.offline
-            else f"models/{_MODEL_TARGET}"
-        )
+        if args.model_type == "ja":
+            raw_model_dir = f"models/{_REAZON_JA_TARGET}"
+        elif args.model_type == "ja-en":
+            raw_model_dir = f"models/{_REAZON_JA_EN_TARGET}"
+        elif args.model_type == "ja-en-mls-5k":
+            raw_model_dir = f"models/{_REAZON_JA_EN_MLS_TARGET}"
+        elif args.offline:
+            raw_model_dir = f"models/{_PARAKEET_TARGET}"
+        else:
+            raw_model_dir = f"models/{_MODEL_TARGET}"
     else:
         raw_model_dir = args.model_dir
     model_dir = Path(raw_model_dir)
@@ -508,8 +566,8 @@ def main() -> None:
     _validate_model(cfg.model_dir, cfg.model_type)
 
     # Auto-detect offline-only models and switch automatically.
-    _OFFLINE_ONLY_TYPES = {"nemo_transducer", "whisper", "nemo_ctc", "sense_voice", "moonshine", "fire_red_asr"}
-    _OFFLINE_ONLY_NAME_PATTERNS = ("parakeet", "nemo", "whisper", "sense_voice", "moonshine", "fire_red_asr")
+    _OFFLINE_ONLY_TYPES = {"nemo_transducer", "whisper", "nemo_ctc", "sense_voice", "moonshine", "fire_red_asr", "ja", "ja-en", "ja-en-mls-5k"}
+    _OFFLINE_ONLY_NAME_PATTERNS = ("parakeet", "nemo", "whisper", "sense_voice", "moonshine", "fire_red_asr", "reazonspeech")
     model_name_lower = Path(cfg.model_dir).name.lower()
     if not cfg.offline and (
         cfg.model_type.lower() in _OFFLINE_ONLY_TYPES
