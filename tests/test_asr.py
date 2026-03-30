@@ -301,6 +301,13 @@ def _run_download_model(tmp_path, model_dir_name: str, model_type: str):
 
 
 def _extracted_name_for(model_dir_name: str, model_type: str) -> str:
+    if model_type == "ja" or model_dir_name == main_module._REAZON_JA_TARGET:
+        return main_module._REAZON_JA_EXTRACTED
+    if model_type in ("ja-en", "ja-en-mls-5k") or model_dir_name in (
+        main_module._REAZON_JA_EN_TARGET,
+        main_module._REAZON_JA_EN_MLS_TARGET,
+    ):
+        return main_module._REAZON_JA_EN_EXTRACTED
     if model_type == "nemo_transducer" or model_dir_name in (
         main_module._PARAKEET_FP16_TARGET,
         main_module._PARAKEET_INT8_TARGET,
@@ -349,3 +356,28 @@ class TestDownloadModel:
             mock_tar.return_value.__enter__ = MagicMock(return_value=MagicMock())
             mock_tar.return_value.__exit__ = MagicMock(return_value=False)
             main_module._download_model(str(model_dir), "")
+
+    def test_uses_reazon_ja_url_for_ja_model_type(self, tmp_path):
+        url = _run_download_model(tmp_path, main_module._REAZON_JA_TARGET, "ja")
+        assert "reazonspeech" in url
+        assert "ja-en" not in url
+
+    def test_uses_reazon_ja_url_for_ja_dir_name(self, tmp_path):
+        url = _run_download_model(tmp_path, main_module._REAZON_JA_TARGET, "")
+        assert "reazonspeech" in url
+        assert "ja-en" not in url
+
+    def test_uses_reazon_ja_en_url_for_ja_en_model_type(self, tmp_path):
+        url = _run_download_model(tmp_path, main_module._REAZON_JA_EN_TARGET, "ja-en")
+        assert "reazonspeech" in url
+        assert "ja-en" in url
+
+    def test_uses_reazon_ja_en_url_for_ja_en_mls_5k_model_type(self, tmp_path):
+        url = _run_download_model(tmp_path, main_module._REAZON_JA_EN_MLS_TARGET, "ja-en-mls-5k")
+        assert "reazonspeech" in url
+        assert "ja-en" in url
+
+    def test_reazon_ja_and_ja_en_use_different_urls(self, tmp_path):
+        ja_url = _run_download_model(tmp_path, main_module._REAZON_JA_TARGET, "ja")
+        ja_en_url = _run_download_model(tmp_path, main_module._REAZON_JA_EN_TARGET, "ja-en")
+        assert ja_url != ja_en_url
