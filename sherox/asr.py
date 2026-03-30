@@ -525,6 +525,8 @@ def _validate_mic() -> None:
 
 def main() -> None:
     args = parse_args()
+    # Normalize once so all downstream comparisons are case-insensitive.
+    args.model_type = args.model_type.lower()
 
     # Resolve paths relative to the project root (one level above src/).
     project_dir = Path(__file__).resolve().parent.parent
@@ -570,7 +572,7 @@ def main() -> None:
     _OFFLINE_ONLY_NAME_PATTERNS = ("parakeet", "nemo", "whisper", "sense_voice", "moonshine", "fire_red_asr", "reazonspeech")
     model_name_lower = Path(cfg.model_dir).name.lower()
     if not cfg.offline and (
-        cfg.model_type.lower() in _OFFLINE_ONLY_TYPES
+        cfg.model_type in _OFFLINE_ONLY_TYPES
         or any(pat in model_name_lower for pat in _OFFLINE_ONLY_NAME_PATTERNS)
     ):
         _info(
@@ -578,6 +580,12 @@ def main() -> None:
             "enabling --offline automatically."
         )
         cfg.offline = True
+
+    # Remap ReazonSpeech aliases to an empty string so sherpa-onnx uses its
+    # auto-detect path instead of triggering the slower double-load fallback.
+    _REAZON_ALIASES = {"ja", "ja-en", "ja-en-mls-5k"}
+    if cfg.model_type in _REAZON_ALIASES:
+        cfg.model_type = ""
 
     cfg.vad_model = _validate_vad(cfg.vad_type, cfg.ten_vad_model, cfg.offline, project_dir)
 
