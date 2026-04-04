@@ -50,28 +50,58 @@ import json
 import sys
 import time
 from pathlib import Path
+from types import SimpleNamespace
 from typing import List, Tuple
 
 import numpy as np
-import soundfile as sf
+
+sf = SimpleNamespace(read=None)
 
 # Ensure benchmark/ is on sys.path so we can import metrics from here
 _BENCH_DIR = Path(__file__).resolve().parent
 if str(_BENCH_DIR) not in sys.path:
     sys.path.insert(0, str(_BENCH_DIR))
 
-# Also ensure src/ is on sys.path to import asr_engine, config
-_SRC_DIR = _BENCH_DIR.parent / "src"
-if str(_SRC_DIR) not in sys.path:
-    sys.path.insert(0, str(_SRC_DIR))
+_PROJECT_DIR = _BENCH_DIR.parent
+if str(_PROJECT_DIR) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_DIR))
 
 from metrics import AggregateMetrics, UtteranceResult  # noqa: E402
 
 # Default paths
 DEFAULT_DATA_DIR = "/data/LibriSpeech/dev-clean-2"
-_PROJECT_DIR = _BENCH_DIR.parent
 DEFAULT_ONLINE_MODEL_DIR = str(_PROJECT_DIR / "models" / "zipformer-en-2023")
 DEFAULT_OFFLINE_MODEL_DIR = str(_PROJECT_DIR / "models" / "parakeet-tdt-0.6b-v2")
+
+
+def _require_soundfile():
+    global sf
+    if getattr(sf, "read", None) is not None:
+        return sf
+    try:
+        import soundfile as _soundfile  # noqa: PLC0415
+    except ImportError as exc:  # pragma: no cover - depends on environment
+        raise RuntimeError(
+            "soundfile is required for benchmark audio loading. "
+            "Install it with: pip install soundfile"
+        ) from exc
+    sf = _soundfile
+    return sf
+
+
+def _validate_args(args: argparse.Namespace) -> None:
+    if args.sample_rate <= 0:
+        print(f"Error: --sample-rate must be > 0, got {args.sample_rate}", file=sys.stderr)
+        sys.exit(1)
+    if args.chunk_size <= 0:
+        print(f"Error: --chunk-size must be > 0, got {args.chunk_size}", file=sys.stderr)
+        sys.exit(1)
+    if args.threads <= 0:
+        print(f"Error: --threads must be > 0, got {args.threads}", file=sys.stderr)
+        sys.exit(1)
+    if args.max_utts is not None and args.max_utts <= 0:
+        print(f"Error: --max-utts must be > 0, got {args.max_utts}", file=sys.stderr)
+        sys.exit(1)
 
 
 # ---------------------------------------------------------------------------
@@ -123,10 +153,15 @@ def manifest_from_librispeech(data_dir: str) -> List[Tuple[str, str]]:
 
 def load_manifest(path: str) -> List[Tuple[str, str]]:
     """Parse a TSV or CSV manifest into (audio_path, reference_text) pairs."""
-    records: List[Tuple[str, str]] = []
-    manifest_dir = Path(path).parent
+    manifest_path = Path(path)
+    if not manifest_path.is_file():
+        print(f"Error: manifest file not found: {path}", file=sys.stderr)
+        sys.exit(1)
 
-    with open(path, newline="", encoding="utf-8") as f:
+    records: List[Tuple[str, str]] = []
+    manifest_dir = manifest_path.parent
+
+    with open(manifest_path, newline="", encoding="utf-8") as f:
         sample = f.read(4096)
         f.seek(0)
         delimiter = "\t" if "\t" in sample else ","
@@ -154,6 +189,7 @@ def load_manifest(path: str) -> List[Tuple[str, str]]:
 
 def load_audio(path: str, target_sr: int = 16000) -> Tuple[np.ndarray, float]:
     """Load an audio file; convert to mono float32 and resample if needed."""
+    sf = _require_soundfile()
     audio, sr = sf.read(path, dtype="float32", always_2d=False)
     if audio.ndim == 2:
         audio = audio.mean(axis=1)
@@ -424,10 +460,11 @@ def build_parser() -> argparse.ArgumentParser:
 def main() -> None:
     parser = build_parser()
     args = parser.parse_args()
+    _validate_args(args)
 
     # Deferred import so the sys.path manipulation above takes effect first
-    from config import Config
-    from asr_engine import build_recognizer, build_offline_recognizer
+    from sherox.asr_engine import build_recognizer, build_offline_recognizer
+    from sherox.config import Config
 
     # Resolve model directory
     if args.model_dir is None:

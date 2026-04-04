@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argparse
 import io
 import sys
 from pathlib import Path
@@ -98,6 +99,11 @@ def test_load_manifest_empty_file(tmp_path):
     tsv.write_text("")
     with pytest.raises(SystemExit):
         bm.load_manifest(str(tsv))
+
+
+def test_load_manifest_missing_file(tmp_path):
+    with pytest.raises(SystemExit):
+        bm.load_manifest(str(tmp_path / "missing.tsv"))
 
 
 # ---------------------------------------------------------------------------
@@ -293,6 +299,12 @@ def test_run_benchmark_handles_transcription_error(tmp_path):
     results, agg = bm.run_benchmark(rec, records, offline=True)
     assert len(results) == 1
     assert results[0].hypothesis == ""
+
+
+def test_validate_args_rejects_nonpositive_max_utts():
+    args = argparse.Namespace(sample_rate=16000, chunk_size=0.1, threads=4, max_utts=0)
+    with pytest.raises(SystemExit):
+        bm._validate_args(args)
 
 
 # ---------------------------------------------------------------------------

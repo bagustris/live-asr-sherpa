@@ -26,14 +26,16 @@ import argparse
 import sys
 import urllib.request
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
-import soundfile as sf
 from rich.console import Console
 
 from .asr_engine import build_vad
 from .audio import mic_stream, read_wav
 from .config import SegmentConfig
+
+sf = SimpleNamespace(write=None)
 
 _console = Console()
 _err_console = Console(stderr=True)
@@ -61,6 +63,37 @@ def _info(msg: str) -> None:
 def _error(msg: str) -> None:
     _err_console.print(f"[bold red]\\[error][/bold red] {msg}")
     sys.exit(1)
+
+
+def _require_soundfile():
+    global sf
+    if getattr(sf, "write", None) is not None:
+        return sf
+    try:
+        import soundfile as _soundfile  # noqa: PLC0415
+    except ImportError as exc:  # pragma: no cover - depends on environment
+        _error(
+            "soundfile is required for reading and writing segment audio. "
+            "Install it with: pip install soundfile"
+        )
+        raise AssertionError("unreachable") from exc
+    sf = _soundfile
+    return sf
+
+
+def _validate_runtime_args(args: argparse.Namespace) -> None:
+    if not 0.0 <= args.threshold <= 1.0:
+        _error(f"--threshold must be between 0.0 and 1.0, got {args.threshold}")
+    if args.min_silence < 0:
+        _error(f"--min-silence must be >= 0, got {args.min_silence}")
+    if args.min_speech < 0:
+        _error(f"--min-speech must be >= 0, got {args.min_speech}")
+    if args.sample_rate <= 0:
+        _error(f"--sample-rate must be > 0, got {args.sample_rate}")
+    if args.capture_rate <= 0:
+        _error(f"--capture-rate must be > 0, got {args.capture_rate}")
+    if args.threads <= 0:
+        _error(f"--threads must be > 0, got {args.threads}")
 
 
 def parse_args() -> argparse.Namespace:
@@ -203,6 +236,7 @@ def run_segment(
     """
     if segment_counter is None:
         segment_counter = [0]
+    sf = _require_soundfile() if output_dir is not None else None
 
     elapsed_samples = 0
     prefix = "  "
@@ -269,6 +303,7 @@ def run_segment(
 
 def main() -> None:
     args = parse_args()
+    _validate_runtime_args(args)
 
     project_dir = Path(__file__).resolve().parent.parent
 

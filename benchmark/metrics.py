@@ -34,7 +34,35 @@ import re
 from dataclasses import dataclass, field
 from typing import List
 
-import editdistance
+try:
+    import editdistance
+except ImportError:  # pragma: no cover - exercised indirectly in lean envs
+    editdistance = None
+
+
+def _levenshtein_distance(left: List[str], right: List[str]) -> int:
+    if editdistance is not None:
+        return editdistance.eval(left, right)
+
+    if not left:
+        return len(right)
+    if not right:
+        return len(left)
+
+    previous = list(range(len(right) + 1))
+    for i, left_token in enumerate(left, 1):
+        current = [i]
+        for j, right_token in enumerate(right, 1):
+            substitution_cost = 0 if left_token == right_token else 1
+            current.append(
+                min(
+                    previous[j] + 1,
+                    current[j - 1] + 1,
+                    previous[j - 1] + substitution_cost,
+                )
+            )
+        previous = current
+    return previous[-1]
 
 
 # ---------------------------------------------------------------------------
@@ -78,8 +106,7 @@ class UtteranceResult:
         self.ref_words = ref_norm.split()
         self.hyp_words = hyp_norm.split()
 
-        # editdistance.eval returns the Levenshtein distance between two sequences
-        self.edit_distance = editdistance.eval(self.hyp_words, self.ref_words)
+        self.edit_distance = _levenshtein_distance(self.hyp_words, self.ref_words)
 
         ref_len = len(self.ref_words)
         self.wer = (self.edit_distance / ref_len) if ref_len > 0 else 0.0

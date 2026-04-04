@@ -1,3 +1,4 @@
+import argparse
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -272,6 +273,38 @@ class TestValidateModel:
         with patch.object(main_module, "_download_model") as mock_dl:
             main_module._validate_model(missing, "zipformer2")
         mock_dl.assert_called_once_with(missing, "zipformer2")
+
+
+# ---------------------------------------------------------------------------
+# _validate_runtime_args
+# ---------------------------------------------------------------------------
+
+class TestValidateRuntimeArgs:
+    def test_speaker_tag_requires_diarization(self):
+        args = argparse.Namespace(
+            sample_rate=16000,
+            capture_rate=16000,
+            chunk_size=0.16,
+            threads=4,
+            speaker_tag=True,
+            diarization=False,
+            num_speakers=-1,
+        )
+        with pytest.raises(SystemExit):
+            main_module._validate_runtime_args(args)
+
+    def test_num_speakers_zero_is_rejected(self):
+        args = argparse.Namespace(
+            sample_rate=16000,
+            capture_rate=16000,
+            chunk_size=0.16,
+            threads=4,
+            speaker_tag=False,
+            diarization=True,
+            num_speakers=0,
+        )
+        with pytest.raises(SystemExit):
+            main_module._validate_runtime_args(args)
 
 
 # ---------------------------------------------------------------------------

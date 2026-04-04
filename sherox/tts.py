@@ -30,13 +30,15 @@ import sys
 import tarfile
 import urllib.request
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Optional
 
 import numpy as np
-import soundfile as sf
 from rich.console import Console
 
 from .config import TtsConfig
+
+sf = SimpleNamespace(write=None)
 
 _console = Console()
 _err_console = Console(stderr=True)
@@ -71,6 +73,31 @@ def _info(msg: str) -> None:
 def _error(msg: str) -> None:
     _err_console.print(f"[bold red]\\[error][/bold red] {msg}")
     sys.exit(1)
+
+
+def _require_soundfile():
+    global sf
+    if getattr(sf, "write", None) is not None:
+        return sf
+    try:
+        import soundfile as _soundfile  # noqa: PLC0415
+    except ImportError as exc:  # pragma: no cover - depends on environment
+        _error(
+            "soundfile is required for writing synthesized audio. "
+            "Install it with: pip install soundfile"
+        )
+        raise AssertionError("unreachable") from exc
+    sf = _soundfile
+    return sf
+
+
+def _validate_runtime_args(args: argparse.Namespace) -> None:
+    if args.speaker_id < 0:
+        _error(f"--speaker-id must be >= 0, got {args.speaker_id}")
+    if args.speed <= 0:
+        _error(f"--speed must be > 0, got {args.speed}")
+    if args.threads <= 0:
+        _error(f"--threads must be > 0, got {args.threads}")
 
 
 def parse_args() -> argparse.Namespace:
@@ -268,6 +295,7 @@ def _play(samples: np.ndarray, sample_rate: int) -> None:
 
 def main() -> None:
     args = parse_args()
+    _validate_runtime_args(args)
 
     project_dir = Path(__file__).resolve().parent.parent
 
@@ -309,6 +337,7 @@ def main() -> None:
         _info("Playing audio…")
         _play(samples, sample_rate)
 
+    sf = _require_soundfile()
     sf.write(cfg.output, samples, samplerate=sample_rate)
     _info(f"Saved → {cfg.output}")
 

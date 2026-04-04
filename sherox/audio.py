@@ -1,9 +1,41 @@
 import queue
+from types import SimpleNamespace
 from typing import Generator
 
 import numpy as np
-import sounddevice as sd
-import soundfile as sf
+
+sd = SimpleNamespace(InputStream=None)
+sf = SimpleNamespace(SoundFile=None)
+
+
+def _require_soundfile():
+    global sf
+    if getattr(sf, "SoundFile", None) is not None:
+        return sf
+    try:
+        import soundfile as _soundfile  # noqa: PLC0415
+    except ImportError as exc:  # pragma: no cover - depends on environment
+        raise RuntimeError(
+            "soundfile is required for reading audio files. "
+            "Install it with: pip install soundfile"
+        ) from exc
+    sf = _soundfile
+    return sf
+
+
+def _require_sounddevice():
+    global sd
+    if getattr(sd, "InputStream", None) is not None:
+        return sd
+    try:
+        import sounddevice as _sounddevice  # noqa: PLC0415
+    except ImportError as exc:  # pragma: no cover - depends on environment
+        raise RuntimeError(
+            "sounddevice is required for microphone input. "
+            "Install it with: pip install sounddevice"
+        ) from exc
+    sd = _sounddevice
+    return sd
 
 
 def read_wav(
@@ -12,6 +44,7 @@ def read_wav(
     chunk_size: float = 0.16,
 ) -> Generator[np.ndarray, None, None]:
     """Read a mono audio file (WAV, FLAC, etc.) and yield float32 chunks."""
+    sf = _require_soundfile()
     with sf.SoundFile(path) as f:
         if f.channels != 1:
             raise ValueError(
@@ -44,6 +77,7 @@ def mic_stream(
     Uses a callback-based InputStream so audio capture never blocks the
     decoding loop — chunks are queued and consumed independently.
     """
+    sd = _require_sounddevice()
     chunk_frames = int(capture_rate * chunk_size)
     q: queue.Queue[np.ndarray] = queue.Queue()
 

@@ -68,14 +68,16 @@ import sys
 import tarfile
 import urllib.request
 from pathlib import Path
+from types import SimpleNamespace
 
-import soundfile as sf
 from rich.console import Console
 
 from .asr_engine import build_diarization, build_offline_recognizer, build_recognizer, build_vad
 from .audio import mic_stream, read_wav
 from .config import Config
 from .streaming import run_offline_vad_streaming, run_streaming
+
+sf = SimpleNamespace(SoundFile=None)
 
 _console = Console()
 _err_console = Console(stderr=True)
@@ -88,6 +90,37 @@ def _info(msg: str) -> None:
 def _error(msg: str) -> None:
     _err_console.print(f"[bold red]\\[error][/bold red] {msg}")
     sys.exit(1)
+
+
+def _require_soundfile():
+    global sf
+    if getattr(sf, "SoundFile", None) is not None:
+        return sf
+    try:
+        import soundfile as _soundfile  # noqa: PLC0415
+    except ImportError as exc:  # pragma: no cover - depends on environment
+        _error(
+            "soundfile is required for reading audio files. "
+            "Install it with: pip install soundfile"
+        )
+        raise AssertionError("unreachable") from exc
+    sf = _soundfile
+    return sf
+
+
+def _validate_runtime_args(args: argparse.Namespace) -> None:
+    if args.sample_rate <= 0:
+        _error(f"--sample-rate must be > 0, got {args.sample_rate}")
+    if args.capture_rate <= 0:
+        _error(f"--capture-rate must be > 0, got {args.capture_rate}")
+    if args.chunk_size <= 0:
+        _error(f"--chunk-size must be > 0, got {args.chunk_size}")
+    if args.threads <= 0:
+        _error(f"--threads must be > 0, got {args.threads}")
+    if args.speaker_tag and not args.diarization:
+        _error("--speaker-tag requires --diarization")
+    if args.num_speakers == 0 or args.num_speakers < -1:
+        _error("--num-speakers must be -1 (auto) or a positive integer")
 
 
 def parse_args() -> argparse.Namespace:
@@ -496,6 +529,7 @@ def _validate_wav(path: str, sample_rate: int) -> None:
     if not p.exists():
         _error(f"Audio file not found: {path}")
     try:
+        sf = _require_soundfile()
         with sf.SoundFile(path) as f:
             if f.channels != 1:
                 _error(
@@ -525,6 +559,7 @@ def _validate_mic() -> None:
 
 def main() -> None:
     args = parse_args()
+    _validate_runtime_args(args)
     # Normalize once so all downstream comparisons are case-insensitive.
     args.model_type = args.model_type.lower()
 
@@ -660,4 +695,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

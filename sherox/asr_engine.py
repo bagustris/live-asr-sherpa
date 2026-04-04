@@ -1,8 +1,28 @@
+from __future__ import annotations
+
 from pathlib import Path
 
-import sherpa_onnx
-
 from .config import Config
+
+try:
+    import sherpa_onnx
+except ImportError:  # pragma: no cover - depends on environment
+    sherpa_onnx = None
+
+
+def _require_sherpa_onnx():
+    global sherpa_onnx
+    if sherpa_onnx is not None:
+        return sherpa_onnx
+    try:
+        import sherpa_onnx as _sherpa_onnx  # noqa: PLC0415
+    except ImportError as exc:  # pragma: no cover - depends on environment
+        raise RuntimeError(
+            "sherpa-onnx is required for ASR and diarization features. "
+            "Install it with: pip install sherpa-onnx"
+        ) from exc
+    sherpa_onnx = _sherpa_onnx
+    return sherpa_onnx
 
 
 def _find(directory: Path, pattern: str) -> str:
@@ -51,7 +71,7 @@ _ENDPOINT = dict(
 )
 
 
-def build_recognizer(cfg: Config) -> sherpa_onnx.OnlineRecognizer:
+def build_recognizer(cfg: Config):
     """Load a Sherpa-ONNX streaming recognizer for any supported online model type.
 
     Endpoint rules (tradeoff: adds ~1–2 s boundary latency, prevents runaway lines):
@@ -59,6 +79,7 @@ def build_recognizer(cfg: Config) -> sherpa_onnx.OnlineRecognizer:
       rule2: 1.2 s silence after sufficient speech → early endpoint
       rule3: force endpoint after 300 s utterance (effectively disabled)
     """
+    sherpa_onnx = _require_sherpa_onnx()
     d = Path(cfg.model_dir)
     mt = cfg.model_type.lower()
     tokens = _find(d, "tokens.txt")
@@ -116,11 +137,12 @@ def build_recognizer(cfg: Config) -> sherpa_onnx.OnlineRecognizer:
     )
 
 
-def build_offline_recognizer(cfg: Config) -> sherpa_onnx.OfflineRecognizer:
+def build_offline_recognizer(cfg: Config):
     """Load a Sherpa-ONNX offline recognizer for any supported offline model type.
 
     Pair with build_vad() and run_offline_vad_streaming() for live microphone use.
     """
+    sherpa_onnx = _require_sherpa_onnx()
     d = Path(cfg.model_dir)
     mt = cfg.model_type.lower()
     tokens = _find(d, "tokens.txt")
@@ -189,7 +211,7 @@ def build_offline_recognizer(cfg: Config) -> sherpa_onnx.OfflineRecognizer:
     )
 
 
-def build_vad(cfg: Config) -> sherpa_onnx.VoiceActivityDetector:
+def build_vad(cfg: Config):
     """Build a VAD (Silero or Ten-VAD) for segmenting live audio into utterances.
 
     Required for offline models because they cannot decode incrementally —
@@ -201,6 +223,7 @@ def build_vad(cfg: Config) -> sherpa_onnx.VoiceActivityDetector:
             "cfg.vad_model path is empty — the resolved VAD model path must be set "
             "before calling build_vad() (normally done by main._validate_vad())."
         )
+    sherpa_onnx = _require_sherpa_onnx()
     if cfg.vad_type == "ten-vad":
         vad_config = sherpa_onnx.VadModelConfig(
             ten_vad=sherpa_onnx.TenVadModelConfig(
@@ -230,7 +253,7 @@ def build_vad(cfg: Config) -> sherpa_onnx.VoiceActivityDetector:
     return sherpa_onnx.VoiceActivityDetector(vad_config, buffer_size_in_seconds=60)
 
 
-def build_diarization(cfg: Config) -> sherpa_onnx.OfflineSpeakerDiarization:
+def build_diarization(cfg: Config):
     """Build an OfflineSpeakerDiarization pipeline using pyannote segmentation.
 
     Models required (auto-downloaded by main.py when --diarization is set):
@@ -241,6 +264,7 @@ def build_diarization(cfg: Config) -> sherpa_onnx.OfflineSpeakerDiarization:
         raise ValueError(
             "Both diarization_seg_model and diarization_emb_model must be set."
         )
+    sherpa_onnx = _require_sherpa_onnx()
     config = sherpa_onnx.OfflineSpeakerDiarizationConfig(
         segmentation=sherpa_onnx.OfflineSpeakerSegmentationModelConfig(
             pyannote=sherpa_onnx.OfflineSpeakerSegmentationPyannoteModelConfig(

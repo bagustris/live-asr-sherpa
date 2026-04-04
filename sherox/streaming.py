@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import os
 import sys
 from concurrent.futures import ThreadPoolExecutor, Future
@@ -5,7 +7,6 @@ from typing import Generator, Optional
 
 import logging
 import numpy as np
-import sherpa_onnx
 from rich.console import Console
 from rich.text import Text
 import shutil
