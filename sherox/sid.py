@@ -1,0 +1,335 @@
+"""Speaker Identification — entry point.
+
+Usage:
+    # Identify speaker from microphone (VAD-segmented real-time):
+    sherox.sid --mic --speaker-file speakers.txt
+
+    # Identify speaker from a WAV file:
+    sherox.sid --wav audio.wav --speaker-file speakers.txt
+
+    # Custom model and threshold:
+    sherox.sid --mic --speaker-file speakers.txt --threshold 0.75
+
+Speaker file format (one 'name /path/wav' per line):
+    alice /path/to/alice1.wav
+    alice /path/to/alice2.wav
+    bob   /path/to/bob1.wav
+
+Multiple entries for the same name are averaged into a single embedding.
+
+Default model: models/nemo_en_titanet_large.onnx (~96 MB, auto-downloaded).
+"""
+from __future__ import annotations
+
+import argparse
+import sys
+import urllib.request
+from collections import defaultdict
+from pathlib import Path
+from typing import Dict, List, Tuple
+
+import numpy as np
+from rich.console import Console
+
+from .asr_engine import _require_sherpa_onnx, build_vad
+from .audio import mic_stream
+from .config import Config as _AsrConfig, SidConfig
+
+_console = Console()
+_err_console = Console(stderr=True)
+
+_PREFIX = "  "
+
+_MODEL_URL = (
+    "https://github.com/k2-fsa/sherpa-onnx/releases/download/"
+    "speaker-recongition-models/nemo_en_titanet_large.onnx"
+)
+_MODEL_FILE = "nemo_en_titanet_large.onnx"
+
+_VAD_URL = (
+    "https://github.com/k2-fsa/sherpa-onnx/releases/download/"
+    "asr-models/silero_vad.onnx"
+)
+
+_PALETTE = [
+    "bright_cyan", "bright_magenta", "bright_yellow",
+    "bright_green", "bright_blue", "bright_red",
+    "cyan", "magenta", "yellow", "green",
+]
+
+
+def _info(msg: str) -> None:
+    _console.print(f"[bold green]\\[info][/bold green] {msg}")
+
+
+def _error(msg: str) -> None:
+    _err_console.print(f"[bold red]\\[error][/bold red] {msg}")
+    sys.exit(1)
+
+
+def _download_file(url: str, dest: Path) -> None:
+    _info(f"Downloading from:\n  {url}")
+    _info("This may take a few minutes…")
+
+    def _progress(block: int, block_size: int, total: int) -> None:
+        if total > 0:
+            pct = min(100, block * block_size * 100 // total)
+            sys.stdout.write(f"\r  {pct}%")
+            sys.stdout.flush()
+
+    try:
+        urllib.request.urlretrieve(url, dest, reporthook=_progress)
+    except Exception as exc:  # noqa: BLE001
+        _error(f"Download failed: {exc}")
+    print()
+
+
+def _validate_model(model_path: str, project_dir: Path) -> str:
+    p = Path(model_path)
+    if not p.is_absolute():
+        p = project_dir / p
+    if not p.exists():
+        p.parent.mkdir(parents=True, exist_ok=True)
+        _info(f"Model not found. Downloading {_MODEL_FILE}…")
+        _download_file(_MODEL_URL, p)
+    return str(p)
+
+
+def _validate_vad(project_dir: Path) -> str:
+    vad_path = project_dir / "models" / "silero_vad.onnx"
+    if not vad_path.exists():
+        vad_path.parent.mkdir(parents=True, exist_ok=True)
+        _info("VAD model not found. Downloading silero_vad.onnx…")
+        _download_file(_VAD_URL, vad_path)
+    return str(vad_path)
+
+
+def _load_speaker_file(path: str) -> Dict[str, List[str]]:
+    p = Path(path)
+    if not p.is_file():
+        _error(f"Speaker file not found: {path}")
+    speakers: Dict[str, List[str]] = defaultdict(list)
+    with open(p) as f:
+        for i, line in enumerate(f, 1):
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            parts = line.split(None, 1)
+            if len(parts) != 2:
+                _error(f"Speaker file line {i}: expected 'name /path/to/wav', got: {line!r}")
+            name, wav_path = parts
+            if not Path(wav_path).is_file():
+                _error(f"Speaker file line {i}: WAV not found: {wav_path}")
+            speakers[name].append(wav_path)
+    if not speakers:
+        _error(f"Speaker file {path!r} is empty.")
+    return dict(speakers)
+
+
+def _load_wav_flat(path: str) -> Tuple[np.ndarray, int]:
+    """Load an audio file and return (float32 mono samples, sample_rate)."""
+    try:
+        import soundfile as sf  # noqa: PLC0415
+    except ImportError as exc:  # pragma: no cover
+        raise RuntimeError("soundfile is required. pip install soundfile") from exc
+    data, sr = sf.read(path, always_2d=True, dtype="float32")
+    return np.ascontiguousarray(data[:, 0]), sr
+
+
+def _build_extractor(cfg: SidConfig):
+    sherpa_onnx = _require_sherpa_onnx()
+    config = sherpa_onnx.SpeakerEmbeddingExtractorConfig(
+        model=cfg.model,
+        num_threads=cfg.num_threads,
+        debug=False,
+        provider="cpu",
+    )
+    if not config.validate():
+        _error(f"Invalid embedding extractor config. Check model path: {cfg.model}")
+    return sherpa_onnx.SpeakerEmbeddingExtractor(config)
+
+
+def _build_manager(extractor, speakers: Dict[str, List[str]]):
+    sherpa_onnx = _require_sherpa_onnx()
+    manager = sherpa_onnx.SpeakerEmbeddingManager(extractor.dim)
+    for name, wavs in speakers.items():
+        _info(f"Registering '{name}' ({len(wavs)} file(s))…")
+        acc = None
+        for wav in wavs:
+            samples, sr = _load_wav_flat(wav)
+            stream = extractor.create_stream()
+            stream.accept_waveform(sample_rate=sr, waveform=samples)
+            stream.input_finished()
+            emb = np.array(extractor.compute(stream))
+            acc = emb if acc is None else acc + emb
+        if not manager.add(name, acc / len(wavs)):
+            _error(f"Failed to register speaker: {name}")
+    return manager
+
+
+def _identify(extractor, manager, samples: np.ndarray, sample_rate: int, threshold: float) -> str:
+    stream = extractor.create_stream()
+    stream.accept_waveform(sample_rate=sample_rate, waveform=samples)
+    stream.input_finished()
+    name = manager.search(np.array(extractor.compute(stream)), threshold=threshold)
+    return name if name else "unknown"
+
+
+def _colour_for(name: str, colour_map: Dict[str, str], next_idx: List[int]) -> str:
+    if name == "unknown":
+        return "yellow"
+    if name not in colour_map:
+        colour_map[name] = _PALETTE[next_idx[0] % len(_PALETTE)]
+        next_idx[0] += 1
+    return colour_map[name]
+
+
+def run_wav(cfg: SidConfig, speakers: Dict[str, List[str]]) -> None:
+    extractor = _build_extractor(cfg)
+    manager = _build_manager(extractor, speakers)
+
+    _info(f"Processing: {cfg.wav}\n")
+    samples, sr = _load_wav_flat(cfg.wav)
+    name = _identify(extractor, manager, samples, sr, cfg.threshold)
+    colour = "bright_cyan" if name != "unknown" else "yellow"
+    _console.print(f"{_PREFIX}[bold {colour}]{name}[/bold {colour}]")
+
+
+def run_mic(cfg: SidConfig, speakers: Dict[str, List[str]]) -> None:
+    extractor = _build_extractor(cfg)
+    manager = _build_manager(extractor, speakers)
+
+    # Reuse VAD from the ASR engine (silero, adapts via Config)
+    asr_cfg = _AsrConfig(
+        vad_model=cfg.vad_model,
+        vad_type="silero",
+        sample_rate=cfg.capture_rate,
+        num_threads=cfg.num_threads,
+    )
+    vad = build_vad(asr_cfg)
+
+    colour_map: Dict[str, str] = {}
+    next_idx: List[int] = [0]
+
+    def _process(samples: np.ndarray) -> None:
+        name = _identify(extractor, manager, samples, cfg.capture_rate, cfg.threshold)
+        c = _colour_for(name, colour_map, next_idx)
+        sys.stdout.write(f"\r{' ' * 44}\r")
+        sys.stdout.flush()
+        _console.print(f"{_PREFIX}[bold {c}]{name}[/bold {c}]")
+
+    audio = mic_stream(capture_rate=cfg.capture_rate, chunk_size=cfg.chunk_size)
+    _info("Listening on microphone — press Ctrl+C to stop.\n")
+
+    try:
+        for chunk in audio:
+            vad.accept_waveform(chunk)
+
+            if cfg.show_mic_level:
+                energy = float(np.sqrt(np.mean(chunk ** 2)))
+                bar = "█" * min(int(energy * 500), 40)
+                sys.stdout.write(f"\r{_PREFIX}mic: {bar:<40} {energy:.4f}")
+                sys.stdout.flush()
+
+            while not vad.empty():
+                segment = vad.front
+                samples = np.array(segment.samples, dtype=np.float32)
+                vad.pop()
+                _process(samples)
+
+    except KeyboardInterrupt:
+        pass
+    finally:
+        vad.flush()
+        while not vad.empty():
+            segment = vad.front
+            samples = np.array(segment.samples, dtype=np.float32)
+            vad.pop()
+            _process(samples)
+        print()
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Speaker Identification with Sherpa-ONNX",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    mode = parser.add_mutually_exclusive_group(required=True)
+    mode.add_argument("--mic", action="store_true", help="Stream from microphone")
+    mode.add_argument("--wav", metavar="PATH", help="Identify speaker in a WAV file")
+
+    parser.add_argument(
+        "--speaker-file",
+        required=True,
+        metavar="PATH",
+        help="Text file with 'name /path/to/ref.wav' entries (one per line)",
+    )
+    parser.add_argument(
+        "--model",
+        default=f"models/{_MODEL_FILE}",
+        metavar="PATH",
+        help="Speaker embedding ONNX model (auto-downloaded if absent)",
+    )
+    parser.add_argument(
+        "--threshold",
+        type=float,
+        default=0.6,
+        help="Cosine similarity threshold for a match (0–1, higher = stricter)",
+    )
+    parser.add_argument(
+        "--sample-rate", type=int, default=16000,
+        help="Expected sample rate for WAV input (Hz)",
+    )
+    parser.add_argument(
+        "--capture-rate", type=int, default=16000, metavar="HZ",
+        help="Microphone capture rate (use 48000 for device compatibility)",
+    )
+    parser.add_argument(
+        "--chunk-size", type=float, default=0.1,
+        help="Mic audio chunk size in seconds",
+    )
+    parser.add_argument(
+        "--threads", type=int, default=4,
+        help="CPU thread count for ONNX runtime",
+    )
+    parser.add_argument(
+        "--listening", action="store_true",
+        help="Show a live RMS energy bar for microphone level calibration",
+    )
+    return parser.parse_args()
+
+
+def main() -> None:
+    args = parse_args()
+    project_dir = Path(__file__).resolve().parent.parent
+
+    model_path = _validate_model(args.model, project_dir)
+
+    vad_model = ""
+    if args.mic:
+        vad_model = _validate_vad(project_dir)
+
+    cfg = SidConfig(
+        model=model_path,
+        threshold=args.threshold,
+        sample_rate=args.sample_rate,
+        capture_rate=args.capture_rate,
+        chunk_size=args.chunk_size,
+        num_threads=args.threads,
+        vad_model=vad_model,
+        wav=args.wav or "",
+        show_mic_level=args.listening,
+    )
+
+    speakers = _load_speaker_file(args.speaker_file)
+    _info(f"Loaded {len(speakers)} speaker(s): {', '.join(sorted(speakers))}")
+    _info("Loading embedding model…")
+
+    if args.wav:
+        run_wav(cfg, speakers)
+    else:
+        run_mic(cfg, speakers)
+
+
+if __name__ == "__main__":
+    main()

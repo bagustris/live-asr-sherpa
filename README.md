@@ -2,7 +2,7 @@
 
 *Minimal, light, live speech recognition (and others) on Laptop's CPU*
 
-A terminal-based Automatic Speech Recognition (ASR) application built with [Sherpa-ONNX](https://github.com/k2-fsa/sherpa-onnx). Transcribe speech in real-time from your microphone or offline from WAV files — no GPU required. It also support diarization, TTS, and speech segmentation.  
+A terminal-based toolkit built with [Sherpa-ONNX](https://github.com/k2-fsa/sherpa-onnx). Transcribe speech in real-time from your microphone or offline from WAV files — no GPU required. Also supports speaker diarization, speaker identification, TTS, and speech segmentation.
 
 Documentation:  [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/bagustris/live-asr-sherpa).
 
@@ -11,9 +11,10 @@ Documentation:  [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwi
 - **Real-time microphone transcription** — partial hypotheses update live with <500 ms latency
 - **Offline WAV transcription** — process audio files through the same pipeline
 - **Speaker diarization** — colour-coded per-speaker output; ASR and diarization run concurrently to keep latency low
+- **Speaker identification** — identify known speakers in real-time or from a WAV file using neural embeddings
 - **Unified model loading** — all sherpa-onnx model families supported via a single `--model-type` flag
 - **CPU-optimized** — runs efficiently on any modern CPU using ONNX Runtime
-- **Auto model download** — fetches the default Zipformer model on first run; diarization models also auto-downloaded
+- **Auto model download** — fetches default models on first run
 - **Endpoint detection** — intelligently segments speech with configurable silence rules
 - **Rich terminal output** — colour-coded speaker labels and styled status messages via the `rich` library
 
@@ -25,26 +26,26 @@ Documentation:  [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwi
 
 ## Getting Started
 
-### 1. Install dependencies
+### 1. Install
 
 ```bash
-pip install -r requirements.txt
+pip install -e .
 ```
 
-> **Note:** `rich` is included as a dependency for styled terminal output.
+> **Note:** This installs all dependencies and registers the `sherox.asr`, `sherox.sid`, `sherox.segment`, and `sherox.tts` CLI commands.
 
-### 2. Run
+### 2. Run ASR
 
 **Microphone mode** — stream and transcribe live audio:
 
 ```bash
-python3 src/main.py --mic
+sherox.asr --mic
 ```
 
 **WAV file mode** — transcribe a pre-recorded file:
 
 ```bash
-python3 src/main.py --wav path/to/audio.wav
+sherox.asr --wav path/to/audio.wav
 ```
 
 > [!NOTE]
@@ -60,14 +61,17 @@ The default Zipformer model (~300 MB) is downloaded automatically on first run.
 Add `--diarization` to any command to colour-code the transcript by speaker. Two lightweight models are downloaded automatically on first use (~7 MB segmentation + ~23 MB embedding):
 
 ```bash
-# Offline with diarization (auto-downloads all models)
-python3 src/main.py --mic --offline --diarization
+# Microphone with diarization (auto-downloads all models)
+sherox.asr --mic --offline --diarization
 
-# If you know how many speakers will be present:
-python3 src/main.py --mic --offline --diarization --num-speakers 2
+# With a known speaker count for better accuracy
+sherox.asr --mic --offline --diarization --num-speakers 2
+
+# Show [Speaker N] prefix in addition to colour
+sherox.asr --mic --offline --diarization --speaker-tag
 
 # WAV file with diarization
-python3 src/main.py --wav meeting.wav --offline --diarization --num-speakers 3
+sherox.asr --wav meeting.wav --offline --diarization --num-speakers 3
 ```
 
 Each speaker's transcript is printed in a distinct colour:
@@ -80,7 +84,60 @@ Each speaker's transcript is printed in a distinct colour:
 
 Diarization and ASR run **concurrently** (using a background thread pool), so the combined latency is approximately `max(ASR_time, diarization_time)` rather than the sum.
 
-## Supported Models
+## Speaker Identification
+
+`sherox.sid` identifies known speakers from a reference database using neural speaker embeddings. The default model (`nemo_en_titanet_large.onnx`, ~96 MB) is downloaded automatically on first run.
+
+### 1. Prepare a speaker file
+
+Create a text file with one `name /path/to/ref.wav` entry per line. Multiple files for the same speaker are averaged:
+
+```
+alice /path/to/alice1.wav
+alice /path/to/alice2.wav
+bob   /path/to/bob1.wav
+```
+
+### 2. Run
+
+**WAV file mode** — identify speaker in a recording:
+
+```bash
+sherox.sid --wav audio.wav --speaker-file speakers.txt
+```
+
+**Microphone mode** — real-time identification (VAD-segmented):
+
+```bash
+sherox.sid --mic --speaker-file speakers.txt
+```
+
+Each identified speaker is printed in a distinct colour; audio that does not match any registered speaker prints as `unknown`.
+
+**Options:**
+
+```
+--speaker-file PATH   Text file with 'name /path/wav' entries (required)
+--model PATH          Speaker embedding ONNX model (default: models/nemo_en_titanet_large.onnx)
+--threshold FLOAT     Cosine similarity threshold (0–1, higher = stricter; default: 0.6)
+--capture-rate HZ     Mic capture rate (default: 16000; use 48000 for device compatibility)
+--listening           Show RMS energy bar for mic level calibration
+```
+
+### Available embedding models
+
+| Model | Size | Lang | Notes |
+|-------|------|------|-------|
+| `nemo_en_titanet_large.onnx` | 96 MB | en | **Default**; highest accuracy |
+| `wespeaker_en_voxceleb_resnet293_LM.onnx` | 109 MB | en | WeSpeaker large |
+| `wespeaker_en_voxceleb_CAM++_LM.onnx` | 27 MB | en | Good accuracy/speed balance |
+| `nemo_en_speakerverification_speakernet.onnx` | 22 MB | en | Lightest option |
+| `wespeaker_zh_cnceleb_resnet34_LM.onnx` | 25 MB | zh | Chinese |
+| `3dspeaker_speech_campplus_sv_zh_en_16k-common_advanced.onnx` | 26 MB | zh/en | Bilingual |
+
+Download any model from the [speaker recognition models release](https://github.com/k2-fsa/sherpa-onnx/releases/tag/speaker-recongition-models) and pass it via `--model`.
+
+## Supported ASR Models
 
 All models from the [Sherpa-ONNX model zoo](https://k2-fsa.github.io/sherpa/onnx/pretrained_models/) can be used. Download and extract a model into the `models/` directory, then pass the directory name via `--model-dir` and the architecture via `--model-type`.
 
@@ -103,7 +160,7 @@ Use these with the default pipeline (no `--offline` flag). They support real-tim
 
 Example:
 ```bash
-python3 src/main.py --mic \
+sherox.asr --mic \
   --model-dir models/sherpa-onnx-streaming-zipformer-en-2024-02-13 \
   --model-type zipformer2
 ```
@@ -127,39 +184,53 @@ Use these with `--offline`. Audio is VAD-segmented before recognition (higher ac
 | Moonshine tiny | `models/sherpa-onnx-moonshine-tiny-en-int8` | `moonshine` | en | Very fast, English only |
 | Moonshine base | `models/sherpa-onnx-moonshine-base-en-int8` | `moonshine` | en | Better accuracy than tiny |
 | FireRedASR | `models/sherpa-onnx-fire-red-asr-large-zh-2025-02-16` | `fire_red_asr` | zh | |
+| ReazonSpeech JA | `models/reazonspeech-ja` | `ja` | ja | **Auto-downloaded**; Japanese |
+| ReazonSpeech JA-EN | `models/reazonspeech-ja-en` | `ja-en` | ja/en | **Auto-downloaded**; bilingual |
+| ReazonSpeech JA-EN-MLS | `models/reazonspeech-ja-en-mls-5k` | `ja-en-mls-5k` | ja/en | **Auto-downloaded**; bilingual + MLS 5k |
 
 Examples:
 ```bash
 # Parakeet TDT (auto-downloaded offline default)
-python3 src/main.py --mic --offline --model-type nemo_transducer
+sherox.asr --mic --offline --model-type nemo_transducer
 
 # Parakeet TDT INT8 (smaller, auto-downloaded)
-python3 src/main.py --mic --offline \
+sherox.asr --mic --offline \
   --model-dir models/parakeet-tdt-0.6b-v2-int8 \
   --model-type nemo_transducer
 
 # Whisper small (English)
-python3 src/main.py --mic --offline \
+sherox.asr --mic --offline \
   --model-dir models/sherpa-onnx-whisper-small.en \
   --model-type whisper
 
 # Whisper large-v3 (multilingual)
-python3 src/main.py --mic --offline \
+sherox.asr --mic --offline \
   --model-dir models/sherpa-onnx-whisper-large-v3 \
   --model-type whisper --language zh
 
 # SenseVoice (5 languages)
-python3 src/main.py --mic --offline \
+sherox.asr --mic --offline \
   --model-dir models/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17 \
   --model-type sense_voice --language ja
 
 # Moonshine tiny
-python3 src/main.py --mic --offline \
+sherox.asr --mic --offline \
   --model-dir models/sherpa-onnx-moonshine-tiny-en-int8 \
   --model-type moonshine
+
+# ReazonSpeech Japanese (auto-downloaded)
+sherox.asr --mic --model-type ja
+
+# ReazonSpeech bilingual Japanese-English
+sherox.asr --mic --model-type ja-en
+
+# ReazonSpeech bilingual + MLS 5k English
+sherox.asr --wav audio.wav --model-type ja-en-mls-5k
 ```
 
-## CLI Options
+## CLI Reference
+
+### `sherox.asr`
 
 ```
 --mic                   Stream from microphone
@@ -172,15 +243,20 @@ python3 src/main.py --mic --offline \
                                    paraformer, ctc, wenet_ctc, zipformer2_ctc
                           Offline: transducer, nemo_transducer, paraformer, whisper,
                                    ctc, nemo_ctc, sense_voice, moonshine, fire_red_asr
+                          ReazonSpeech (offline): ja, ja-en, ja-en-mls-5k
 --offline               Use VAD-segmented offline pipeline instead of streaming
 --language LANG         Language code for Whisper / SenseVoice (default: en)
 --sample-rate INT       Audio sample rate in Hz (default: 16000)
 --chunk-size FLOAT      Chunk size in seconds (default: 0.16)
 --threads INT           CPU thread count for ONNX runtime (default: 4)
 --capture-rate HZ       Microphone capture rate — use 48000 for device compatibility
---vad-model PATH        Path to silero_vad.onnx (auto-downloaded if not provided)
+--vad-model {silero,ten-vad}
+                        VAD type for offline segmentation (default: silero)
+--ten-vad-model {ten-vad.onnx,ten-vad.int8.onnx}
+                        Ten-VAD model variant (default: ten-vad.int8.onnx)
 --listening             Show a live RMS energy bar for mic level calibration
 --diarization           Enable speaker diarization with colour-coded output
+--speaker-tag           Prefix each diarized line with [Speaker N] (requires --diarization)
 --num-speakers N        Number of speakers (-1 = auto-detect, default: -1)
 --diarization-seg-model PATH
                         Pyannote segmentation model.onnx (auto-downloaded if absent)
@@ -188,25 +264,46 @@ python3 src/main.py --mic --offline \
                         Speaker embedding extractor .onnx (auto-downloaded if absent)
 ```
 
+### `sherox.sid`
+
+```
+--mic                   Stream from microphone (VAD-segmented)
+--wav PATH              Identify speaker in a WAV file
+--speaker-file PATH     Text file with 'name /path/to/ref.wav' entries (required)
+--model PATH            Speaker embedding ONNX model
+                          (default: models/nemo_en_titanet_large.onnx; auto-downloaded)
+--threshold FLOAT       Cosine similarity threshold for a match (default: 0.6)
+--sample-rate INT       Expected sample rate for WAV input (default: 16000)
+--capture-rate HZ       Microphone capture rate (default: 16000)
+--chunk-size FLOAT      Mic audio chunk size in seconds (default: 0.1)
+--threads INT           CPU thread count for ONNX runtime (default: 4)
+--listening             Show a live RMS energy bar for mic level calibration
+```
+
 ## Architecture
 
 ```
-src/
-├── main.py            # CLI entry point, model download, validation
-├── asr_engine.py      # Unified model loading for all sherpa-onnx model types + diarization
-├── streaming.py       # Streaming decode loop & VAD-segmented offline loop; rich output
-├── audio.py           # Microphone capture & WAV file reading
-├── config.py          # Configuration dataclass
-└── requirements.txt   # Python dependencies
+sherox/
+├── asr.py         # sherox.asr — CLI, model download, validation, dispatch
+├── sid.py         # sherox.sid — Speaker identification CLI
+├── segment.py     # sherox.segment — VAD-based audio segmentation CLI
+├── tts.py         # sherox.tts — Text-to-speech CLI
+├── asr_engine.py  # Unified model loading: ASR, VAD, diarization, embeddings
+├── streaming.py   # Streaming & offline decode loops; rich terminal output
+├── audio.py       # Microphone capture and WAV file reading generators
+└── config.py      # Configuration dataclasses for all modules
 ```
 
 | Module | Responsibility |
 |--------|----------------|
-| `main.py` | Parses arguments, validates inputs, auto-downloads model/VAD/diarization models, dispatches to streaming |
-| `asr_engine.py` | Builds `OnlineRecognizer`, `OfflineRecognizer`, `VoiceActivityDetector`, or `OfflineSpeakerDiarization` |
+| `asr.py` | Parses arguments, validates inputs, auto-downloads ASR/VAD/diarization models, dispatches to streaming |
+| `sid.py` | Parses arguments, builds speaker database from reference WAVs, runs mic/WAV identification |
+| `segment.py` | VAD-based segmentation of audio into timestamped speech clips |
+| `tts.py` | Text-to-speech synthesis and playback |
+| `asr_engine.py` | Builds `OnlineRecognizer`, `OfflineRecognizer`, `VoiceActivityDetector`, `OfflineSpeakerDiarization`, and `SpeakerEmbeddingExtractor` |
 | `streaming.py` | Feeds audio chunks to the recognizer; runs ASR and diarization concurrently; renders colour-coded output via `rich` |
 | `audio.py` | Provides two generators: `mic_stream()` for live capture, `read_wav()` for file input |
-| `config.py` | Holds runtime parameters (sample rate, chunk size, thread count, model path, language, diarization settings) |
+| `config.py` | Holds runtime parameters (`Config`, `SidConfig`, `SegmentConfig`, `TtsConfig`) |
 
 ## Endpoint Detection (Online Mode)
 

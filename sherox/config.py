@@ -68,6 +68,23 @@ class SegmentConfig:
     output_dir: str = ""                # save segment wav clips here if set
 
 
+# ── Speaker Identification ───────────────────────────────────────────────────
+
+@dataclass
+class SidConfig:
+    """Configuration for the Speaker Identification module (sherox.sid)."""
+
+    model: str = "models/nemo_en_titanet_large.onnx"
+    threshold: float = 0.6          # cosine similarity cutoff; below → "unknown"
+    sample_rate: int = 16000        # expected rate for WAV input
+    capture_rate: int = 16000       # mic capture rate (resampled internally)
+    chunk_size: float = 0.1         # seconds per mic chunk
+    num_threads: int = 4
+    vad_model: str = ""             # resolved path to silero_vad.onnx
+    wav: str = ""                   # path to input WAV file (--wav mode)
+    show_mic_level: bool = False
+
+
 # ── TTS ───────────────────────────────────────────────────────────────────────
 
 @dataclass
