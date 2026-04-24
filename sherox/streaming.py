@@ -153,7 +153,7 @@ def run_streaming(
     pending: Optional[Future] = None  # diarization future for the *previous* utterance
 
     def _submit_diarization(samples: np.ndarray) -> Optional[Future]:
-        if executor is None or diarization is None:
+        if executor is None or diarization is None:  # pragma: no cover
             return None
         return executor.submit(diarization.process, samples)
 

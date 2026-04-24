@@ -412,7 +412,7 @@ def _download_model(model_dir: str, model_type: str) -> None:
         with tarfile.open(archive, "r:bz2") as tf:
             if sys.version_info >= (3, 12):
                 tf.extractall(models_dir, filter="data")
-            else:
+            else:  # pragma: no cover
                 tf.extractall(models_dir, members=_safe_tar_members(tf, models_dir))
     except Exception as exc:  # noqa: BLE001
         _error(f"Extraction failed: {exc}")
@@ -693,5 +693,5 @@ def main() -> None:
         )
 
 
-if __name__ == "__main__":
+if __name__ == "__main__":  # pragma: no cover
     main()

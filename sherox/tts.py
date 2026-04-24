@@ -222,7 +222,7 @@ def _ensure_model(lang: str, model_dir: Optional[Path], project_dir: Path) -> Pa
         with tarfile.open(archive, "r:bz2") as tf:
             if sys.version_info >= (3, 12):
                 tf.extractall(models_root, filter="data")
-            else:
+            else:  # pragma: no cover
                 tf.extractall(models_root, members=_safe_tar_members(tf, models_root))
     except Exception as exc:
         _error(f"Extraction failed: {exc}")
@@ -342,5 +342,5 @@ def main() -> None:
     _info(f"Saved → {cfg.output}")
 
 
-if __name__ == "__main__":
+if __name__ == "__main__":  # pragma: no cover
     main()

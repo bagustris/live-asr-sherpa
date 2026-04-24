@@ -356,5 +356,5 @@ def main() -> None:
     run_segment(vad, audio, cfg, sample_rate=capture_rate, output_dir=output_dir)
 
 
-if __name__ == "__main__":
+if __name__ == "__main__":  # pragma: no cover
     main()

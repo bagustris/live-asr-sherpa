@@ -330,3 +330,80 @@ class TestBuildOfflineRecognizer:
             asr_engine.build_offline_recognizer(cfg)
 
         mock_cls.from_whisper.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# _require_sherpa_onnx — success path (re-import)
+# ---------------------------------------------------------------------------
+
+class TestRequireSherpaOnnx:
+    def test_reimports_when_global_is_none(self):
+        import types
+        import sherox.asr_engine as engine_module
+
+        fake_sherpa = MagicMock()
+        original = engine_module.sherpa_onnx
+        try:
+            engine_module.sherpa_onnx = None
+            with patch.dict("sys.modules", {"sherpa_onnx": fake_sherpa}):
+                result = engine_module._require_sherpa_onnx()
+            assert result is fake_sherpa
+        finally:
+            engine_module.sherpa_onnx = original
+
+    def test_returns_existing_when_already_loaded(self):
+        import sherox.asr_engine as engine_module
+        existing = engine_module.sherpa_onnx
+        result = engine_module._require_sherpa_onnx()
+        assert result is existing
+
+
+# ---------------------------------------------------------------------------
+# build_diarization
+# ---------------------------------------------------------------------------
+
+class TestBuildDiarization:
+    def test_raises_when_seg_model_missing(self):
+        cfg = Config(diarization_seg_model="", diarization_emb_model="some.onnx")
+        with pytest.raises(ValueError, match="diarization_seg_model"):
+            asr_engine.build_diarization(cfg)
+
+    def test_raises_when_emb_model_missing(self):
+        cfg = Config(diarization_seg_model="some.onnx", diarization_emb_model="")
+        with pytest.raises(ValueError, match="diarization_seg_model"):
+            asr_engine.build_diarization(cfg)
+
+    def test_builds_diarization_with_valid_config(self):
+        cfg = Config(
+            diarization_seg_model="seg.onnx",
+            diarization_emb_model="emb.onnx",
+            num_threads=2,
+            diarization_num_speakers=-1,
+            diarization_cluster_threshold=0.5,
+        )
+        mock_diarizer = MagicMock()
+        mock_sherpa = MagicMock()
+        mock_config = MagicMock()
+        mock_config.validate.return_value = True
+        mock_sherpa.OfflineSpeakerDiarizationConfig.return_value = mock_config
+        mock_sherpa.OfflineSpeakerDiarization.return_value = mock_diarizer
+
+        with patch.object(asr_engine, "sherpa_onnx", mock_sherpa):
+            result = asr_engine.build_diarization(cfg)
+
+        assert result is mock_diarizer
+
+    def test_raises_runtime_error_when_config_invalid(self):
+        cfg = Config(
+            diarization_seg_model="seg.onnx",
+            diarization_emb_model="emb.onnx",
+            num_threads=2,
+        )
+        mock_sherpa = MagicMock()
+        mock_config = MagicMock()
+        mock_config.validate.return_value = False
+        mock_sherpa.OfflineSpeakerDiarizationConfig.return_value = mock_config
+
+        with patch.object(asr_engine, "sherpa_onnx", mock_sherpa), \
+             pytest.raises(RuntimeError, match="invalid"):
+            asr_engine.build_diarization(cfg)

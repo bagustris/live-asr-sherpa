@@ -331,5 +331,5 @@ def main() -> None:
         run_mic(cfg, speakers)
 
 
-if __name__ == "__main__":
+if __name__ == "__main__":  # pragma: no cover
     main()

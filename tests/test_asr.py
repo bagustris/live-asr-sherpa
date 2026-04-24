@@ -414,3 +414,593 @@ class TestDownloadModel:
         ja_url = _run_download_model(tmp_path, main_module._REAZON_JA_TARGET, "ja")
         ja_en_url = _run_download_model(tmp_path, main_module._REAZON_JA_EN_TARGET, "ja-en")
         assert ja_url != ja_en_url
+
+
+# ---------------------------------------------------------------------------
+# _require_soundfile — success path
+# ---------------------------------------------------------------------------
+
+class TestRequireSoundfile:
+    def test_imports_when_sentinel_is_none(self):
+        import types
+        fake_sf = MagicMock()
+        fake_sf.SoundFile = MagicMock()
+        initial = types.SimpleNamespace(SoundFile=None)
+        with patch.object(main_module, "sf", initial):
+            with patch.dict("sys.modules", {"soundfile": fake_sf}):
+                result = main_module._require_soundfile()
+        assert result is fake_sf
+
+    def test_returns_early_when_already_loaded(self):
+        fake_sf = MagicMock()
+        fake_sf.SoundFile = MagicMock()
+        with patch.object(main_module, "sf", fake_sf):
+            result = main_module._require_soundfile()
+        assert result is fake_sf
+
+
+# ---------------------------------------------------------------------------
+# _validate_runtime_args — numeric checks
+# ---------------------------------------------------------------------------
+
+class TestValidateRuntimeArgsNumeric:
+    def _base_args(self, **overrides):
+        import argparse
+        args = argparse.Namespace(
+            sample_rate=16000,
+            capture_rate=16000,
+            chunk_size=0.16,
+            threads=4,
+            speaker_tag=False,
+            diarization=False,
+            num_speakers=-1,
+        )
+        for k, v in overrides.items():
+            setattr(args, k, v)
+        return args
+
+    def test_zero_sample_rate_exits(self):
+        with pytest.raises(SystemExit):
+            main_module._validate_runtime_args(self._base_args(sample_rate=0))
+
+    def test_negative_sample_rate_exits(self):
+        with pytest.raises(SystemExit):
+            main_module._validate_runtime_args(self._base_args(sample_rate=-1))
+
+    def test_zero_capture_rate_exits(self):
+        with pytest.raises(SystemExit):
+            main_module._validate_runtime_args(self._base_args(capture_rate=0))
+
+    def test_zero_chunk_size_exits(self):
+        with pytest.raises(SystemExit):
+            main_module._validate_runtime_args(self._base_args(chunk_size=0))
+
+    def test_zero_threads_exits(self):
+        with pytest.raises(SystemExit):
+            main_module._validate_runtime_args(self._base_args(threads=0))
+
+
+# ---------------------------------------------------------------------------
+# _download_file
+# ---------------------------------------------------------------------------
+
+class TestDownloadFile:
+    def test_calls_urlretrieve_with_url_and_dest(self, tmp_path):
+        dest = tmp_path / "file.tar.bz2"
+        with patch("sherox.asr.urllib.request.urlretrieve") as mock_dl:
+            main_module._download_file("http://example.com/file.tar.bz2", dest)
+        mock_dl.assert_called_once()
+        args = mock_dl.call_args[0]
+        assert args[0] == "http://example.com/file.tar.bz2"
+        assert args[1] == dest
+
+    def test_exits_when_download_fails(self, tmp_path):
+        dest = tmp_path / "file.tar.bz2"
+        with patch("sherox.asr.urllib.request.urlretrieve", side_effect=Exception("network error")):
+            with pytest.raises(SystemExit):
+                main_module._download_file("http://example.com/file.tar.bz2", dest)
+
+    def test_progress_callback_writes_percentage(self, tmp_path, capsys):
+        dest = tmp_path / "file.tar.bz2"
+        captured_hook = {}
+
+        def fake_urlretrieve(url, dest_arg, reporthook=None):
+            captured_hook["hook"] = reporthook
+
+        with patch("sherox.asr.urllib.request.urlretrieve", side_effect=fake_urlretrieve):
+            main_module._download_file("http://example.com/file.tar.bz2", dest)
+
+        # Call progress hook: block=5, block_size=1024, total=10240 → 50%
+        captured_hook["hook"](5, 1024, 10240)
+        out = capsys.readouterr().out
+        assert "50" in out
+
+    def test_progress_callback_skips_when_total_zero(self, tmp_path, capsys):
+        dest = tmp_path / "file.tar.bz2"
+        captured_hook = {}
+
+        def fake_urlretrieve(url, dest_arg, reporthook=None):
+            captured_hook["hook"] = reporthook
+
+        with patch("sherox.asr.urllib.request.urlretrieve", side_effect=fake_urlretrieve):
+            main_module._download_file("http://example.com/file.tar.bz2", dest)
+
+        # Drain info messages printed by _download_file itself
+        capsys.readouterr()
+        captured_hook["hook"](1, 1024, 0)  # total=0 → no additional output
+        assert capsys.readouterr().out == ""
+
+
+# ---------------------------------------------------------------------------
+# _safe_tar_members
+# ---------------------------------------------------------------------------
+
+class TestSafeTarMembers:
+    def test_yields_safe_member(self, tmp_path):
+        member = MagicMock()
+        member.name = "safe_file.txt"
+        member.isdev.return_value = False
+        tf = MagicMock()
+        tf.getmembers.return_value = [member]
+        result = list(main_module._safe_tar_members(tf, tmp_path))
+        assert member in result
+
+    def test_skips_device_file(self, tmp_path):
+        member = MagicMock()
+        member.name = "safe_file.txt"
+        member.isdev.return_value = True
+        tf = MagicMock()
+        tf.getmembers.return_value = [member]
+        result = list(main_module._safe_tar_members(tf, tmp_path))
+        assert result == []
+
+    def test_skips_path_traversal(self, tmp_path):
+        member = MagicMock()
+        member.name = "../etc/passwd"
+        member.isdev.return_value = False
+        tf = MagicMock()
+        tf.getmembers.return_value = [member]
+        result = list(main_module._safe_tar_members(tf, tmp_path))
+        assert result == []
+
+    def test_yields_nested_safe_member(self, tmp_path):
+        member = MagicMock()
+        member.name = "subdir/file.txt"
+        member.isdev.return_value = False
+        tf = MagicMock()
+        tf.getmembers.return_value = [member]
+        result = list(main_module._safe_tar_members(tf, tmp_path))
+        assert member in result
+
+
+# ---------------------------------------------------------------------------
+# _safe_extract_tar
+# ---------------------------------------------------------------------------
+
+class TestSafeExtractTar:
+    def test_extracts_safe_member(self, tmp_path):
+        member = MagicMock()
+        member.name = "safe_file.txt"
+        member.issym.return_value = False
+        member.islnk.return_value = False
+        tar = MagicMock()
+        tar.getmembers.return_value = [member]
+        main_module._safe_extract_tar(tar, tmp_path)
+        tar.extract.assert_called_once_with(member, path=tmp_path.resolve())
+
+    def test_skips_symlinks(self, tmp_path):
+        member = MagicMock()
+        member.name = "link"
+        member.issym.return_value = True
+        member.islnk.return_value = False
+        tar = MagicMock()
+        tar.getmembers.return_value = [member]
+        main_module._safe_extract_tar(tar, tmp_path)
+        tar.extract.assert_not_called()
+
+    def test_skips_hard_links(self, tmp_path):
+        member = MagicMock()
+        member.name = "hardlink"
+        member.issym.return_value = False
+        member.islnk.return_value = True
+        tar = MagicMock()
+        tar.getmembers.return_value = [member]
+        main_module._safe_extract_tar(tar, tmp_path)
+        tar.extract.assert_not_called()
+
+    def test_skips_path_traversal(self, tmp_path):
+        member = MagicMock()
+        member.name = "../outside.txt"
+        member.issym.return_value = False
+        member.islnk.return_value = False
+        tar = MagicMock()
+        tar.getmembers.return_value = [member]
+        main_module._safe_extract_tar(tar, tmp_path)
+        tar.extract.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# _validate_diarization_models
+# ---------------------------------------------------------------------------
+
+class TestValidateDiarizationModels:
+    def test_returns_existing_custom_paths(self, tmp_path):
+        seg = tmp_path / "seg.onnx"
+        emb = tmp_path / "emb.onnx"
+        seg.touch()
+        emb.touch()
+        result_seg, result_emb = main_module._validate_diarization_models(
+            str(seg), str(emb), tmp_path
+        )
+        assert result_seg == str(seg)
+        assert result_emb == str(emb)
+
+    def test_exits_when_custom_seg_missing(self, tmp_path):
+        with pytest.raises(SystemExit):
+            main_module._validate_diarization_models(
+                str(tmp_path / "missing.onnx"), "", tmp_path
+            )
+
+    def test_exits_when_custom_emb_missing(self, tmp_path):
+        seg = tmp_path / "seg.onnx"
+        seg.touch()
+        with pytest.raises(SystemExit):
+            main_module._validate_diarization_models(
+                str(seg), str(tmp_path / "missing_emb.onnx"), tmp_path
+            )
+
+    def test_downloads_seg_when_missing(self, tmp_path):
+        emb = tmp_path / "models" / main_module._DIAR_EMB_FILE
+        emb.parent.mkdir(parents=True)
+        emb.touch()
+
+        # Create the seg model path after fake extraction
+        seg_dir = tmp_path / "models" / main_module._DIAR_SEG_EXTRACTED
+        seg_file = seg_dir / main_module._DIAR_SEG_MODEL_FILE
+
+        def fake_download(url, dest):
+            # simulate archive download
+            pass
+
+        def fake_tar_open(*args, **kwargs):
+            # On enter, create the seg file to simulate extraction
+            seg_dir.mkdir(parents=True, exist_ok=True)
+            seg_file.parent.mkdir(parents=True, exist_ok=True)
+            seg_file.touch()
+            ctx = MagicMock()
+            ctx.__enter__ = MagicMock(return_value=MagicMock())
+            ctx.__exit__ = MagicMock(return_value=False)
+            return ctx
+
+        with patch.object(main_module, "_download_file", side_effect=fake_download), \
+             patch("sherox.asr._safe_extract_tar"), \
+             patch("tarfile.open", side_effect=fake_tar_open):
+            # The seg model is created by fake_tar_open, so it exists after extraction
+            result_seg, result_emb = main_module._validate_diarization_models(
+                "", str(emb), tmp_path
+            )
+        assert main_module._DIAR_SEG_MODEL_FILE in result_seg
+
+    def test_downloads_emb_when_missing(self, tmp_path):
+        # Create the seg path to skip seg download
+        seg_dir = tmp_path / "models" / main_module._DIAR_SEG_EXTRACTED
+        seg_dir.mkdir(parents=True)
+        seg_file = seg_dir / main_module._DIAR_SEG_MODEL_FILE
+        seg_file.touch()
+
+        def fake_download(url, dest):
+            # simulate emb download - create the file
+            (tmp_path / "models" / main_module._DIAR_EMB_FILE).touch()
+
+        with patch.object(main_module, "_download_file", side_effect=fake_download):
+            result_seg, result_emb = main_module._validate_diarization_models(
+                "", "", tmp_path
+            )
+        assert main_module._DIAR_EMB_FILE in result_emb
+
+
+# ---------------------------------------------------------------------------
+# _validate_mic
+# ---------------------------------------------------------------------------
+
+class TestValidateMic:
+    def test_passes_with_input_devices(self):
+        mock_sd = MagicMock()
+        mock_sd.query_devices.return_value = [
+            {"max_input_channels": 2, "name": "Microphone"}
+        ]
+        with patch.dict("sys.modules", {"sounddevice": mock_sd}):
+            main_module._validate_mic()  # should not raise
+
+    def test_exits_when_no_input_devices(self):
+        mock_sd = MagicMock()
+        mock_sd.query_devices.return_value = [
+            {"max_input_channels": 0, "name": "Speaker"}
+        ]
+        with patch.dict("sys.modules", {"sounddevice": mock_sd}):
+            with pytest.raises(SystemExit):
+                main_module._validate_mic()
+
+    def test_exits_on_exception(self):
+        with patch.dict("sys.modules", {"sounddevice": None}):
+            with pytest.raises(SystemExit):
+                main_module._validate_mic()
+
+
+# ---------------------------------------------------------------------------
+# main
+# ---------------------------------------------------------------------------
+
+class TestMain:
+    def _common_patches(self, tmp_path, offline=False, wav=None, model_type="",
+                        diarization=False, capture_rate=16000, model_dir=None):
+        """Return a dict of patches for testing main()."""
+        import argparse
+        args = argparse.Namespace(
+            mic=wav is None,
+            wav=wav,
+            model_dir=model_dir,
+            model_type=model_type,
+            offline=offline,
+            language="en",
+            sample_rate=16000,
+            capture_rate=capture_rate,
+            chunk_size=0.16,
+            threads=4,
+            listening=False,
+            vad_type="silero",
+            ten_vad_model="ten-vad.int8.onnx",
+            diarization=diarization,
+            diarization_seg_model="",
+            diarization_emb_model="",
+            num_speakers=-1,
+            speaker_tag=False,
+        )
+        return args
+
+    def test_online_mic_mode(self):
+        args = self._common_patches(None)
+        mock_rec = MagicMock()
+
+        with patch.object(main_module, "parse_args", return_value=args), \
+             patch.object(main_module, "_validate_runtime_args"), \
+             patch.object(main_module, "_validate_model"), \
+             patch.object(main_module, "_validate_vad", return_value=""), \
+             patch.object(main_module, "_validate_mic"), \
+             patch("sherox.asr.build_recognizer", return_value=mock_rec), \
+             patch("sherox.asr.mic_stream", return_value=iter([])), \
+             patch("sherox.asr.run_streaming"):
+            main_module.main()
+
+    def test_online_wav_mode(self, tmp_path):
+        wav = tmp_path / "audio.wav"
+        wav.touch()
+        args = self._common_patches(tmp_path, wav=str(wav))
+        mock_rec = MagicMock()
+
+        with patch.object(main_module, "parse_args", return_value=args), \
+             patch.object(main_module, "_validate_runtime_args"), \
+             patch.object(main_module, "_validate_model"), \
+             patch.object(main_module, "_validate_vad", return_value=""), \
+             patch.object(main_module, "_validate_wav"), \
+             patch("sherox.asr.build_recognizer", return_value=mock_rec), \
+             patch("sherox.asr.read_wav", return_value=iter([])), \
+             patch("sherox.asr.run_streaming"):
+            main_module.main()
+
+    def test_offline_mic_mode(self):
+        args = self._common_patches(None, offline=True)
+        mock_rec = MagicMock()
+        mock_vad = MagicMock()
+
+        with patch.object(main_module, "parse_args", return_value=args), \
+             patch.object(main_module, "_validate_runtime_args"), \
+             patch.object(main_module, "_validate_model"), \
+             patch.object(main_module, "_validate_vad", return_value="models/silero_vad.onnx"), \
+             patch.object(main_module, "_validate_mic"), \
+             patch("sherox.asr.build_offline_recognizer", return_value=mock_rec), \
+             patch("sherox.asr.build_vad", return_value=mock_vad), \
+             patch("sherox.asr.mic_stream", return_value=iter([])), \
+             patch("sherox.asr.run_offline_vad_streaming"):
+            main_module.main()
+
+    def test_offline_wav_mode(self, tmp_path):
+        wav = tmp_path / "audio.wav"
+        wav.touch()
+        args = self._common_patches(tmp_path, offline=True, wav=str(wav))
+        mock_rec = MagicMock()
+        mock_vad = MagicMock()
+
+        with patch.object(main_module, "parse_args", return_value=args), \
+             patch.object(main_module, "_validate_runtime_args"), \
+             patch.object(main_module, "_validate_model"), \
+             patch.object(main_module, "_validate_vad", return_value="models/silero_vad.onnx"), \
+             patch.object(main_module, "_validate_wav"), \
+             patch("sherox.asr.build_offline_recognizer", return_value=mock_rec), \
+             patch("sherox.asr.build_vad", return_value=mock_vad), \
+             patch("sherox.asr.read_wav", return_value=iter([])), \
+             patch("sherox.asr.run_offline_vad_streaming"):
+            main_module.main()
+
+    def test_ja_model_type_sets_reazon_dir(self):
+        args = self._common_patches(None, model_type="ja")
+        mock_rec = MagicMock()
+
+        with patch.object(main_module, "parse_args", return_value=args), \
+             patch.object(main_module, "_validate_runtime_args"), \
+             patch.object(main_module, "_validate_model") as mock_vm, \
+             patch.object(main_module, "_validate_vad", return_value=""), \
+             patch.object(main_module, "_validate_mic"), \
+             patch("sherox.asr.build_offline_recognizer", return_value=mock_rec), \
+             patch("sherox.asr.build_vad", return_value=MagicMock()), \
+             patch("sherox.asr.mic_stream", return_value=iter([])), \
+             patch("sherox.asr.run_offline_vad_streaming"):
+            main_module.main()
+
+        # _validate_model should have been called with a reazon path
+        called_dir = mock_vm.call_args[0][0]
+        assert main_module._REAZON_JA_TARGET in called_dir
+
+    def test_ja_en_model_type_sets_reazon_en_dir(self):
+        args = self._common_patches(None, model_type="ja-en")
+        mock_rec = MagicMock()
+
+        with patch.object(main_module, "parse_args", return_value=args), \
+             patch.object(main_module, "_validate_runtime_args"), \
+             patch.object(main_module, "_validate_model") as mock_vm, \
+             patch.object(main_module, "_validate_vad", return_value=""), \
+             patch.object(main_module, "_validate_mic"), \
+             patch("sherox.asr.build_offline_recognizer", return_value=mock_rec), \
+             patch("sherox.asr.build_vad", return_value=MagicMock()), \
+             patch("sherox.asr.mic_stream", return_value=iter([])), \
+             patch("sherox.asr.run_offline_vad_streaming"):
+            main_module.main()
+
+        called_dir = mock_vm.call_args[0][0]
+        assert main_module._REAZON_JA_EN_TARGET in called_dir
+
+    def test_ja_en_mls_5k_model_type(self):
+        args = self._common_patches(None, model_type="ja-en-mls-5k")
+        mock_rec = MagicMock()
+
+        with patch.object(main_module, "parse_args", return_value=args), \
+             patch.object(main_module, "_validate_runtime_args"), \
+             patch.object(main_module, "_validate_model") as mock_vm, \
+             patch.object(main_module, "_validate_vad", return_value=""), \
+             patch.object(main_module, "_validate_mic"), \
+             patch("sherox.asr.build_offline_recognizer", return_value=mock_rec), \
+             patch("sherox.asr.build_vad", return_value=MagicMock()), \
+             patch("sherox.asr.mic_stream", return_value=iter([])), \
+             patch("sherox.asr.run_offline_vad_streaming"):
+            main_module.main()
+
+        called_dir = mock_vm.call_args[0][0]
+        assert main_module._REAZON_JA_EN_MLS_TARGET in called_dir
+
+    def test_auto_offline_for_whisper_model_type(self):
+        args = self._common_patches(None, model_type="whisper", offline=False)
+        mock_rec = MagicMock()
+
+        with patch.object(main_module, "parse_args", return_value=args), \
+             patch.object(main_module, "_validate_runtime_args"), \
+             patch.object(main_module, "_validate_model"), \
+             patch.object(main_module, "_validate_vad", return_value="models/silero.onnx"), \
+             patch.object(main_module, "_validate_mic"), \
+             patch("sherox.asr.build_offline_recognizer", return_value=mock_rec), \
+             patch("sherox.asr.build_vad", return_value=MagicMock()), \
+             patch("sherox.asr.mic_stream", return_value=iter([])), \
+             patch("sherox.asr.run_offline_vad_streaming"):
+            main_module.main()
+        # Should have switched to offline automatically — no assertion needed,
+        # just verify no exception raised
+
+    def test_offline_with_diarization(self):
+        args = self._common_patches(None, offline=True, diarization=True)
+        mock_rec = MagicMock()
+        mock_vad = MagicMock()
+        mock_diarizer = MagicMock()
+
+        with patch.object(main_module, "parse_args", return_value=args), \
+             patch.object(main_module, "_validate_runtime_args"), \
+             patch.object(main_module, "_validate_model"), \
+             patch.object(main_module, "_validate_vad", return_value="models/silero_vad.onnx"), \
+             patch.object(main_module, "_validate_mic"), \
+             patch.object(main_module, "_validate_diarization_models",
+                          return_value=("seg.onnx", "emb.onnx")), \
+             patch("sherox.asr.build_offline_recognizer", return_value=mock_rec), \
+             patch("sherox.asr.build_vad", return_value=mock_vad), \
+             patch("sherox.asr.build_diarization", return_value=mock_diarizer), \
+             patch("sherox.asr.mic_stream", return_value=iter([])), \
+             patch("sherox.asr.run_offline_vad_streaming") as mock_run:
+            main_module.main()
+
+        # run_offline_vad_streaming should have been called with the diarizer
+        kwargs = mock_run.call_args[1]
+        assert kwargs.get("diarization") is mock_diarizer
+
+    def test_custom_model_dir_used(self, tmp_path):
+        custom_dir = str(tmp_path)
+        args = self._common_patches(None, model_dir=custom_dir)
+        mock_rec = MagicMock()
+
+        with patch.object(main_module, "parse_args", return_value=args), \
+             patch.object(main_module, "_validate_runtime_args"), \
+             patch.object(main_module, "_validate_model") as mock_vm, \
+             patch.object(main_module, "_validate_vad", return_value=""), \
+             patch.object(main_module, "_validate_mic"), \
+             patch("sherox.asr.build_recognizer", return_value=mock_rec), \
+             patch("sherox.asr.mic_stream", return_value=iter([])), \
+             patch("sherox.asr.run_streaming"):
+            main_module.main()
+
+        called_dir = mock_vm.call_args[0][0]
+        assert called_dir == custom_dir
+
+    def test_online_with_diarization(self):
+        args = self._common_patches(None, diarization=True)
+        mock_rec = MagicMock()
+        mock_diarizer = MagicMock()
+
+        with patch.object(main_module, "parse_args", return_value=args), \
+             patch.object(main_module, "_validate_runtime_args"), \
+             patch.object(main_module, "_validate_model"), \
+             patch.object(main_module, "_validate_vad", return_value=""), \
+             patch.object(main_module, "_validate_mic"), \
+             patch.object(main_module, "_validate_diarization_models",
+                          return_value=("seg.onnx", "emb.onnx")), \
+             patch("sherox.asr.build_recognizer", return_value=mock_rec), \
+             patch("sherox.asr.build_diarization", return_value=mock_diarizer), \
+             patch("sherox.asr.mic_stream", return_value=iter([])), \
+             patch("sherox.asr.run_streaming") as mock_run:
+            main_module.main()
+
+        kwargs = mock_run.call_args[1]
+        assert kwargs.get("diarization") is mock_diarizer
+
+
+# ---------------------------------------------------------------------------
+# _download_model — extraction failure
+# ---------------------------------------------------------------------------
+
+class TestDownloadModelExtractionFailure:
+    def test_exits_when_tarfile_raises_on_open(self, tmp_path):
+        model_dir = tmp_path / main_module._MODEL_TARGET
+
+        with patch.object(main_module, "_download_file"), \
+             patch("tarfile.open", side_effect=Exception("corrupt tar")), \
+             pytest.raises(SystemExit):
+            main_module._download_model(str(model_dir), "")
+
+
+# ---------------------------------------------------------------------------
+# _validate_diarization_models — extraction failure and seg file missing
+# ---------------------------------------------------------------------------
+
+class TestValidateDiarizationModelsErrors:
+    def test_exits_when_seg_extraction_raises(self, tmp_path):
+        emb = tmp_path / "models" / main_module._DIAR_EMB_FILE
+        emb.parent.mkdir(parents=True)
+        emb.touch()
+
+        with patch.object(main_module, "_download_file"), \
+             patch("tarfile.open", side_effect=Exception("corrupt")), \
+             pytest.raises(SystemExit):
+            main_module._validate_diarization_models("", str(emb), tmp_path)
+
+    def test_exits_when_seg_file_missing_after_extraction(self, tmp_path):
+        emb = tmp_path / "models" / main_module._DIAR_EMB_FILE
+        emb.parent.mkdir(parents=True)
+        emb.touch()
+
+        def fake_tar_open(*args, **kwargs):
+            # Does not create the seg model file → seg_path.exists() is False
+            ctx = MagicMock()
+            ctx.__enter__ = MagicMock(return_value=MagicMock())
+            ctx.__exit__ = MagicMock(return_value=False)
+            return ctx
+
+        with patch.object(main_module, "_download_file"), \
+             patch("tarfile.open", side_effect=fake_tar_open), \
+             patch.object(main_module, "_safe_extract_tar"), \
+             pytest.raises(SystemExit):
+            main_module._validate_diarization_models("", str(emb), tmp_path)

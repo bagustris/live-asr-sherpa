@@ -1,0 +1,467 @@
+import argparse
+import sys
+import tarfile
+from pathlib import Path
+from unittest.mock import MagicMock, patch, mock_open
+
+import numpy as np
+import pytest
+
+import sherox.tts as tts_module
+from sherox.config import TtsConfig
+
+
+# ---------------------------------------------------------------------------
+# parse_args
+# ---------------------------------------------------------------------------
+
+class TestParseArgs:
+    def test_text_mode(self):
+        with patch("sys.argv", ["sherox.tts", "--text", "Hello"]):
+            args = tts_module.parse_args()
+        assert args.text == "Hello"
+        assert args.file is None
+
+    def test_file_mode(self):
+        with patch("sys.argv", ["sherox.tts", "--file", "input.txt"]):
+            args = tts_module.parse_args()
+        assert args.file == "input.txt"
+        assert args.text is None
+
+    def test_no_text_source_allowed(self):
+        with patch("sys.argv", ["sherox.tts"]):
+            args = tts_module.parse_args()
+        assert args.text is None
+        assert args.file is None
+
+    def test_text_and_file_mutually_exclusive(self):
+        with patch("sys.argv", ["sherox.tts", "--text", "hi", "--file", "f.txt"]):
+            with pytest.raises(SystemExit):
+                tts_module.parse_args()
+
+    def test_defaults(self):
+        with patch("sys.argv", ["sherox.tts"]):
+            args = tts_module.parse_args()
+        assert args.lang == "ind"
+        assert args.model_dir is None
+        assert args.speaker_id == 0
+        assert args.speed == 1.0
+        assert args.output == "output.wav"
+        assert args.play is False
+        assert args.threads == 4
+
+    def test_custom_lang(self):
+        with patch("sys.argv", ["sherox.tts", "--lang", "ind"]):
+            args = tts_module.parse_args()
+        assert args.lang == "ind"
+
+    def test_custom_speed(self):
+        with patch("sys.argv", ["sherox.tts", "--speed", "0.8"]):
+            args = tts_module.parse_args()
+        assert args.speed == 0.8
+
+    def test_play_flag(self):
+        with patch("sys.argv", ["sherox.tts", "--play"]):
+            args = tts_module.parse_args()
+        assert args.play is True
+
+    def test_custom_output(self):
+        with patch("sys.argv", ["sherox.tts", "--output", "out.wav"]):
+            args = tts_module.parse_args()
+        assert args.output == "out.wav"
+
+    def test_custom_threads(self):
+        with patch("sys.argv", ["sherox.tts", "--threads", "8"]):
+            args = tts_module.parse_args()
+        assert args.threads == 8
+
+    def test_custom_model_dir(self):
+        with patch("sys.argv", ["sherox.tts", "--model-dir", "models/custom"]):
+            args = tts_module.parse_args()
+        assert args.model_dir == "models/custom"
+
+
+# ---------------------------------------------------------------------------
+# _validate_runtime_args
+# ---------------------------------------------------------------------------
+
+class TestValidateRuntimeArgs:
+    def _args(self, **kwargs):
+        defaults = dict(speaker_id=0, speed=1.0, threads=4)
+        defaults.update(kwargs)
+        return argparse.Namespace(**defaults)
+
+    def test_valid_passes(self):
+        tts_module._validate_runtime_args(self._args())
+
+    def test_negative_speaker_id_exits(self):
+        with pytest.raises(SystemExit):
+            tts_module._validate_runtime_args(self._args(speaker_id=-1))
+
+    def test_zero_speed_exits(self):
+        with pytest.raises(SystemExit):
+            tts_module._validate_runtime_args(self._args(speed=0.0))
+
+    def test_negative_speed_exits(self):
+        with pytest.raises(SystemExit):
+            tts_module._validate_runtime_args(self._args(speed=-0.5))
+
+    def test_zero_threads_exits(self):
+        with pytest.raises(SystemExit):
+            tts_module._validate_runtime_args(self._args(threads=0))
+
+
+# ---------------------------------------------------------------------------
+# _download_file
+# ---------------------------------------------------------------------------
+
+class TestDownloadFile:
+    def test_success(self, tmp_path):
+        dest = tmp_path / "model.tar.bz2"
+        with patch("urllib.request.urlretrieve") as mock_dl:
+            tts_module._download_file("http://example.com/model.tar.bz2", dest)
+        mock_dl.assert_called_once()
+
+    def test_failure_exits(self, tmp_path):
+        dest = tmp_path / "model.tar.bz2"
+        with patch("urllib.request.urlretrieve", side_effect=Exception("net error")):
+            with pytest.raises(SystemExit):
+                tts_module._download_file("http://example.com/model.tar.bz2", dest)
+
+    def test_progress_with_positive_total(self, tmp_path):
+        dest = tmp_path / "model.tar.bz2"
+        called = {}
+        def fake_retrieve(url, dest, reporthook):
+            reporthook(1, 1024, 4096)
+            called["ok"] = True
+        with patch("urllib.request.urlretrieve", side_effect=fake_retrieve):
+            tts_module._download_file("http://example.com/model.tar.bz2", dest)
+        assert called.get("ok")
+
+    def test_progress_skipped_when_total_zero(self, tmp_path):
+        dest = tmp_path / "model.tar.bz2"
+        def fake_retrieve(url, dest, reporthook):
+            reporthook(1, 1024, 0)
+        with patch("urllib.request.urlretrieve", side_effect=fake_retrieve):
+            tts_module._download_file("http://example.com/model.tar.bz2", dest)
+
+
+# ---------------------------------------------------------------------------
+# _safe_tar_members
+# ---------------------------------------------------------------------------
+
+class TestSafeTarMembers:
+    def test_yields_safe_regular_file(self, tmp_path):
+        member = MagicMock()
+        member.isdev.return_value = False
+        member.name = "safe_file.txt"
+        tf = MagicMock()
+        tf.getmembers.return_value = [member]
+        result = list(tts_module._safe_tar_members(tf, tmp_path))
+        assert member in result
+
+    def test_skips_device_files(self, tmp_path):
+        member = MagicMock()
+        member.isdev.return_value = True
+        tf = MagicMock()
+        tf.getmembers.return_value = [member]
+        result = list(tts_module._safe_tar_members(tf, tmp_path))
+        assert result == []
+
+    def test_skips_path_traversal(self, tmp_path):
+        member = MagicMock()
+        member.isdev.return_value = False
+        member.name = "../etc/passwd"
+        tf = MagicMock()
+        tf.getmembers.return_value = [member]
+        result = list(tts_module._safe_tar_members(tf, tmp_path))
+        assert result == []
+
+    def test_yields_nested_safe_file(self, tmp_path):
+        member = MagicMock()
+        member.isdev.return_value = False
+        member.name = "subdir/model.onnx"
+        tf = MagicMock()
+        tf.getmembers.return_value = [member]
+        result = list(tts_module._safe_tar_members(tf, tmp_path))
+        assert member in result
+
+
+# ---------------------------------------------------------------------------
+# _ensure_model
+# ---------------------------------------------------------------------------
+
+class TestEnsureModel:
+    def test_returns_existing_target_dir(self, tmp_path):
+        meta = list(tts_module._TTS_MODELS.values())[0]
+        target = tmp_path / "models" / meta["extracted"]
+        target.mkdir(parents=True)
+        result = tts_module._ensure_model("ind", None, tmp_path)
+        assert result == target
+
+    def test_returns_custom_dir_when_given(self, tmp_path):
+        custom = tmp_path / "my_model"
+        custom.mkdir()
+        result = tts_module._ensure_model("ind", custom, tmp_path)
+        assert result == custom
+
+    def test_exits_on_unsupported_lang(self, tmp_path):
+        with pytest.raises(SystemExit):
+            tts_module._ensure_model("xyz", None, tmp_path)
+
+    def test_exits_when_custom_dir_not_found(self, tmp_path):
+        with pytest.raises(SystemExit):
+            tts_module._ensure_model("ind", tmp_path / "no_such_dir", tmp_path)
+
+    def test_downloads_and_extracts_when_missing(self, tmp_path):
+        meta = list(tts_module._TTS_MODELS.values())[0]
+        target = tmp_path / "models" / meta["extracted"]
+
+        def fake_download(url, dest):
+            pass
+
+        def fake_tar_open(*args, **kwargs):
+            # Simulate extraction by creating the target directory
+            target.mkdir(parents=True, exist_ok=True)
+            ctx = MagicMock()
+            tf = MagicMock()
+            tf.getmembers.return_value = []
+            ctx.__enter__ = MagicMock(return_value=tf)
+            ctx.__exit__ = MagicMock(return_value=False)
+            return ctx
+
+        # Target does NOT exist before call — fake_tar_open creates it
+        with patch.object(tts_module, "_download_file", side_effect=fake_download), \
+             patch("tarfile.open", side_effect=fake_tar_open):
+            result = tts_module._ensure_model("ind", None, tmp_path)
+        assert result == target
+
+    def test_exits_when_extracted_dir_missing_after_extraction(self, tmp_path):
+        def fake_download(url, dest):
+            pass
+
+        def fake_tar_open(*args, **kwargs):
+            ctx = MagicMock()
+            tf = MagicMock()
+            tf.getmembers.return_value = []
+            ctx.__enter__ = MagicMock(return_value=tf)
+            ctx.__exit__ = MagicMock(return_value=False)
+            return ctx
+
+        with patch.object(tts_module, "_download_file", side_effect=fake_download), \
+             patch("tarfile.open", side_effect=fake_tar_open), \
+             pytest.raises(SystemExit):
+            tts_module._ensure_model("ind", None, tmp_path)
+
+    def test_exits_when_extraction_raises(self, tmp_path):
+        def fake_download(url, dest):
+            pass
+
+        with patch.object(tts_module, "_download_file", side_effect=fake_download), \
+             patch("tarfile.open", side_effect=Exception("corrupt archive")), \
+             pytest.raises(SystemExit):
+            tts_module._ensure_model("ind", None, tmp_path)
+
+
+# ---------------------------------------------------------------------------
+# build_tts
+# ---------------------------------------------------------------------------
+
+class TestBuildTts:
+    def test_builds_successfully(self, tmp_path):
+        meta = list(tts_module._TTS_MODELS.values())[0]
+        model_dir = tmp_path / meta["extracted"]
+        model_dir.mkdir()
+        (model_dir / meta["model"]).touch()
+        (model_dir / meta["tokens"]).touch()
+        (model_dir / meta["data_dir"]).mkdir()
+
+        mock_sherpa = MagicMock()
+        mock_config = MagicMock()
+        mock_config.validate.return_value = True
+        mock_sherpa.OfflineTtsConfig.return_value = mock_config
+        mock_tts = MagicMock()
+        mock_sherpa.OfflineTts.return_value = mock_tts
+
+        cfg = TtsConfig(language="ind", model_dir=str(model_dir))
+        with patch.dict("sys.modules", {"sherpa_onnx": mock_sherpa}):
+            result = tts_module.build_tts(cfg, tmp_path)
+        assert result is mock_tts
+
+    def test_exits_on_unsupported_lang(self, tmp_path):
+        cfg = TtsConfig(language="xyz")
+        mock_sherpa = MagicMock()
+        with patch.dict("sys.modules", {"sherpa_onnx": mock_sherpa}), \
+             pytest.raises(SystemExit):
+            tts_module.build_tts(cfg, tmp_path)
+
+    def test_exits_on_invalid_config(self, tmp_path):
+        meta = list(tts_module._TTS_MODELS.values())[0]
+        model_dir = tmp_path / meta["extracted"]
+        model_dir.mkdir()
+        (model_dir / meta["model"]).touch()
+        (model_dir / meta["tokens"]).touch()
+        (model_dir / meta["data_dir"]).mkdir()
+
+        mock_sherpa = MagicMock()
+        mock_config = MagicMock()
+        mock_config.validate.return_value = False
+        mock_sherpa.OfflineTtsConfig.return_value = mock_config
+
+        cfg = TtsConfig(language="ind", model_dir=str(model_dir))
+        with patch.dict("sys.modules", {"sherpa_onnx": mock_sherpa}), \
+             pytest.raises(SystemExit):
+            tts_module.build_tts(cfg, tmp_path)
+
+
+# ---------------------------------------------------------------------------
+# synthesise
+# ---------------------------------------------------------------------------
+
+class TestSynthesise:
+    def test_returns_samples_and_rate(self):
+        mock_audio = MagicMock()
+        mock_audio.samples = [0.1, 0.2, 0.3]
+        mock_audio.sample_rate = 22050
+        mock_tts = MagicMock()
+        mock_tts.generate.return_value = mock_audio
+        cfg = TtsConfig(speaker_id=0, speed=1.0)
+        samples, sr = tts_module.synthesise(mock_tts, "Hello", cfg)
+        assert sr == 22050
+        assert samples.dtype == np.float32
+        mock_tts.generate.assert_called_once_with(text="Hello", sid=0, speed=1.0)
+
+
+# ---------------------------------------------------------------------------
+# _play
+# ---------------------------------------------------------------------------
+
+class TestPlay:
+    def test_plays_audio(self):
+        mock_sd = MagicMock()
+        samples = np.zeros(1000, dtype=np.float32)
+        with patch.dict("sys.modules", {"sounddevice": mock_sd}):
+            tts_module._play(samples, 22050)
+        mock_sd.play.assert_called_once_with(samples, samplerate=22050)
+        mock_sd.wait.assert_called_once()
+
+    def test_exits_when_sounddevice_missing(self):
+        samples = np.zeros(1000, dtype=np.float32)
+        with patch.dict("sys.modules", {"sounddevice": None}):
+            with pytest.raises(SystemExit):
+                tts_module._play(samples, 22050)
+
+
+# ---------------------------------------------------------------------------
+# main
+# ---------------------------------------------------------------------------
+
+class TestMain:
+    def _mock_tts(self):
+        mock_tts = MagicMock()
+        mock_audio = MagicMock()
+        mock_audio.samples = [0.0] * 100
+        mock_audio.sample_rate = 22050
+        mock_tts.generate.return_value = mock_audio
+        return mock_tts
+
+    def test_main_with_text(self, tmp_path):
+        out = str(tmp_path / "out.wav")
+        mock_sf = MagicMock()
+        with patch("sys.argv", ["sherox.tts", "--text", "Hello", "--output", out]), \
+             patch.object(tts_module, "build_tts", return_value=self._mock_tts()), \
+             patch.object(tts_module, "_require_soundfile", return_value=mock_sf):
+            tts_module.main()
+        mock_sf.write.assert_called_once()
+
+    def test_main_with_file(self, tmp_path):
+        txt = tmp_path / "input.txt"
+        txt.write_text("Hello world")
+        out = str(tmp_path / "out.wav")
+        mock_sf = MagicMock()
+        with patch("sys.argv", ["sherox.tts", "--file", str(txt), "--output", out]), \
+             patch.object(tts_module, "build_tts", return_value=self._mock_tts()), \
+             patch.object(tts_module, "_require_soundfile", return_value=mock_sf):
+            tts_module.main()
+        mock_sf.write.assert_called_once()
+
+    def test_main_exits_if_file_not_found(self, tmp_path):
+        with patch("sys.argv", ["sherox.tts", "--file", str(tmp_path / "missing.txt")]), \
+             pytest.raises(SystemExit):
+            tts_module.main()
+
+    def test_main_with_stdin(self, tmp_path):
+        out = str(tmp_path / "out.wav")
+        mock_sf = MagicMock()
+        with patch("sys.argv", ["sherox.tts", "--output", out]), \
+             patch("sys.stdin.isatty", return_value=False), \
+             patch("sys.stdin.read", return_value="Hello stdin"), \
+             patch.object(tts_module, "build_tts", return_value=self._mock_tts()), \
+             patch.object(tts_module, "_require_soundfile", return_value=mock_sf):
+            tts_module.main()
+        mock_sf.write.assert_called_once()
+
+    def test_main_stdin_tty_shows_prompt(self, tmp_path, capsys):
+        out = str(tmp_path / "out.wav")
+        mock_sf = MagicMock()
+        with patch("sys.argv", ["sherox.tts", "--output", out]), \
+             patch("sys.stdin.isatty", return_value=True), \
+             patch("sys.stdin.read", return_value="Hello"), \
+             patch.object(tts_module, "build_tts", return_value=self._mock_tts()), \
+             patch.object(tts_module, "_require_soundfile", return_value=mock_sf):
+            tts_module.main()
+
+    def test_main_exits_on_empty_text(self, tmp_path):
+        with patch("sys.argv", ["sherox.tts"]), \
+             patch("sys.stdin.isatty", return_value=False), \
+             patch("sys.stdin.read", return_value="   "), \
+             pytest.raises(SystemExit):
+            tts_module.main()
+
+    def test_main_with_play(self, tmp_path):
+        out = str(tmp_path / "out.wav")
+        mock_sf = MagicMock()
+        with patch("sys.argv", ["sherox.tts", "--text", "Hi", "--output", out, "--play"]), \
+             patch.object(tts_module, "build_tts", return_value=self._mock_tts()), \
+             patch.object(tts_module, "_play") as mock_play, \
+             patch.object(tts_module, "_require_soundfile", return_value=mock_sf):
+            tts_module.main()
+        mock_play.assert_called_once()
+
+    def test_main_with_custom_model_dir(self, tmp_path):
+        model_dir = tmp_path / "custom_model"
+        model_dir.mkdir()
+        out = str(tmp_path / "out.wav")
+        mock_sf = MagicMock()
+        with patch("sys.argv", [
+            "sherox.tts", "--text", "Hello",
+            "--model-dir", str(model_dir),
+            "--output", out,
+        ]), \
+        patch.object(tts_module, "build_tts", return_value=self._mock_tts()), \
+        patch.object(tts_module, "_require_soundfile", return_value=mock_sf):
+            tts_module.main()
+        mock_sf.write.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# _require_soundfile — success path
+# ---------------------------------------------------------------------------
+
+class TestRequireSoundfileTts:
+    def test_imports_when_sentinel_is_none(self):
+        import types
+        fake_sf = MagicMock()
+        fake_sf.write = MagicMock()
+        initial = types.SimpleNamespace(write=None)
+        with patch.object(tts_module, "sf", initial):
+            with patch.dict("sys.modules", {"soundfile": fake_sf}):
+                result = tts_module._require_soundfile()
+        assert result is fake_sf
+
+    def test_returns_early_when_already_loaded(self):
+        fake_sf = MagicMock()
+        fake_sf.write = MagicMock()
+        with patch.object(tts_module, "sf", fake_sf):
+            result = tts_module._require_soundfile()
+        assert result is fake_sf

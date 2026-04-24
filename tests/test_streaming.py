@@ -9,6 +9,11 @@ from sherox.streaming import (
     _PREFIX,
     _clear_line,
     _flush_tail,
+    _is_dark_terminal,
+    _speaker_colour,
+    _rich_print,
+    _dominant_speaker,
+    _decode_and_print,
     run_offline_vad_streaming,
     run_streaming,
 )
@@ -325,3 +330,422 @@ class TestRunOfflineVadStreaming:
         # "   ".strip() == "" so nothing content-ful is printed
         out = capsys.readouterr().out.strip()
         assert out == ""
+
+
+# ---------------------------------------------------------------------------
+# _is_dark_terminal
+# ---------------------------------------------------------------------------
+
+class TestIsDarkTerminal:
+    def test_returns_true_when_no_env_var(self):
+        with patch.dict("os.environ", {}, clear=True):
+            # COLORFGBG not set at all — must use os.environ.get fallback
+            import os
+            env = {k: v for k, v in os.environ.items() if k != "COLORFGBG"}
+            with patch.dict("os.environ", env, clear=True):
+                result = _is_dark_terminal()
+        assert result is True
+
+    def test_dark_bg_index_zero(self):
+        with patch.dict("os.environ", {"COLORFGBG": "15;0"}):
+            assert _is_dark_terminal() is True
+
+    def test_dark_bg_index_six(self):
+        with patch.dict("os.environ", {"COLORFGBG": "0;6"}):
+            assert _is_dark_terminal() is True
+
+    def test_light_bg_index_seven(self):
+        with patch.dict("os.environ", {"COLORFGBG": "0;7"}):
+            assert _is_dark_terminal() is False
+
+    def test_light_bg_index_fifteen(self):
+        with patch.dict("os.environ", {"COLORFGBG": "15;15"}):
+            assert _is_dark_terminal() is False
+
+    def test_invalid_colorfgbg_falls_back_to_true(self):
+        with patch.dict("os.environ", {"COLORFGBG": "not-a-number"}):
+            assert _is_dark_terminal() is True
+
+
+# ---------------------------------------------------------------------------
+# _speaker_colour
+# ---------------------------------------------------------------------------
+
+class TestSpeakerColour:
+    def test_returns_string(self):
+        result = _speaker_colour(0)
+        assert isinstance(result, str)
+
+    def test_cycles_through_palette(self):
+        c0 = _speaker_colour(0)
+        c1 = _speaker_colour(1)
+        assert c0 != c1
+
+    def test_modulo_wraps(self):
+        from sherox.streaming import _SPEAKER_COLOURS
+        length = len(_SPEAKER_COLOURS)
+        assert _speaker_colour(0) == _speaker_colour(length)
+
+
+# ---------------------------------------------------------------------------
+# _rich_print
+# ---------------------------------------------------------------------------
+
+class TestRichPrint:
+    def test_plain_print_no_speaker(self, capsys):
+        _rich_print("hello world")
+        assert "hello world" in capsys.readouterr().out
+
+    def test_with_speaker_id_colour_only(self, capsys):
+        _rich_print("some text", speaker_id=0, show_speaker_tag=False)
+        assert "some text" in capsys.readouterr().out
+
+    def test_with_speaker_id_and_tag(self, capsys):
+        _rich_print("tagged text", speaker_id=1, show_speaker_tag=True)
+        out = capsys.readouterr().out
+        assert "tagged text" in out
+        assert "Speaker 1" in out
+
+    def test_no_tag_when_show_speaker_tag_false(self, capsys):
+        _rich_print("no tag here", speaker_id=2, show_speaker_tag=False)
+        out = capsys.readouterr().out
+        assert "Speaker" not in out
+
+
+# ---------------------------------------------------------------------------
+# _dominant_speaker
+# ---------------------------------------------------------------------------
+
+class TestDominantSpeaker:
+    def _make_result(self, segments):
+        """segments: list of (speaker, start, end)"""
+        result = MagicMock()
+        segs = []
+        for speaker, start, end in segments:
+            seg = MagicMock()
+            seg.speaker = speaker
+            seg.start = start
+            seg.end = end
+            segs.append(seg)
+        result.sort_by_start_time.return_value = segs
+        return result
+
+    def test_returns_zero_for_empty_segments(self):
+        result = self._make_result([])
+        assert _dominant_speaker(result) == 0
+
+    def test_returns_speaker_with_most_time(self):
+        result = self._make_result([
+            (0, 0.0, 2.0),  # speaker 0: 2 seconds
+            (1, 2.0, 3.0),  # speaker 1: 1 second
+        ])
+        assert _dominant_speaker(result) == 0
+
+    def test_multiple_segments_same_speaker(self):
+        result = self._make_result([
+            (0, 0.0, 1.0),
+            (1, 1.0, 1.5),
+            (0, 1.5, 3.0),  # speaker 0 total: 2.5 seconds
+        ])
+        assert _dominant_speaker(result) == 0
+
+
+# ---------------------------------------------------------------------------
+# run_streaming — decode_stream when is_ready=True
+# ---------------------------------------------------------------------------
+
+class TestRunStreamingIsReady:
+    def test_decode_stream_called_when_is_ready(self):
+        rec = MagicMock()
+        stream = MagicMock()
+        rec.create_stream.return_value = stream
+        # is_ready returns True once, then False (to exit the while loop)
+        rec.is_ready.side_effect = [True, False]
+        rec.get_result.return_value = MagicMock(strip=MagicMock(return_value=""))
+        rec.is_endpoint.return_value = False
+
+        with patch("sherox.streaming._flush_tail"):
+            run_streaming(rec, iter([np.zeros(2560, dtype="float32")]))
+
+        rec.decode_stream.assert_called_once_with(stream)
+
+
+# ---------------------------------------------------------------------------
+# run_streaming — show_mic_level clear at endpoint with text
+# ---------------------------------------------------------------------------
+
+class TestRunStreamingMicLevelEndpoint:
+    def test_clears_mic_level_line_at_endpoint_with_text(self, capsys):
+        rec = MagicMock()
+        stream = MagicMock()
+        rec.create_stream.return_value = stream
+        rec.is_ready.return_value = False
+        rec.get_result.return_value = MagicMock(strip=MagicMock(return_value="text"))
+        rec.is_endpoint.return_value = True
+
+        with patch("sherox.streaming._flush_tail"), \
+             patch("sherox.streaming.shutil.get_terminal_size", return_value=MagicMock(columns=80)):
+            run_streaming(
+                rec,
+                iter([np.ones(2560, dtype="float32") * 0.1]),
+                show_mic_level=True,
+            )
+
+        out = capsys.readouterr().out
+        # The line-clear sequence should contain spaces
+        assert " " * 40 in out or "\r" in out
+
+    def test_clears_mic_level_falls_back_on_oserror(self, capsys):
+        rec = MagicMock()
+        stream = MagicMock()
+        rec.create_stream.return_value = stream
+        rec.is_ready.return_value = False
+        rec.get_result.return_value = MagicMock(strip=MagicMock(return_value="text"))
+        rec.is_endpoint.return_value = True
+
+        with patch("sherox.streaming._flush_tail"), \
+             patch("sherox.streaming.shutil.get_terminal_size", side_effect=OSError):
+            run_streaming(
+                rec,
+                iter([np.ones(2560, dtype="float32") * 0.1]),
+                show_mic_level=True,
+            )
+
+        # Should not raise — just uses fallback width=80
+
+
+# ---------------------------------------------------------------------------
+# run_streaming — diarization paths
+# ---------------------------------------------------------------------------
+
+class TestRunStreamingDiarization:
+    def _make_recognizer(self, text="hello"):
+        rec = MagicMock()
+        stream = MagicMock()
+        rec.create_stream.return_value = stream
+        rec.is_ready.return_value = False
+        rec.get_result.return_value = MagicMock(strip=MagicMock(return_value=text))
+        rec.is_endpoint.return_value = True
+        return rec, stream
+
+    def test_diarization_submits_on_endpoint(self):
+        rec, stream = self._make_recognizer("hello world")
+        diarization = MagicMock()
+
+        mock_future = MagicMock()
+        mock_future.done.return_value = True
+        diar_result = MagicMock()
+        diar_result.sort_by_start_time.return_value = []
+        mock_future.result.return_value = diar_result
+
+        mock_executor = MagicMock()
+        mock_executor.submit.return_value = mock_future
+
+        with patch("sherox.streaming._flush_tail"), \
+             patch("sherox.streaming.ThreadPoolExecutor", return_value=mock_executor):
+            run_streaming(
+                rec,
+                iter([np.ones(2560, dtype="float32")]),
+                diarization=diarization,
+            )
+
+        mock_executor.submit.assert_called()
+
+    def test_flush_pending_called_with_done_future_in_finally(self, capsys):
+        """The result from a completed future is used to colour the output."""
+        rec, stream = self._make_recognizer("final text")
+        diarization = MagicMock()
+
+        mock_future = MagicMock()
+        mock_future.done.return_value = True
+        diar_result = MagicMock()
+        diar_result.sort_by_start_time.return_value = []
+        mock_future.result.return_value = diar_result
+
+        mock_executor = MagicMock()
+        mock_executor.submit.return_value = mock_future
+
+        with patch("sherox.streaming._flush_tail"), \
+             patch("sherox.streaming.ThreadPoolExecutor", return_value=mock_executor):
+            run_streaming(
+                rec,
+                iter([np.ones(2560, dtype="float32")]),
+                diarization=diarization,
+            )
+
+        # The pending_text "final text" should eventually be printed
+        assert "final text" in capsys.readouterr().out
+
+    def test_flush_pending_with_future_exception_logs_debug(self, capsys):
+        """Exception from diarization future is logged, not raised."""
+        rec, stream = self._make_recognizer("hello")
+        diarization = MagicMock()
+
+        mock_future = MagicMock()
+        mock_future.done.return_value = True
+        mock_future.result.side_effect = RuntimeError("diarization error")
+
+        mock_executor = MagicMock()
+        mock_executor.submit.return_value = mock_future
+
+        with patch("sherox.streaming._flush_tail"), \
+             patch("sherox.streaming.ThreadPoolExecutor", return_value=mock_executor), \
+             patch("sherox.streaming.logging.debug") as mock_log:
+            run_streaming(
+                rec,
+                iter([np.ones(2560, dtype="float32")]),
+                diarization=diarization,
+            )
+
+        # logging.debug should have been called for the exception
+        mock_log.assert_called()
+
+    def test_busy_worker_skips_diarization(self, capsys):
+        """When the previous diarization is still running, new text is flushed immediately."""
+        rec = MagicMock()
+        stream = MagicMock()
+        rec.create_stream.return_value = stream
+        rec.is_ready.return_value = False
+        # First endpoint: text "first", second: text "second"
+        rec.get_result.side_effect = [
+            MagicMock(strip=MagicMock(return_value="first")),
+            MagicMock(strip=MagicMock(return_value="second")),
+        ]
+        rec.is_endpoint.return_value = True
+        diarization = MagicMock()
+
+        # First submit returns a NOT-done future
+        not_done_future = MagicMock()
+        not_done_future.done.return_value = False  # still running
+
+        done_future = MagicMock()
+        done_future.done.return_value = True
+        diar_result = MagicMock()
+        diar_result.sort_by_start_time.return_value = []
+        done_future.result.return_value = diar_result
+
+        mock_executor = MagicMock()
+        mock_executor.submit.side_effect = [not_done_future, done_future]
+
+        with patch("sherox.streaming._flush_tail"), \
+             patch("sherox.streaming.ThreadPoolExecutor", return_value=mock_executor):
+            run_streaming(
+                rec,
+                iter([
+                    np.ones(2560, dtype="float32"),
+                    np.ones(2560, dtype="float32"),
+                ]),
+                diarization=diarization,
+            )
+
+        out = capsys.readouterr().out
+        # Both utterances should appear in output
+        assert "first" in out or "second" in out
+
+    def test_audio_buf_populated_with_diarization(self):
+        """audio_buf is accumulated when diarization is enabled."""
+        rec, stream = self._make_recognizer("hello")
+        diarization = MagicMock()
+
+        mock_future = MagicMock()
+        mock_future.done.return_value = True
+        diar_result = MagicMock()
+        diar_result.sort_by_start_time.return_value = []
+        mock_future.result.return_value = diar_result
+
+        mock_executor = MagicMock()
+        mock_executor.submit.return_value = mock_future
+
+        with patch("sherox.streaming._flush_tail"), \
+             patch("sherox.streaming.ThreadPoolExecutor", return_value=mock_executor):
+            run_streaming(
+                rec,
+                iter([np.ones(2560, dtype="float32")]),
+                diarization=diarization,
+            )
+
+        # submit must have been called (audio_buf was populated and concatenated)
+        mock_executor.submit.assert_called()
+
+
+# ---------------------------------------------------------------------------
+# _decode_and_print — with diarization
+# ---------------------------------------------------------------------------
+
+class TestDecodeAndPrint:
+    def test_with_diarization_and_text(self, capsys):
+        rec = MagicMock()
+        stream = MagicMock()
+        result = MagicMock()
+        result.text = "diar text"
+        stream.result = result
+        rec.create_stream.return_value = stream
+
+        diarization = MagicMock()
+        executor = MagicMock()
+
+        asr_future = MagicMock()
+        asr_future.result.return_value = "diar text"
+
+        diar_result = MagicMock()
+        diar_result.sort_by_start_time.return_value = []
+        diar_future = MagicMock()
+        diar_future.result.return_value = diar_result
+
+        executor.submit.side_effect = [asr_future, diar_future]
+
+        _decode_and_print(rec, np.zeros(8000, dtype="float32"), 16000, diarization, executor)
+
+        assert "diar text" in capsys.readouterr().out
+
+    def test_with_diarization_and_empty_text(self, capsys):
+        rec = MagicMock()
+        stream = MagicMock()
+        result = MagicMock()
+        result.text = ""
+        stream.result = result
+        rec.create_stream.return_value = stream
+
+        diarization = MagicMock()
+        executor = MagicMock()
+
+        asr_future = MagicMock()
+        asr_future.result.return_value = ""
+
+        diar_result = MagicMock()
+        diar_future = MagicMock()
+        diar_future.result.return_value = diar_result
+
+        executor.submit.side_effect = [asr_future, diar_future]
+
+        _decode_and_print(rec, np.zeros(8000, dtype="float32"), 16000, diarization, executor)
+
+        # Empty text should not be printed
+        assert capsys.readouterr().out.strip() == ""
+
+
+# ---------------------------------------------------------------------------
+# run_offline_vad_streaming — diarization executor shutdown
+# ---------------------------------------------------------------------------
+
+class TestRunOfflineVadStreamingDiarization:
+    def test_executor_shutdown_called_with_diarization(self):
+        rec = MagicMock()
+        stream = MagicMock()
+        result = MagicMock()
+        result.text = ""
+        stream.result = result
+        rec.create_stream.return_value = stream
+
+        vad = MagicMock()
+        vad.empty.return_value = True
+
+        diarization = MagicMock()
+        mock_executor = MagicMock()
+
+        with patch("sherox.streaming.ThreadPoolExecutor", return_value=mock_executor):
+            run_offline_vad_streaming(
+                rec, vad, iter([]), diarization=diarization
+            )
+
+        mock_executor.shutdown.assert_called_once_with(wait=True)

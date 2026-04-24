@@ -156,3 +156,72 @@ class TestMicStream:
         assert chunk.ndim == 1
         assert len(chunk) == 1600
         assert np.allclose(chunk, 0.7)
+
+
+# ---------------------------------------------------------------------------
+# _require_soundfile — success path
+# ---------------------------------------------------------------------------
+
+class TestRequireSoundfileAudio:
+    def test_imports_when_sentinel_is_none(self):
+        import types
+        import sherox.audio as audio_module
+        fake_sf = MagicMock()
+        fake_sf.SoundFile = MagicMock()
+        initial = types.SimpleNamespace(SoundFile=None)
+        with patch.object(audio_module, "sf", initial):
+            with patch.dict("sys.modules", {"soundfile": fake_sf}):
+                result = audio_module._require_soundfile()
+        assert result is fake_sf
+
+
+# ---------------------------------------------------------------------------
+# _require_sounddevice — success path
+# ---------------------------------------------------------------------------
+
+class TestRequireSounddeviceAudio:
+    def test_imports_when_sentinel_is_none(self):
+        import types
+        import sherox.audio as audio_module
+        fake_sd = MagicMock()
+        fake_sd.InputStream = MagicMock()
+        initial = types.SimpleNamespace(InputStream=None)
+        with patch.object(audio_module, "sd", initial):
+            with patch.dict("sys.modules", {"sounddevice": fake_sd}):
+                result = audio_module._require_sounddevice()
+        assert result is fake_sd
+
+
+# ---------------------------------------------------------------------------
+# mic_stream — status callback
+# ---------------------------------------------------------------------------
+
+class TestMicStreamStatus:
+    def test_status_printed_when_nonzero(self, capsys):
+        import sherox.audio as audio_module
+        mock_stream_ctx = MagicMock()
+        mock_stream_ctx.__enter__ = MagicMock(return_value=mock_stream_ctx)
+        mock_stream_ctx.__exit__ = MagicMock(return_value=False)
+
+        callback_ref = {}
+
+        def fake_input_stream(**kwargs):
+            callback_ref["cb"] = kwargs["callback"]
+            # Put something so next() returns
+            indata = MagicMock()
+            indata.__getitem__ = MagicMock(return_value=MagicMock(copy=MagicMock(return_value=MagicMock())))
+            kwargs["callback"](
+                __import__("numpy").ones((1600, 1), dtype="float32"),
+                1600, None, None
+            )
+            return mock_stream_ctx
+
+        with patch("sherox.audio.sd.InputStream", side_effect=fake_input_stream):
+            next(audio_module.mic_stream())
+
+        # Now call the callback again with a status
+        import numpy as np
+        indata = np.ones((1600, 1), dtype="float32")
+        callback_ref["cb"](indata, 1600, None, "input overflow")
+        out = capsys.readouterr().out
+        assert "input overflow" in out
