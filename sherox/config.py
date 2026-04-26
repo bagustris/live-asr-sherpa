@@ -94,7 +94,7 @@ class TtsConfig:
     # Directory where the TTS model lives (auto-resolved from language if empty).
     model_dir: str = ""
 
-    # ISO 639-3 language code.  Currently supported: "ind" (Indonesian).
+    # ISO 639-3 language code. Supported: "ind" (Indonesian), "jpn" (Japanese).
     language: str = "ind"
 
     speaker_id: int = 0

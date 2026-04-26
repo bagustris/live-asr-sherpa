@@ -2,6 +2,7 @@ import argparse
 import sys
 import tarfile
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch, mock_open
 
 import numpy as np
@@ -51,9 +52,9 @@ class TestParseArgs:
         assert args.threads == 4
 
     def test_custom_lang(self):
-        with patch("sys.argv", ["sherox.tts", "--lang", "ind"]):
+        with patch("sys.argv", ["sherox.tts", "--lang", "jpn"]):
             args = tts_module.parse_args()
-        assert args.lang == "ind"
+        assert args.lang == "jpn"
 
     def test_custom_speed(self):
         with patch("sys.argv", ["sherox.tts", "--speed", "0.8"]):
@@ -286,7 +287,28 @@ class TestBuildTts:
         cfg = TtsConfig(language="ind", model_dir=str(model_dir))
         with patch.dict("sys.modules", {"sherpa_onnx": mock_sherpa}):
             result = tts_module.build_tts(cfg, tmp_path)
-        assert result is mock_tts
+        assert result.backend == "sherpa_onnx"
+        assert result.model is mock_tts
+
+    def test_builds_piper_plus_successfully(self, tmp_path):
+        mock_piper = SimpleNamespace(
+            get_voices=MagicMock(return_value={"ja_JP-tsukuyomi-chan-medium": {}}),
+            ensure_voice_exists=MagicMock(),
+            find_voice=MagicMock(
+                return_value=(tmp_path / "tsukuyomi.onnx", tmp_path / "config.json")
+            ),
+            PiperVoice=SimpleNamespace(load=MagicMock()),
+        )
+        mock_engine = MagicMock()
+        mock_piper.PiperVoice.load.return_value = mock_engine
+        cfg = TtsConfig(language="jpn")
+        with patch.object(tts_module, "_require_piper_plus", return_value=mock_piper):
+            result = tts_module.build_tts(cfg, tmp_path)
+        assert result.backend == "piper_plus"
+        assert result.model is mock_engine
+        assert result.language_id == 0
+        mock_piper.ensure_voice_exists.assert_called_once()
+        mock_piper.PiperVoice.load.assert_called_once()
 
     def test_exits_on_unsupported_lang(self, tmp_path):
         cfg = TtsConfig(language="xyz")
@@ -313,6 +335,13 @@ class TestBuildTts:
              pytest.raises(SystemExit):
             tts_module.build_tts(cfg, tmp_path)
 
+    def test_piper_plus_exits_when_model_dir_given(self, tmp_path):
+        model_dir = tmp_path / "custom"
+        model_dir.mkdir()
+        cfg = TtsConfig(language="jpn", model_dir=str(model_dir))
+        with pytest.raises(SystemExit):
+            tts_module.build_tts(cfg, tmp_path)
+
 
 # ---------------------------------------------------------------------------
 # synthesise
@@ -330,6 +359,52 @@ class TestSynthesise:
         assert sr == 22050
         assert samples.dtype == np.float32
         mock_tts.generate.assert_called_once_with(text="Hello", sid=0, speed=1.0)
+
+
+# ---------------------------------------------------------------------------
+# synthesise_to_file
+# ---------------------------------------------------------------------------
+
+class TestSynthesiseToFile:
+    def test_writes_sherpa_output(self):
+        mock_audio = MagicMock()
+        mock_audio.samples = [0.1, 0.2]
+        mock_audio.sample_rate = 22050
+        mock_tts = MagicMock()
+        mock_tts.generate.return_value = mock_audio
+        mock_sf = MagicMock()
+        cfg = TtsConfig(output="out.wav")
+        with patch.object(tts_module, "_require_soundfile", return_value=mock_sf):
+            result = tts_module.synthesise_to_file(mock_tts, "Hello", cfg)
+        assert result[1] == 22050
+        mock_sf.write.assert_called_once()
+
+    def test_writes_piper_plus_output(self):
+        mock_engine = MagicMock()
+        tts = SimpleNamespace(backend="piper_plus", model=mock_engine)
+        mock_wav = MagicMock()
+        cfg = TtsConfig(language="jpn", output="out.wav")
+        with patch("wave.open") as mock_wave_open:
+            mock_wave_open.return_value.__enter__.return_value = mock_wav
+            result = tts_module.synthesise_to_file(tts, "こんにちは", cfg)
+        assert result is None
+        mock_engine.synthesize.assert_called_once()
+
+    def test_reads_piper_plus_output_for_playback(self):
+        mock_engine = MagicMock()
+        tts = SimpleNamespace(backend="piper_plus", model=mock_engine)
+        mock_wav = MagicMock()
+        mock_sf = MagicMock()
+        mock_sf.read.return_value = (np.array([0.1, 0.2], dtype=np.float32), 22050)
+        cfg = TtsConfig(language="jpn", output="out.wav", play=True)
+        with patch("wave.open") as mock_wave_open, \
+             patch.object(tts_module, "_require_soundfile", return_value=mock_sf):
+            mock_wave_open.return_value.__enter__.return_value = mock_wav
+            samples, sample_rate = tts_module.synthesise_to_file(tts, "こんにちは", cfg)
+        assert sample_rate == 22050
+        assert samples.dtype == np.float32
+        mock_engine.synthesize.assert_called_once()
+        mock_sf.read.assert_called_once_with("out.wav", dtype="float32")
 
 
 # ---------------------------------------------------------------------------

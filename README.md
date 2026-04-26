@@ -33,6 +33,11 @@ pip install -e .
 ```
 
 > **Note:** This installs all dependencies and registers the `sherox.asr`, `sherox.sid`, `sherox.segment`, and `sherox.tts` CLI commands.
+>
+> Japanese TTS uses the `piper-plus` backend rather than `sherpa-onnx`. Install it with:
+> ```bash
+> pip install -e '.[tts-ja]'
+> ```
 
 ### 2. Run ASR
 
@@ -278,6 +283,33 @@ sherox.asr --wav audio.wav --model-type ja-en-mls-5k
 --chunk-size FLOAT      Mic audio chunk size in seconds (default: 0.1)
 --threads INT           CPU thread count for ONNX runtime (default: 4)
 --listening             Show a live RMS energy bar for mic level calibration
+```
+
+### `sherox.tts`
+
+```
+--text TEXT             Text to synthesise
+--file PATH             Read text from a file
+--lang LANG             ISO 639-3 language code (default: ind)
+                        ind = Indonesian (Sherpa-ONNX Piper VITS)
+                        jpn = Japanese (Piper Plus Tsukuyomi)
+--model-dir PATH        Custom Sherpa-ONNX TTS model directory
+                        (not used for the built-in Japanese Piper Plus backend)
+--speaker-id N          Speaker identity index for multi-speaker models
+--speed F               Speech rate multiplier (default: 1.0)
+--output PATH           Output WAV file path
+--play                  Play audio after synthesis
+--threads INT           CPU thread count for ONNX runtime (default: 4)
+```
+
+Examples:
+
+```bash
+# Default Indonesian model via sherpa-onnx
+sherox.tts --text "Halo dunia"
+
+# Japanese via Piper Plus Tsukuyomi
+sherox.tts --text "こんにちは、今日は良い天気ですね。" --lang jpn
 ```
 
 ## Architecture

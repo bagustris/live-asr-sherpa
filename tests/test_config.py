@@ -191,14 +191,14 @@ def test_tts_default_model_dir_is_empty():
 
 def test_tts_custom_values():
     cfg = TtsConfig(
-        language="ind",
+        language="jpn",
         speaker_id=1,
         speed=0.8,
         output="out.wav",
         play=True,
         num_threads=2,
     )
-    assert cfg.language == "ind"
+    assert cfg.language == "jpn"
     assert cfg.speaker_id == 1
     assert cfg.speed == 0.8
     assert cfg.output == "out.wav"

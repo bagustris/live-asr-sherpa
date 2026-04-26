@@ -4,6 +4,9 @@ Usage:
     # Synthesise from inline text (Indonesian, default):
     sherox.tts --text "Selamat pagi, apa kabar?"
 
+    # Synthesise Japanese with Piper Plus:
+    sherox.tts --text "こんにちは、今日は良い天気ですね。" --lang jpn
+
     # Read from file:
     sherox.tts --file input.txt --lang ind
 
@@ -21,6 +24,7 @@ Usage:
 
 Supported languages (ISO 639-3):
     ind   Indonesian  — vits-piper-id_ID-news_tts-medium  (22050 Hz, 1 speaker)
+    jpn   Japanese    — piper-plus tsukuyomi              (22050 Hz, 1 speaker)
 
 Models are auto-downloaded on first use into  models/<model-dir>/  at the project root.
 """
@@ -29,6 +33,7 @@ import argparse
 import sys
 import tarfile
 import urllib.request
+import wave
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Optional
@@ -39,6 +44,7 @@ from rich.console import Console
 from .config import TtsConfig
 
 sf = SimpleNamespace(write=None)
+piper_runtime = None
 
 _console = Console()
 _err_console = Console(stderr=True)
@@ -47,6 +53,7 @@ _err_console = Console(stderr=True)
 
 _TTS_MODELS: dict[str, dict] = {
     "ind": {
+        "backend": "sherpa_onnx",
         "url": (
             "https://github.com/k2-fsa/sherpa-onnx/releases/download/"
             "tts-models/vits-piper-id_ID-news_tts-medium.tar.bz2"
@@ -58,6 +65,13 @@ _TTS_MODELS: dict[str, dict] = {
         "data_dir": "espeak-ng-data",
         "sample_rate": 22050,
         "description": "Indonesian (Piper VITS, medium quality)",
+    },
+    "jpn": {
+        "backend": "piper_plus",
+        "voice_name": "ja_JP-tsukuyomi-chan-medium",
+        "language_id": 0,
+        "sample_rate": 22050,
+        "description": "Japanese (Piper Plus Tsukuyomi)",
     },
 }
 
@@ -89,6 +103,28 @@ def _require_soundfile():
         raise AssertionError("unreachable") from exc
     sf = _soundfile
     return sf
+
+
+def _require_piper_plus():
+    global piper_runtime
+    if piper_runtime is not None:
+        return piper_runtime
+    try:
+        from piper.download import ensure_voice_exists, find_voice, get_voices  # noqa: PLC0415
+        from piper.voice import PiperVoice  # noqa: PLC0415
+    except ImportError as exc:  # pragma: no cover - depends on environment
+        _error(
+            "piper-plus is required for Japanese TTS. "
+            "Install it with: pip install piper-plus"
+        )
+        raise AssertionError("unreachable") from exc
+    piper_runtime = SimpleNamespace(
+        ensure_voice_exists=ensure_voice_exists,
+        find_voice=find_voice,
+        get_voices=get_voices,
+        PiperVoice=PiperVoice,
+    )
+    return piper_runtime
 
 
 def _validate_runtime_args(args: argparse.Namespace) -> None:
@@ -200,6 +236,11 @@ def _ensure_model(lang: str, model_dir: Optional[Path], project_dir: Path) -> Pa
         )
 
     meta = _TTS_MODELS[lang]
+    if meta["backend"] != "sherpa_onnx":
+        _error(
+            f"Language '{lang}' uses the '{meta['backend']}' backend and does not "
+            "support sherpa-onnx model auto-resolution."
+        )
     if model_dir is not None:
         if not model_dir.is_dir():
             _error(f"Model directory not found: {model_dir}")
@@ -239,8 +280,7 @@ def _ensure_model(lang: str, model_dir: Optional[Path], project_dir: Path) -> Pa
 # ── TTS engine ────────────────────────────────────────────────────────────────
 
 def build_tts(cfg: TtsConfig, project_dir: Path):
-    """Build a sherpa_onnx.OfflineTts from *cfg*, downloading the model if needed."""
-    import sherpa_onnx  # noqa: PLC0415
+    """Build a TTS backend instance from *cfg*."""
 
     lang = cfg.language
     if lang not in _TTS_MODELS:
@@ -249,6 +289,31 @@ def build_tts(cfg: TtsConfig, project_dir: Path):
         )
 
     meta = _TTS_MODELS[lang]
+    if meta["backend"] == "piper_plus":
+        if cfg.model_dir:
+            _error(
+                "--model-dir is not currently supported for Piper Plus models. "
+                "Use the built-in 'jpn' language model."
+            )
+        piper_plus_mod = _require_piper_plus()
+        models_root = project_dir / "models" / "piper-plus"
+        models_root.mkdir(parents=True, exist_ok=True)
+        voices = piper_plus_mod.get_voices(models_root, update_voices=False)
+        piper_plus_mod.ensure_voice_exists(
+            meta["voice_name"],
+            [models_root],
+            models_root,
+            voices,
+        )
+        model_path, config_path = piper_plus_mod.find_voice(meta["voice_name"], [models_root])
+        return SimpleNamespace(
+            backend="piper_plus",
+            model=piper_plus_mod.PiperVoice.load(model_path, config_path),
+            language_id=meta["language_id"],
+        )
+
+    import sherpa_onnx  # noqa: PLC0415
+
     model_dir_override = Path(cfg.model_dir) if cfg.model_dir else None
     model_dir = _ensure_model(lang, model_dir_override, project_dir)
 
@@ -269,14 +334,49 @@ def build_tts(cfg: TtsConfig, project_dir: Path):
             "TTS config is invalid — check that all model files exist and are valid."
         )
 
-    return sherpa_onnx.OfflineTts(config)
+    return SimpleNamespace(
+        backend="sherpa_onnx",
+        model=sherpa_onnx.OfflineTts(config),
+    )
 
 
 def synthesise(tts, text: str, cfg: TtsConfig) -> tuple[np.ndarray, int]:
     """Synthesise *text* and return (samples, sample_rate)."""
-    audio = tts.generate(text=text, sid=cfg.speaker_id, speed=cfg.speed)
+    explicit_backend = getattr(tts, "__dict__", {}).get("backend")
+    engine = getattr(tts, "__dict__", {}).get("model", tts) if explicit_backend else tts
+    audio = engine.generate(text=text, sid=cfg.speaker_id, speed=cfg.speed)
     samples = np.array(audio.samples, dtype=np.float32)
     return samples, audio.sample_rate
+
+
+def synthesise_to_file(tts, text: str, cfg: TtsConfig) -> Optional[tuple[np.ndarray, int]]:
+    """Synthesise *text* to cfg.output. Returns audio when available in memory."""
+    backend = getattr(tts, "__dict__", {}).get("backend", "sherpa_onnx")
+
+    if backend == "sherpa_onnx":
+        samples, sample_rate = synthesise(tts, text, cfg)
+        soundfile = _require_soundfile()
+        soundfile.write(cfg.output, samples, samplerate=sample_rate)
+        return samples, sample_rate
+
+    if backend == "piper_plus":
+        length_scale = 1.0 / cfg.speed
+        with wave.open(cfg.output, "wb") as wav_file:
+            tts.model.synthesize(
+                text,
+                wav_file,
+                speaker_id=cfg.speaker_id,
+                length_scale=length_scale,
+                language_id=getattr(tts, "language_id", None),
+            )
+        if not cfg.play:
+            return None
+        soundfile = _require_soundfile()
+        samples, sample_rate = soundfile.read(cfg.output, dtype="float32")
+        return np.asarray(samples, dtype=np.float32), sample_rate
+
+    _error(f"Unsupported TTS backend: {backend}")
+    raise AssertionError("unreachable")
 
 
 def _play(samples: np.ndarray, sample_rate: int) -> None:
@@ -331,14 +431,15 @@ def main() -> None:
     tts = build_tts(cfg, project_dir)
     _info("Synthesising…")
 
-    samples, sample_rate = synthesise(tts, text, cfg)
+    result = synthesise_to_file(tts, text, cfg)
 
     if cfg.play:
+        if result is None:
+            _error("Playback requested but no audio samples were returned.")
+        samples, sample_rate = result
         _info("Playing audio…")
         _play(samples, sample_rate)
 
-    sf = _require_soundfile()
-    sf.write(cfg.output, samples, samplerate=sample_rate)
     _info(f"Saved → {cfg.output}")
 
 
