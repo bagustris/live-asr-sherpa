@@ -1,13 +1,51 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 
 from .config import Config
+
+_SHERPA_ONNX_IMPORT_ERROR = (
+    "sherpa-onnx is required for ASR and diarization features. "
+    "Install it with: pip install sherpa-onnx"
+)
+
+
+class _MissingSherpaSymbol:
+    def __call__(self, *args, **kwargs):
+        raise RuntimeError(_SHERPA_ONNX_IMPORT_ERROR)
+
+    def __getattr__(self, name):
+        if name.startswith("__") and name.endswith("__"):
+            raise AttributeError(name)
+        return self
+
+
+class _MissingSherpaOnnxProxy(SimpleNamespace):
+    def __init__(self):
+        super().__init__(
+            VadModelConfig=_MissingSherpaSymbol(),
+            SileroVadModelConfig=_MissingSherpaSymbol(),
+            TenVadModelConfig=_MissingSherpaSymbol(),
+            VoiceActivityDetector=_MissingSherpaSymbol(),
+            OnlineRecognizer=_MissingSherpaSymbol(),
+            OfflineRecognizer=_MissingSherpaSymbol(),
+            OfflineSpeakerDiarizationConfig=_MissingSherpaSymbol(),
+            OfflineSpeakerSegmentationModelConfig=_MissingSherpaSymbol(),
+            OfflineSpeakerSegmentationPyannoteModelConfig=_MissingSherpaSymbol(),
+            SpeakerEmbeddingExtractorConfig=_MissingSherpaSymbol(),
+            FastClusteringConfig=_MissingSherpaSymbol(),
+            OfflineSpeakerDiarization=_MissingSherpaSymbol(),
+        )
+
+    def __getattr__(self, name):
+        raise RuntimeError(_SHERPA_ONNX_IMPORT_ERROR)
+
 
 try:
     import sherpa_onnx
 except ImportError:  # pragma: no cover - depends on environment
-    sherpa_onnx = None
+    sherpa_onnx = _MissingSherpaOnnxProxy()
 
 
 def _require_sherpa_onnx():
@@ -17,10 +55,7 @@ def _require_sherpa_onnx():
     try:
         import sherpa_onnx as _sherpa_onnx  # noqa: PLC0415
     except ImportError as exc:  # pragma: no cover - depends on environment
-        raise RuntimeError(
-            "sherpa-onnx is required for ASR and diarization features. "
-            "Install it with: pip install sherpa-onnx"
-        ) from exc
+        raise RuntimeError(_SHERPA_ONNX_IMPORT_ERROR) from exc
     sherpa_onnx = _sherpa_onnx
     return sherpa_onnx
 
@@ -62,6 +97,7 @@ _OFFLINE_CTC = {"ctc", "nemo_ctc"}
 _OFFLINE_SENSE_VOICE = {"sense_voice"}
 _OFFLINE_MOONSHINE = {"moonshine"}
 _OFFLINE_FIRE_RED_ASR = {"fire_red_asr"}
+_OFFLINE_COHERE_TRANSCRIBE = {"cohere_transcribe"}
 
 _ENDPOINT = dict(
     enable_endpoint_detection=True,
@@ -196,6 +232,13 @@ def build_offline_recognizer(cfg: Config):
             encoder=_find(d, "encoder*.onnx"),
             decoder=_find(d, "decoder*.onnx"),
             num_threads=cfg.num_threads,
+        )
+    if mt in _OFFLINE_COHERE_TRANSCRIBE:
+        return sherpa_onnx.OfflineRecognizer.from_cohere_transcribe(
+            encoder=_find(d, "encoder*.onnx"),
+            decoder=_find(d, "decoder*.onnx"),
+            tokens=tokens,
+            debug=False,
         )
     # Default: transducer (nemo_transducer or auto-detect)
     return sherpa_onnx.OfflineRecognizer.from_transducer(

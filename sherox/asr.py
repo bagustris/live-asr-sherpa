@@ -32,6 +32,10 @@ Usage:
     sherox.asr --mic --model-type ja-en-mls-5k
     sherox.asr --wav path/to/audio.wav --model-type ja-en-mls-5k
 
+    # Cohere Transcribe multilingual (offline, 14 languages):
+    sherox.asr --mic --offline --model-type cohere_transcribe --language en
+    sherox.asr --wav path/to/audio.wav --offline --model-type cohere_transcribe --language zh
+
     # Custom model directory:
     sherox.asr --mic --model-dir models/my-model --offline --model-type nemo_transducer
 
@@ -51,6 +55,7 @@ Usage:
       models/reazonspeech-ja/              (offline, ReazonSpeech Japanese)
       models/reazonspeech-ja-en/           (offline, ReazonSpeech bilingual ja-en)
       models/reazonspeech-ja-en-mls-5k/    (offline, ReazonSpeech + MLS 5k bilingual)
+      models/cohere-transcribe-14-lang-int8/  (offline, Cohere Transcribe multilingual)
       models/silero_vad.onnx               (VAD, shared for offline use)
       models/sherpa-onnx-pyannote-segmentation-3-0/model.onnx  (diarization segmentation)
       models/nemo_en_speakerverification_speakernet.onnx        (diarization embedding)
@@ -60,7 +65,7 @@ Usage:
                                  zipformer2_ctc
     Offline --model-type values: (blank), transducer, nemo_transducer, paraformer,
                                  whisper, ctc, nemo_ctc, sense_voice, moonshine,
-                                 fire_red_asr, ja, ja-en, ja-en-mls-5k
+                                 fire_red_asr, cohere_transcribe, ja, ja-en, ja-en-mls-5k
 """
 
 import argparse
@@ -73,6 +78,7 @@ from types import SimpleNamespace
 from rich.console import Console
 
 from .asr_engine import build_diarization, build_offline_recognizer, build_recognizer, build_vad
+from .utils import download_file as _download_file
 from .audio import mic_stream, read_wav
 from .config import Config
 from .streaming import run_offline_vad_streaming, run_streaming
@@ -155,7 +161,7 @@ def parse_args() -> argparse.Namespace:
             "Online: transducer, zipformer, zipformer2, conformer, lstm, paraformer, "
             "ctc, wenet_ctc, zipformer2_ctc. "
             "Offline: transducer, nemo_transducer, paraformer, whisper, ctc, nemo_ctc, "
-            "sense_voice, moonshine, fire_red_asr. "
+            "sense_voice, moonshine, fire_red_asr, cohere_transcribe. "
             "ReazonSpeech (offline): ja (Japanese), ja-en (bilingual Japanese-English), "
             "ja-en-mls-5k (bilingual trained on ReazonSpeech + MLS English 5k). "
             "See https://k2-fsa.github.io/sherpa/onnx/pretrained_models/"
@@ -293,6 +299,17 @@ _REAZON_JA_EN_EXTRACTED = "sherpa-onnx-zipformer-ja-en-reazonspeech-2025-01-17"
 _REAZON_JA_EN_TARGET = "reazonspeech-ja-en"
 _REAZON_JA_EN_MLS_TARGET = "reazonspeech-ja-en-mls-5k"
 
+# ── Cohere Transcribe model URLs ──────────────────────────────────────────────
+# Multilingual model supporting 14 languages
+# (https://huggingface.co/CohereLabs/cohere-transcribe-03-2026)
+_COHERE_TRANSCRIBE_URL = (
+    "https://github.com/k2-fsa/sherpa-onnx/releases/download/"
+    "asr-models/sherpa-onnx-cohere-transcribe-14-lang-int8-2026-04-01.tar.bz2"
+)
+_COHERE_TRANSCRIBE_ARCHIVE = "sherpa-onnx-cohere-transcribe-14-lang-int8-2026-04-01.tar.bz2"
+_COHERE_TRANSCRIBE_EXTRACTED = "sherpa-onnx-cohere-transcribe-14-lang-int8-2026-04-01"
+_COHERE_TRANSCRIBE_TARGET = "cohere-transcribe-14-lang-int8"
+
 _VAD_URL = (
     "https://github.com/k2-fsa/sherpa-onnx/releases/download/"
     "asr-models/silero_vad.onnx"
@@ -324,23 +341,6 @@ _DIAR_EMB_URL = (
     "speaker-recongition-models/nemo_en_speakerverification_speakernet.onnx"
 )
 _DIAR_EMB_FILE = "nemo_en_speakerverification_speakernet.onnx"
-
-
-def _download_file(url: str, dest: Path) -> None:
-    _info(f"Downloading from:\n  {url}")
-    _info("This may take a few minutes…")
-
-    def _progress(block: int, block_size: int, total: int) -> None:
-        if total > 0:
-            pct = min(100, block * block_size * 100 // total)
-            sys.stdout.write(f"\r  {pct}%")
-            sys.stdout.flush()
-
-    try:
-        urllib.request.urlretrieve(url, dest, reporthook=_progress)
-    except Exception as exc:  # noqa: BLE001
-        _error(f"Download failed: {exc}")
-    print()
 
 
 def _safe_tar_members(tf: tarfile.TarFile, dest_dir: Path):
@@ -382,6 +382,11 @@ def _download_model(model_dir: str, model_type: str) -> None:
         url = _REAZON_JA_EN_URL
         archive_name = _REAZON_JA_EN_ARCHIVE
         extracted_name = _REAZON_JA_EN_EXTRACTED
+    # Cohere Transcribe multilingual model
+    elif model_type == "cohere_transcribe" or model_dir.name == _COHERE_TRANSCRIBE_TARGET:
+        url = _COHERE_TRANSCRIBE_URL
+        archive_name = _COHERE_TRANSCRIBE_ARCHIVE
+        extracted_name = _COHERE_TRANSCRIBE_EXTRACTED
     # Use parakeet as the default offline model download target
     elif model_type == "nemo_transducer" or model_dir.name in (
         _PARAKEET_FP16_TARGET, _PARAKEET_INT8_TARGET
@@ -573,6 +578,8 @@ def main() -> None:
             raw_model_dir = f"models/{_REAZON_JA_EN_TARGET}"
         elif args.model_type == "ja-en-mls-5k":
             raw_model_dir = f"models/{_REAZON_JA_EN_MLS_TARGET}"
+        elif args.model_type == "cohere_transcribe":
+            raw_model_dir = f"models/{_COHERE_TRANSCRIBE_TARGET}"
         elif args.offline:
             raw_model_dir = f"models/{_PARAKEET_TARGET}"
         else:
@@ -603,8 +610,8 @@ def main() -> None:
     _validate_model(cfg.model_dir, cfg.model_type)
 
     # Auto-detect offline-only models and switch automatically.
-    _OFFLINE_ONLY_TYPES = {"nemo_transducer", "whisper", "nemo_ctc", "sense_voice", "moonshine", "fire_red_asr", "ja", "ja-en", "ja-en-mls-5k"}
-    _OFFLINE_ONLY_NAME_PATTERNS = ("parakeet", "nemo", "whisper", "sense_voice", "moonshine", "fire_red_asr", "reazonspeech")
+    _OFFLINE_ONLY_TYPES = {"nemo_transducer", "whisper", "nemo_ctc", "sense_voice", "moonshine", "fire_red_asr", "cohere_transcribe", "ja", "ja-en", "ja-en-mls-5k"}
+    _OFFLINE_ONLY_NAME_PATTERNS = ("parakeet", "nemo", "whisper", "sense_voice", "moonshine", "fire_red_asr", "cohere", "reazonspeech")
     model_name_lower = Path(cfg.model_dir).name.lower()
     if not cfg.offline and (
         cfg.model_type in _OFFLINE_ONLY_TYPES

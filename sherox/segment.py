@@ -24,7 +24,6 @@ Output format (stdout):
 
 import argparse
 import sys
-import urllib.request
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -32,6 +31,7 @@ import numpy as np
 from rich.console import Console
 
 from .asr_engine import build_vad
+from .utils import download_file as _download_file
 from .audio import mic_stream, read_wav
 from .config import SegmentConfig
 
@@ -171,23 +171,6 @@ def parse_args() -> argparse.Namespace:
         help="Show a live RMS energy bar for mic level calibration",
     )
     return parser.parse_args()
-
-
-def _download_file(url: str, dest: Path) -> None:
-    _info(f"Downloading from:\n  {url}")
-    _info("This may take a moment…")
-
-    def _progress(block: int, block_size: int, total: int) -> None:
-        if total > 0:
-            pct = min(100, block * block_size * 100 // total)
-            sys.stdout.write(f"\r  {pct}%")
-            sys.stdout.flush()
-
-    try:
-        urllib.request.urlretrieve(url, dest, reporthook=_progress)
-    except Exception as exc:
-        _error(f"Download failed: {exc}")
-    print()
 
 
 def _resolve_vad(cfg: SegmentConfig, project_dir: Path) -> str:

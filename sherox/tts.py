@@ -32,7 +32,6 @@ Models are auto-downloaded on first use into  models/<model-dir>/  at the projec
 import argparse
 import sys
 import tarfile
-import urllib.request
 import wave
 from pathlib import Path
 from types import SimpleNamespace
@@ -42,6 +41,7 @@ import numpy as np
 from rich.console import Console
 
 from .config import TtsConfig
+from .utils import download_file as _download_file
 
 sf = SimpleNamespace(write=None)
 piper_runtime = None
@@ -196,23 +196,6 @@ def parse_args() -> argparse.Namespace:
 
 
 # ── Model download helpers ────────────────────────────────────────────────────
-
-def _download_file(url: str, dest: Path) -> None:
-    _info(f"Downloading from:\n  {url}")
-    _info("This may take a few minutes…")
-
-    def _progress(block: int, block_size: int, total: int) -> None:
-        if total > 0:
-            pct = min(100, block * block_size * 100 // total)
-            sys.stdout.write(f"\r  {pct}%")
-            sys.stdout.flush()
-
-    try:
-        urllib.request.urlretrieve(url, dest, reporthook=_progress)
-    except Exception as exc:
-        _error(f"Download failed: {exc}")
-    print()
-
 
 def _safe_tar_members(tf: tarfile.TarFile, dest_dir: Path):
     """Yield only safe members, preventing path traversal."""

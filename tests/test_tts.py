@@ -263,6 +263,11 @@ class TestEnsureModel:
              pytest.raises(SystemExit):
             tts_module._ensure_model("ind", None, tmp_path)
 
+    def test_exits_for_non_sherpa_onnx_backend_with_auto_resolution(self, tmp_path):
+        # Japanese uses piper_plus backend, which doesn't support auto-resolution
+        with pytest.raises(SystemExit):
+            tts_module._ensure_model("jpn", None, tmp_path)
+
 
 # ---------------------------------------------------------------------------
 # build_tts
@@ -342,6 +347,44 @@ class TestBuildTts:
         with pytest.raises(SystemExit):
             tts_module.build_tts(cfg, tmp_path)
 
+    def test_require_piper_plus_returns_cached_runtime(self):
+        import sherox.tts as tts_module
+        mock_piper = SimpleNamespace(
+            get_voices=MagicMock(),
+            ensure_voice_exists=MagicMock(),
+            find_voice=MagicMock(),
+            PiperVoice=MagicMock(),
+        )
+        original = tts_module.piper_runtime
+        try:
+            tts_module.piper_runtime = mock_piper
+            result = tts_module._require_piper_plus()
+            assert result is mock_piper
+        finally:
+            tts_module.piper_runtime = original
+
+    def test_require_piper_plus_imports_when_not_cached(self):
+        import sherox.tts as tts_module
+        mock_piper = SimpleNamespace(
+            get_voices=MagicMock(),
+            ensure_voice_exists=MagicMock(),
+            find_voice=MagicMock(),
+            PiperVoice=MagicMock(),
+        )
+        original = tts_module.piper_runtime
+        try:
+            tts_module.piper_runtime = None
+            with patch.dict("sys.modules", {"piper.download": MagicMock(), "piper.voice": MagicMock()}):
+                with patch("piper.download.ensure_voice_exists", return_value=mock_piper.ensure_voice_exists), \
+                     patch("piper.download.find_voice", return_value=mock_piper.find_voice), \
+                     patch("piper.download.get_voices", return_value=mock_piper.get_voices), \
+                     patch("piper.voice.PiperVoice", return_value=mock_piper.PiperVoice):
+                    result = tts_module._require_piper_plus()
+            assert result is not None
+            assert hasattr(result, "ensure_voice_exists")
+        finally:
+            tts_module.piper_runtime = original
+
 
 # ---------------------------------------------------------------------------
 # synthesise
@@ -405,6 +448,20 @@ class TestSynthesiseToFile:
         assert samples.dtype == np.float32
         mock_engine.synthesize.assert_called_once()
         mock_sf.read.assert_called_once_with("out.wav", dtype="float32")
+
+    def test_exits_for_unsupported_backend(self):
+        tts = SimpleNamespace(backend="unsupported_backend")
+        cfg = TtsConfig(output="out.wav")
+        with pytest.raises(SystemExit):
+            tts_module.synthesise_to_file(tts, "Hello", cfg)
+
+    def test_raises_assertion_error_for_unsupported_backend_when_error_mocked(self):
+        tts = SimpleNamespace(backend="unsupported_backend")
+        cfg = TtsConfig(output="out.wav")
+        # Mock _error to not exit, so the code continues to the unreachable line
+        with patch.object(tts_module, "_error"):
+            with pytest.raises(AssertionError, match="unreachable"):
+                tts_module.synthesise_to_file(tts, "Hello", cfg)
 
 
 # ---------------------------------------------------------------------------
@@ -502,6 +559,17 @@ class TestMain:
              patch.object(tts_module, "_require_soundfile", return_value=mock_sf):
             tts_module.main()
         mock_play.assert_called_once()
+
+    def test_main_exits_when_playback_requested_but_no_samples(self, tmp_path):
+        out = str(tmp_path / "out.wav")
+        mock_sf = MagicMock()
+        # Mock synthesise_to_file to return None (no samples)
+        with patch("sys.argv", ["sherox.tts", "--text", "Hi", "--output", out, "--play"]), \
+             patch.object(tts_module, "build_tts", return_value=self._mock_tts()), \
+             patch.object(tts_module, "synthesise_to_file", return_value=None), \
+             patch.object(tts_module, "_require_soundfile", return_value=mock_sf), \
+             pytest.raises(SystemExit):
+            tts_module.main()
 
     def test_main_with_custom_model_dir(self, tmp_path):
         model_dir = tmp_path / "custom_model"

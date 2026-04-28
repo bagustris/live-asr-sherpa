@@ -2,7 +2,7 @@
 name = "sherox"
 version = "0.2.0"
 description = "SHErpa OnnX toolkit — streaming ASR, VAD segmentation, and TTS"
-requires-python = ">=3.9"
+requires-python = ">=3.11"
 dependencies = [
     "sherpa-onnx>=1.12.28",
     "sounddevice>=0.5.5",

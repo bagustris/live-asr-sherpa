@@ -23,7 +23,6 @@ from __future__ import annotations
 
 import argparse
 import sys
-import urllib.request
 from collections import defaultdict
 from pathlib import Path
 from typing import Dict, List, Tuple
@@ -32,6 +31,7 @@ import numpy as np
 from rich.console import Console
 
 from .asr_engine import _require_sherpa_onnx, build_vad
+from .utils import download_file as _download_file
 from .audio import mic_stream
 from .config import Config as _AsrConfig, SidConfig
 
@@ -65,23 +65,6 @@ def _info(msg: str) -> None:
 def _error(msg: str) -> None:
     _err_console.print(f"[bold red]\\[error][/bold red] {msg}")
     sys.exit(1)
-
-
-def _download_file(url: str, dest: Path) -> None:
-    _info(f"Downloading from:\n  {url}")
-    _info("This may take a few minutes…")
-
-    def _progress(block: int, block_size: int, total: int) -> None:
-        if total > 0:
-            pct = min(100, block * block_size * 100 // total)
-            sys.stdout.write(f"\r  {pct}%")
-            sys.stdout.flush()
-
-    try:
-        urllib.request.urlretrieve(url, dest, reporthook=_progress)
-    except Exception as exc:  # noqa: BLE001
-        _error(f"Download failed: {exc}")
-    print()
 
 
 def _validate_model(model_path: str, project_dir: Path) -> str:

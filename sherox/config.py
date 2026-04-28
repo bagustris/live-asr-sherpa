@@ -20,7 +20,7 @@ class Config:
     # Online:  "" (auto), transducer, zipformer, zipformer2, conformer, lstm,
     #          paraformer, ctc, wenet_ctc, zipformer2_ctc
     # Offline: "" (auto), transducer, nemo_transducer, paraformer, whisper,
-    #          ctc, nemo_ctc, sense_voice, moonshine, fire_red_asr
+    #          ctc, nemo_ctc, sense_voice, moonshine, fire_red_asr, cohere_transcribe
     # ReazonSpeech (offline): ja, ja-en, ja-en-mls-5k
     model_type: str = ""
 

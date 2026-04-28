@@ -341,6 +341,8 @@ def _extracted_name_for(model_dir_name: str, model_type: str) -> str:
         main_module._REAZON_JA_EN_MLS_TARGET,
     ):
         return main_module._REAZON_JA_EN_EXTRACTED
+    if model_type == "cohere_transcribe" or model_dir_name == main_module._COHERE_TRANSCRIBE_TARGET:
+        return main_module._COHERE_TRANSCRIBE_EXTRACTED
     if model_type == "nemo_transducer" or model_dir_name in (
         main_module._PARAKEET_FP16_TARGET,
         main_module._PARAKEET_INT8_TARGET,
@@ -409,6 +411,14 @@ class TestDownloadModel:
         url = _run_download_model(tmp_path, main_module._REAZON_JA_EN_MLS_TARGET, "ja-en-mls-5k")
         assert "reazonspeech" in url
         assert "ja-en" in url
+
+    def test_uses_cohere_transcribe_url_for_cohere_transcribe_model_type(self, tmp_path):
+        url = _run_download_model(tmp_path, main_module._COHERE_TRANSCRIBE_TARGET, "cohere_transcribe")
+        assert "cohere" in url
+
+    def test_uses_cohere_transcribe_url_for_cohere_transcribe_dir_name(self, tmp_path):
+        url = _run_download_model(tmp_path, main_module._COHERE_TRANSCRIBE_TARGET, "")
+        assert "cohere" in url
 
     def test_reazon_ja_and_ja_en_use_different_urls(self, tmp_path):
         ja_url = _run_download_model(tmp_path, main_module._REAZON_JA_TARGET, "ja")
@@ -858,6 +868,24 @@ class TestMain:
 
         called_dir = mock_vm.call_args[0][0]
         assert main_module._REAZON_JA_EN_TARGET in called_dir
+
+    def test_cohere_transcribe_model_type_sets_cohere_dir(self):
+        args = self._common_patches(None, model_type="cohere_transcribe")
+        mock_rec = MagicMock()
+
+        with patch.object(main_module, "parse_args", return_value=args), \
+             patch.object(main_module, "_validate_runtime_args"), \
+             patch.object(main_module, "_validate_model") as mock_vm, \
+             patch.object(main_module, "_validate_vad", return_value=""), \
+             patch.object(main_module, "_validate_mic"), \
+             patch("sherox.asr.build_offline_recognizer", return_value=mock_rec), \
+             patch("sherox.asr.build_vad", return_value=MagicMock()), \
+             patch("sherox.asr.mic_stream", return_value=iter([])), \
+             patch("sherox.asr.run_offline_vad_streaming"):
+            main_module.main()
+
+        called_dir = mock_vm.call_args[0][0]
+        assert main_module._COHERE_TRANSCRIBE_TARGET in called_dir
 
     def test_ja_en_mls_5k_model_type(self):
         args = self._common_patches(None, model_type="ja-en-mls-5k")

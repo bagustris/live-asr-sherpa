@@ -192,6 +192,7 @@ Use these with `--offline`. Audio is VAD-segmented before recognition (higher ac
 | ReazonSpeech JA | `models/reazonspeech-ja` | `ja` | ja | **Auto-downloaded**; Japanese |
 | ReazonSpeech JA-EN | `models/reazonspeech-ja-en` | `ja-en` | ja/en | **Auto-downloaded**; bilingual |
 | ReazonSpeech JA-EN-MLS | `models/reazonspeech-ja-en-mls-5k` | `ja-en-mls-5k` | ja/en | **Auto-downloaded**; bilingual + MLS 5k |
+| Cohere Transcribe 14-Lang | `models/cohere-transcribe-14-lang-int8` | `cohere_transcribe` | multi | 14 languages; multilingual ASR |
 
 Examples:
 ```bash
@@ -231,6 +232,12 @@ sherox.asr --mic --model-type ja-en
 
 # ReazonSpeech bilingual + MLS 5k English
 sherox.asr --wav audio.wav --model-type ja-en-mls-5k
+
+# Cohere Transcribe multilingual (14 languages)
+sherox.asr --mic --offline --model-type cohere_transcribe --language en
+
+# Cohere Transcribe with different language (e.g., Chinese)
+sherox.asr --wav audio.wav --offline --model-type cohere_transcribe --language zh
 ```
 
 ## CLI Reference
@@ -247,10 +254,11 @@ sherox.asr --wav audio.wav --model-type ja-en-mls-5k
                           Online:  transducer, zipformer, zipformer2, conformer, lstm,
                                    paraformer, ctc, wenet_ctc, zipformer2_ctc
                           Offline: transducer, nemo_transducer, paraformer, whisper,
-                                   ctc, nemo_ctc, sense_voice, moonshine, fire_red_asr
+                                   ctc, nemo_ctc, sense_voice, moonshine, fire_red_asr,
+                                   cohere_transcribe
                           ReazonSpeech (offline): ja, ja-en, ja-en-mls-5k
 --offline               Use VAD-segmented offline pipeline instead of streaming
---language LANG         Language code for Whisper / SenseVoice (default: en)
+--language LANG         Language code for Whisper / SenseVoice / Cohere Transcribe (default: en)
 --sample-rate INT       Audio sample rate in Hz (default: 16000)
 --chunk-size FLOAT      Chunk size in seconds (default: 0.16)
 --threads INT           CPU thread count for ONNX runtime (default: 4)

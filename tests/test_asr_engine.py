@@ -1,3 +1,4 @@
+import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -331,6 +332,16 @@ class TestBuildOfflineRecognizer:
 
         mock_cls.from_whisper.assert_called_once()
 
+    def test_cohere_transcribe_route(self, tmp_path):
+        _touch_files(tmp_path, "tokens.txt", "encoder.onnx", "decoder.onnx")
+        cfg = Config(model_dir=str(tmp_path), model_type="cohere_transcribe")
+
+        with patch("sherox.asr_engine.sherpa_onnx.OfflineRecognizer") as mock_cls:
+            mock_cls.from_cohere_transcribe.return_value = MagicMock()
+            asr_engine.build_offline_recognizer(cfg)
+
+        mock_cls.from_cohere_transcribe.assert_called_once()
+
 
 # ---------------------------------------------------------------------------
 # _require_sherpa_onnx — success path (re-import)
@@ -356,6 +367,50 @@ class TestRequireSherpaOnnx:
         existing = engine_module.sherpa_onnx
         result = engine_module._require_sherpa_onnx()
         assert result is existing
+
+    def test_raises_runtime_error_when_import_fails(self):
+        import sherox.asr_engine as engine_module
+
+        original = engine_module.sherpa_onnx
+        try:
+            engine_module.sherpa_onnx = None
+            with patch.dict("sys.modules", {}, clear=False):
+                # Remove sherpa_onnx from sys.modules to force ImportError
+                sys.modules.pop("sherpa_onnx", None)
+                with pytest.raises(RuntimeError, match="sherpa-onnx"):
+                    engine_module._require_sherpa_onnx()
+        finally:
+            engine_module.sherpa_onnx = original
+
+
+# ---------------------------------------------------------------------------
+# _MissingSherpaSymbol and _MissingSherpaOnnxProxy
+# ---------------------------------------------------------------------------
+
+class TestMissingSherpaProxy:
+    def test_missing_symbol_raises_runtime_error_on_call(self):
+        import sherox.asr_engine as engine_module
+        symbol = engine_module._MissingSherpaSymbol()
+        with pytest.raises(RuntimeError, match="sherpa-onnx"):
+            symbol()
+
+    def test_missing_symbol_returns_self_for_non_dunder_attrs(self):
+        import sherox.asr_engine as engine_module
+        symbol = engine_module._MissingSherpaSymbol()
+        result = symbol.some_attr
+        assert result is symbol
+
+    def test_missing_symbol_raises_attribute_error_for_dunder(self):
+        import sherox.asr_engine as engine_module
+        symbol = engine_module._MissingSherpaSymbol()
+        with pytest.raises(AttributeError, match="__some_dunder__"):
+            symbol.__some_dunder__
+
+    def test_missing_proxy_raises_runtime_error_on_unknown_attr(self):
+        import sherox.asr_engine as engine_module
+        proxy = engine_module._MissingSherpaOnnxProxy()
+        with pytest.raises(RuntimeError, match="sherpa-onnx"):
+            proxy.unknown_attr
 
 
 # ---------------------------------------------------------------------------
