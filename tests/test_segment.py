@@ -1,4 +1,5 @@
 import argparse
+import urllib.request
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -151,31 +152,45 @@ class TestValidateRuntimeArgs:
 class TestDownloadFile:
     def test_success(self, tmp_path):
         dest = tmp_path / "file.bin"
-        with patch("urllib.request.urlretrieve") as mock_dl:
+        mock_response = MagicMock()
+        mock_response.headers = {"Content-Length": "100"}
+        mock_response.__enter__ = MagicMock(return_value=mock_response)
+        mock_response.__exit__ = MagicMock(return_value=False)
+        mock_response.read.side_effect = [b""]
+
+        with patch("sherox.utils.urllib.request.urlopen", return_value=mock_response) as mock_urlopen:
             seg_module._download_file("http://example.com/file.bin", dest)
-        mock_dl.assert_called_once()
+
+        mock_urlopen.assert_called_once()
 
     def test_failure_exits(self, tmp_path):
         dest = tmp_path / "file.bin"
-        with patch("urllib.request.urlretrieve", side_effect=Exception("network error")):
+        with patch("sherox.utils.urllib.request.urlopen", side_effect=Exception("network error")):
             with pytest.raises(SystemExit):
                 seg_module._download_file("http://example.com/file.bin", dest)
 
     def test_progress_callback_with_positive_total(self, tmp_path):
         dest = tmp_path / "file.bin"
-        captured = {}
-        def fake_retrieve(url, dest, reporthook):
-            reporthook(1, 1024, 2048)
-            captured["called"] = True
-        with patch("urllib.request.urlretrieve", side_effect=fake_retrieve):
+        mock_response = MagicMock()
+        mock_response.headers = {"Content-Length": "2048"}
+        mock_response.__enter__ = MagicMock(return_value=mock_response)
+        mock_response.__exit__ = MagicMock(return_value=False)
+        mock_response.read.side_effect = [b"x" * 1024, b""]
+
+        with patch("sherox.utils.urllib.request.urlopen", return_value=mock_response):
             seg_module._download_file("http://example.com/file.bin", dest)
-        assert captured.get("called")
+
+        assert dest.exists()
 
     def test_progress_skipped_when_total_zero(self, tmp_path):
         dest = tmp_path / "file.bin"
-        def fake_retrieve(url, dest, reporthook):
-            reporthook(1, 1024, 0)
-        with patch("urllib.request.urlretrieve", side_effect=fake_retrieve):
+        mock_response = MagicMock()
+        mock_response.headers = {"Content-Length": "0"}
+        mock_response.__enter__ = MagicMock(return_value=mock_response)
+        mock_response.__exit__ = MagicMock(return_value=False)
+        mock_response.read.side_effect = [b""]
+
+        with patch("sherox.utils.urllib.request.urlopen", return_value=mock_response):
             seg_module._download_file("http://example.com/file.bin", dest)
 
 

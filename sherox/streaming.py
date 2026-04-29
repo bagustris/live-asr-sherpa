@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import os
 import sys
+from collections import deque
 from concurrent.futures import ThreadPoolExecutor, Future
-from typing import Generator, Optional
+from typing import Deque, Generator, Optional, Tuple
 
 import logging
 import numpy as np
@@ -255,12 +256,55 @@ def run_offline_vad_streaming(
 ) -> None:
     """VAD-segmented offline ASR with optional concurrent speaker diarization.
 
-    For each speech segment the ASR and diarization models run concurrently
-    in a ThreadPoolExecutor so that neither doubles the per-segment latency.
-    Each speaker's output is colour-coded; when *show_speaker_tag* is ``True``
-    a ``[Speaker N]`` prefix is also printed.
+    ASR runs in a background executor so the mic level bar keeps updating
+    while transcription is in progress. Results are flushed in submission
+    order (FIFO) so the transcript stays sequential. Each speaker's output
+    is colour-coded; when *show_speaker_tag* is ``True`` a ``[Speaker N]``
+    prefix is also printed.
     """
-    executor: Optional[ThreadPoolExecutor] = ThreadPoolExecutor(max_workers=2) if diarization else None
+    max_workers = 4 if diarization is not None else 2
+    executor = ThreadPoolExecutor(max_workers=max_workers)
+    # pending: ordered queue of (asr_future, diar_future_or_None)
+    pending: Deque[Tuple[Future, Optional[Future]]] = deque()
+
+    def _submit(samples: np.ndarray) -> None:
+        asr_f = executor.submit(_run_asr, recognizer, samples, sample_rate)
+        diar_f = executor.submit(diarization.process, samples) if diarization is not None else None
+        pending.append((asr_f, diar_f))
+
+    def _print_result(asr_f: Future, diar_f: Optional[Future]) -> None:
+        text = asr_f.result()
+        speaker_id: Optional[int] = None
+        if diar_f is not None and text:
+            try:
+                speaker_id = _dominant_speaker(diar_f.result())
+            except Exception as exc:
+                logging.debug("Diarization failed: %s", exc, exc_info=True)
+        if text:
+            try:
+                width = shutil.get_terminal_size(fallback=(80, 20)).columns
+            except OSError:
+                width = 80
+            sys.stdout.write("\r" + " " * width + "\r")
+            sys.stdout.flush()
+            _rich_print(text, speaker_id, show_speaker_tag=show_speaker_tag)
+
+    def _flush_ready() -> None:
+        """Print results for futures at the front of the queue that are done."""
+        while pending:
+            asr_f, diar_f = pending[0]
+            if not asr_f.done():
+                break
+            if diar_f is not None and not diar_f.done():
+                break
+            pending.popleft()
+            _print_result(asr_f, diar_f)
+
+    def _drain_all() -> None:
+        """Block until every pending result has been printed."""
+        while pending:
+            asr_f, diar_f = pending.popleft()
+            _print_result(asr_f, diar_f)
 
     try:
         for chunk in audio_gen:
@@ -276,21 +320,24 @@ def run_offline_vad_streaming(
                 segment = vad.front
                 samples = np.array(segment.samples, dtype=np.float32)
                 vad.pop()
-                _decode_and_print(recognizer, samples, sample_rate, diarization, executor, show_speaker_tag)
+                _submit(samples)
+
+            _flush_ready()
 
     except KeyboardInterrupt:
         pass
     finally:
+        _drain_all()
         vad.flush()
         while not vad.empty():
             segment = vad.front
             samples = np.array(segment.samples, dtype=np.float32)
             vad.pop()
-            _decode_and_print(recognizer, samples, sample_rate, diarization, executor, show_speaker_tag)
+            _submit(samples)
+        executor.shutdown(wait=True)
+        _drain_all()
         sys.stdout.write("\n")
         sys.stdout.flush()
-        if executor is not None:
-            executor.shutdown(wait=True)
 
 
 def _decode_and_print(
@@ -300,6 +347,7 @@ def _decode_and_print(
     diarization: Optional[sherpa_onnx.OfflineSpeakerDiarization] = None,
     executor: Optional[ThreadPoolExecutor] = None,
     show_speaker_tag: bool = False,
+    show_mic_level: bool = False,
 ) -> None:
     """Run ASR (and optionally diarization) on *samples* and print the result.
 
@@ -317,7 +365,11 @@ def _decode_and_print(
         speaker_id = None
 
     if text:
-        sys.stdout.write(f"\r{' ' * 20}\r")
+        try:
+            width = shutil.get_terminal_size(fallback=(80, 20)).columns
+        except OSError:
+            width = 80
+        sys.stdout.write("\r" + " " * width + "\r")
         sys.stdout.flush()
         _rich_print(text, speaker_id, show_speaker_tag=show_speaker_tag)
 

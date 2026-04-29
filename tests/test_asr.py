@@ -1,4 +1,5 @@
 import argparse
+import urllib.request
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -237,12 +238,12 @@ class TestValidateWav:
             with pytest.raises(SystemExit):
                 main_module._validate_wav(str(wav), 16000)
 
-    def test_exits_on_wrong_sample_rate(self, tmp_path):
+    def test_warns_on_wrong_sample_rate(self, tmp_path, capsys):
         wav = tmp_path / "audio.wav"
         wav.touch()
         with patch("sherox.asr.sf.SoundFile", return_value=_mock_sf(1, 44100)):
-            with pytest.raises(SystemExit):
-                main_module._validate_wav(str(wav), 16000)
+            main_module._validate_wav(str(wav), 16000)  # should NOT raise
+        assert "resampling" in capsys.readouterr().out
 
     def test_passes_for_valid_mono_16khz_audio(self, tmp_path):
         wav = tmp_path / "audio.wav"
@@ -343,6 +344,8 @@ def _extracted_name_for(model_dir_name: str, model_type: str) -> str:
         return main_module._REAZON_JA_EN_EXTRACTED
     if model_type == "cohere_transcribe" or model_dir_name == main_module._COHERE_TRANSCRIBE_TARGET:
         return main_module._COHERE_TRANSCRIBE_EXTRACTED
+    if model_type == "multilingual_streaming" or model_dir_name == main_module._MULTILINGUAL_STREAMING_TARGET:
+        return main_module._MULTILINGUAL_STREAMING_EXTRACTED
     if model_type == "nemo_transducer" or model_dir_name in (
         main_module._PARAKEET_FP16_TARGET,
         main_module._PARAKEET_INT8_TARGET,
@@ -420,6 +423,14 @@ class TestDownloadModel:
         url = _run_download_model(tmp_path, main_module._COHERE_TRANSCRIBE_TARGET, "")
         assert "cohere" in url
 
+    def test_uses_multilingual_streaming_url_for_multilingual_streaming_model_type(self, tmp_path):
+        url = _run_download_model(tmp_path, main_module._MULTILINGUAL_STREAMING_TARGET, "multilingual_streaming")
+        assert "multilingual" in url or "ar_en_id" in url
+
+    def test_uses_multilingual_streaming_url_for_multilingual_streaming_dir_name(self, tmp_path):
+        url = _run_download_model(tmp_path, main_module._MULTILINGUAL_STREAMING_TARGET, "")
+        assert "ar_en_id" in url
+
     def test_reazon_ja_and_ja_en_use_different_urls(self, tmp_path):
         ja_url = _run_download_model(tmp_path, main_module._REAZON_JA_TARGET, "ja")
         ja_en_url = _run_download_model(tmp_path, main_module._REAZON_JA_EN_TARGET, "ja-en")
@@ -495,49 +506,57 @@ class TestValidateRuntimeArgsNumeric:
 # ---------------------------------------------------------------------------
 
 class TestDownloadFile:
-    def test_calls_urlretrieve_with_url_and_dest(self, tmp_path):
+    def test_calls_urlopen_with_correct_url(self, tmp_path):
         dest = tmp_path / "file.tar.bz2"
-        with patch("sherox.asr.urllib.request.urlretrieve") as mock_dl:
+        mock_response = MagicMock()
+        mock_response.headers = {"Content-Length": "100"}
+        mock_response.__enter__ = MagicMock(return_value=mock_response)
+        mock_response.__exit__ = MagicMock(return_value=False)
+        mock_response.read.side_effect = [b""]
+
+        with patch("sherox.utils.urllib.request.urlopen", return_value=mock_response) as mock_urlopen:
             main_module._download_file("http://example.com/file.tar.bz2", dest)
-        mock_dl.assert_called_once()
-        args = mock_dl.call_args[0]
-        assert args[0] == "http://example.com/file.tar.bz2"
-        assert args[1] == dest
+
+        mock_urlopen.assert_called_once()
+        args = mock_urlopen.call_args[0]
+        assert isinstance(args[0], urllib.request.Request)
+        assert args[0].full_url == "http://example.com/file.tar.bz2"
 
     def test_exits_when_download_fails(self, tmp_path):
         dest = tmp_path / "file.tar.bz2"
-        with patch("sherox.asr.urllib.request.urlretrieve", side_effect=Exception("network error")):
+        with patch("sherox.utils.urllib.request.urlopen", side_effect=Exception("network error")):
             with pytest.raises(SystemExit):
                 main_module._download_file("http://example.com/file.tar.bz2", dest)
 
-    def test_progress_callback_writes_percentage(self, tmp_path, capsys):
+    def test_progress_writes_percentage(self, tmp_path, capsys):
         dest = tmp_path / "file.tar.bz2"
-        captured_hook = {}
+        mock_response = MagicMock()
+        mock_response.headers = {"Content-Length": "10240"}
+        mock_response.__enter__ = MagicMock(return_value=mock_response)
+        mock_response.__exit__ = MagicMock(return_value=False)
+        # Simulate downloading 5120 bytes (50%)
+        mock_response.read.side_effect = [b"x" * 5120, b""]
 
-        def fake_urlretrieve(url, dest_arg, reporthook=None):
-            captured_hook["hook"] = reporthook
-
-        with patch("sherox.asr.urllib.request.urlretrieve", side_effect=fake_urlretrieve):
+        with patch("sherox.utils.urllib.request.urlopen", return_value=mock_response):
             main_module._download_file("http://example.com/file.tar.bz2", dest)
 
-        # Call progress hook: block=5, block_size=1024, total=10240 → 50%
-        captured_hook["hook"](5, 1024, 10240)
         out = capsys.readouterr().out
         assert "50" in out
 
-    def test_progress_callback_skips_when_total_zero(self, tmp_path, capsys):
+    def test_progress_skips_when_total_zero(self, tmp_path, capsys):
         dest = tmp_path / "file.tar.bz2"
-        captured_hook = {}
+        mock_response = MagicMock()
+        mock_response.headers = {"Content-Length": "0"}
+        mock_response.__enter__ = MagicMock(return_value=mock_response)
+        mock_response.__exit__ = MagicMock(return_value=False)
+        mock_response.read.side_effect = [b""]
 
-        def fake_urlretrieve(url, dest_arg, reporthook=None):
-            captured_hook["hook"] = reporthook
-
-        with patch("sherox.asr.urllib.request.urlretrieve", side_effect=fake_urlretrieve):
+        with patch("sherox.utils.urllib.request.urlopen", return_value=mock_response):
             main_module._download_file("http://example.com/file.tar.bz2", dest)
 
         # Drain info messages printed by _download_file itself
         capsys.readouterr()
-        captured_hook["hook"](1, 1024, 0)  # total=0 → no additional output
+        # No percentage should be printed since total is 0
         assert capsys.readouterr().out == ""
 
 
@@ -886,6 +905,23 @@ class TestMain:
 
         called_dir = mock_vm.call_args[0][0]
         assert main_module._COHERE_TRANSCRIBE_TARGET in called_dir
+
+    def test_multilingual_streaming_model_type_sets_multilingual_dir(self):
+        args = self._common_patches(None, model_type="multilingual_streaming")
+        mock_rec = MagicMock()
+
+        with patch.object(main_module, "parse_args", return_value=args), \
+             patch.object(main_module, "_validate_runtime_args"), \
+             patch.object(main_module, "_validate_model") as mock_vm, \
+             patch.object(main_module, "_validate_vad", return_value=""), \
+             patch.object(main_module, "_validate_mic"), \
+             patch("sherox.asr.build_recognizer", return_value=mock_rec), \
+             patch("sherox.asr.mic_stream", return_value=iter([])), \
+             patch("sherox.asr.run_streaming"):
+            main_module.main()
+
+        called_dir = mock_vm.call_args[0][0]
+        assert main_module._MULTILINGUAL_STREAMING_TARGET in called_dir
 
     def test_ja_en_mls_5k_model_type(self):
         args = self._common_patches(None, model_type="ja-en-mls-5k")

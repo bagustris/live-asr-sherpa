@@ -38,30 +38,47 @@ def _require_sounddevice():
     return sd
 
 
+def _resample(data: np.ndarray, orig_sr: int, target_sr: int) -> np.ndarray:
+    """Linear-interpolation resample from orig_sr to target_sr."""
+    if orig_sr == target_sr:
+        return data
+    n_orig = len(data)
+    n_new = int(n_orig * target_sr / orig_sr)
+    return np.interp(
+        np.linspace(0, n_orig - 1, n_new),
+        np.arange(n_orig),
+        data,
+    ).astype(np.float32)
+
+
 def read_wav(
     path: str,
     target_sr: int = 16000,
     chunk_size: float = 0.16,
 ) -> Generator[np.ndarray, None, None]:
-    """Read a mono audio file (WAV, FLAC, etc.) and yield float32 chunks."""
+    """Read a mono audio file (WAV, FLAC, etc.) and yield float32 chunks.
+
+    If the file's sample rate differs from *target_sr*, the audio is
+    resampled via linear interpolation before yielding.
+    """
     sf = _require_soundfile()
     with sf.SoundFile(path) as f:
         if f.channels != 1:
             raise ValueError(
                 f"Expected mono audio, got {f.channels} channels. "
-                f"Re-sample with: ffmpeg -i <in> -ar {target_sr} -ac 1 out.wav"
+                f"Convert with: ffmpeg -i <in> -ar {target_sr} -ac 1 out.wav"
             )
-        if f.samplerate != target_sr:
-            raise ValueError(
-                f"Expected {target_sr} Hz audio, got {f.samplerate} Hz. "
-                f"Re-sample with: ffmpeg -i <in> -ar {target_sr} -ac 1 out.wav"
-            )
-        chunk_frames = int(target_sr * chunk_size)
-        while True:
-            samples = f.read(chunk_frames, dtype="float32")
-            if len(samples) == 0:
-                break
-            yield samples
+        orig_sr = f.samplerate
+        data = f.read(dtype="float32")
+
+    if orig_sr != target_sr:
+        data = _resample(data, orig_sr, target_sr)
+
+    chunk_frames = int(target_sr * chunk_size)
+    offset = 0
+    while offset < len(data):
+        yield data[offset : offset + chunk_frames]
+        offset += chunk_frames
 
 
 def mic_stream(

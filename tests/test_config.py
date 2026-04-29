@@ -40,7 +40,7 @@ def test_default_ten_vad_model_is_int8():
 
 
 def test_default_vad_threshold():
-    assert Config().vad_threshold == 0.5
+    assert Config().vad_threshold == 0.1
 
 
 def test_default_vad_min_silence_duration():

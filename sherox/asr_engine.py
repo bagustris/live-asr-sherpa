@@ -238,6 +238,7 @@ def build_offline_recognizer(cfg: Config):
             encoder=_find(d, "encoder*.onnx"),
             decoder=_find(d, "decoder*.onnx"),
             tokens=tokens,
+            language=cfg.language,
             debug=False,
         )
     # Default: transducer (nemo_transducer or auto-detect)

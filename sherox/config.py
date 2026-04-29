@@ -18,7 +18,7 @@ class Config:
 
     # Passed directly to sherpa-onnx as the model_type hint.
     # Online:  "" (auto), transducer, zipformer, zipformer2, conformer, lstm,
-    #          paraformer, ctc, wenet_ctc, zipformer2_ctc
+    #          paraformer, ctc, wenet_ctc, zipformer2_ctc, multilingual_streaming
     # Offline: "" (auto), transducer, nemo_transducer, paraformer, whisper,
     #          ctc, nemo_ctc, sense_voice, moonshine, fire_red_asr, cohere_transcribe
     # ReazonSpeech (offline): ja, ja-en, ja-en-mls-5k
@@ -30,7 +30,7 @@ class Config:
     vad_type: str = "silero"            # "silero" | "ten-vad"
     vad_model: str = ""                 # resolved path, set by asr._validate_vad()
     ten_vad_model: str = "ten-vad.int8.onnx"
-    vad_threshold: float = 0.5
+    vad_threshold: float = 0.1
     vad_min_silence_duration: float = 0.5
     vad_min_speech_duration: float = 0.25
 

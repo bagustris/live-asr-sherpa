@@ -36,6 +36,11 @@ Usage:
     sherox.asr --mic --offline --model-type cohere_transcribe --language en
     sherox.asr --wav path/to/audio.wav --offline --model-type cohere_transcribe --language zh
 
+    # Multilingual streaming zipformer (online, 9 languages including Indonesian):
+    sherox.asr --mic --model-type multilingual_streaming
+    sherox.asr --wav path/to/audio.wav --model-type multilingual_streaming
+    sherox.asr --wav data/saya_suka_id.wav --model-type multilingual_streaming
+
     # Custom model directory:
     sherox.asr --mic --model-dir models/my-model --offline --model-type nemo_transducer
 
@@ -56,13 +61,14 @@ Usage:
       models/reazonspeech-ja-en/           (offline, ReazonSpeech bilingual ja-en)
       models/reazonspeech-ja-en-mls-5k/    (offline, ReazonSpeech + MLS 5k bilingual)
       models/cohere-transcribe-14-lang-int8/  (offline, Cohere Transcribe multilingual)
+      models/zipformer-multilingual-2025-02-10/  (online, 9 languages including Indonesian)
       models/silero_vad.onnx               (VAD, shared for offline use)
       models/sherpa-onnx-pyannote-segmentation-3-0/model.onnx  (diarization segmentation)
       models/nemo_en_speakerverification_speakernet.onnx        (diarization embedding)
 
     Online --model-type values:  (blank), transducer, zipformer, zipformer2,
                                  conformer, lstm, paraformer, ctc, wenet_ctc,
-                                 zipformer2_ctc
+                                 zipformer2_ctc, multilingual_streaming
     Offline --model-type values: (blank), transducer, nemo_transducer, paraformer,
                                  whisper, ctc, nemo_ctc, sense_voice, moonshine,
                                  fire_red_asr, cohere_transcribe, ja, ja-en, ja-en-mls-5k
@@ -159,7 +165,7 @@ def parse_args() -> argparse.Namespace:
         help=(
             "Model architecture hint passed to sherpa-onnx. Leave blank for auto-detect. "
             "Online: transducer, zipformer, zipformer2, conformer, lstm, paraformer, "
-            "ctc, wenet_ctc, zipformer2_ctc. "
+            "ctc, wenet_ctc, zipformer2_ctc, multilingual_streaming. "
             "Offline: transducer, nemo_transducer, paraformer, whisper, ctc, nemo_ctc, "
             "sense_voice, moonshine, fire_red_asr, cohere_transcribe. "
             "ReazonSpeech (offline): ja (Japanese), ja-en (bilingual Japanese-English), "
@@ -310,6 +316,17 @@ _COHERE_TRANSCRIBE_ARCHIVE = "sherpa-onnx-cohere-transcribe-14-lang-int8-2026-04
 _COHERE_TRANSCRIBE_EXTRACTED = "sherpa-onnx-cohere-transcribe-14-lang-int8-2026-04-01"
 _COHERE_TRANSCRIBE_TARGET = "cohere-transcribe-14-lang-int8"
 
+# ── Multilingual streaming zipformer model URLs ────────────────────────────────
+# Streaming multilingual model supporting 9 languages: Arabic, English, Indonesian,
+# Japanese, Russian, Thai, Vietnamese, Chinese (simplified & traditional)
+_MULTILINGUAL_STREAMING_URL = (
+    "https://github.com/k2-fsa/sherpa-onnx/releases/download/"
+    "asr-models/sherpa-onnx-streaming-zipformer-ar_en_id_ja_ru_th_vi_zh-2025-02-10.tar.bz2"
+)
+_MULTILINGUAL_STREAMING_ARCHIVE = "sherpa-onnx-streaming-zipformer-ar_en_id_ja_ru_th_vi_zh-2025-02-10.tar.bz2"
+_MULTILINGUAL_STREAMING_EXTRACTED = "sherpa-onnx-streaming-zipformer-ar_en_id_ja_ru_th_vi_zh-2025-02-10"
+_MULTILINGUAL_STREAMING_TARGET = "zipformer-multilingual-2025-02-10"
+
 _VAD_URL = (
     "https://github.com/k2-fsa/sherpa-onnx/releases/download/"
     "asr-models/silero_vad.onnx"
@@ -387,6 +404,11 @@ def _download_model(model_dir: str, model_type: str) -> None:
         url = _COHERE_TRANSCRIBE_URL
         archive_name = _COHERE_TRANSCRIBE_ARCHIVE
         extracted_name = _COHERE_TRANSCRIBE_EXTRACTED
+    # Multilingual streaming zipformer model
+    elif model_type == "multilingual_streaming" or model_dir.name == _MULTILINGUAL_STREAMING_TARGET:
+        url = _MULTILINGUAL_STREAMING_URL
+        archive_name = _MULTILINGUAL_STREAMING_ARCHIVE
+        extracted_name = _MULTILINGUAL_STREAMING_EXTRACTED
     # Use parakeet as the default offline model download target
     elif model_type == "nemo_transducer" or model_dir.name in (
         _PARAKEET_FP16_TARGET, _PARAKEET_INT8_TARGET
@@ -410,7 +432,17 @@ def _download_model(model_dir: str, model_type: str) -> None:
     models_dir.mkdir(parents=True, exist_ok=True)
     archive = models_dir / archive_name
     _info("Model not found.")
-    _download_file(url, archive)
+    # Only download if the archive isn't already fully present (valid tarfile).
+    if archive.exists():
+        try:
+            with tarfile.open(archive, "r:bz2") as _tf:
+                _tf.getmembers()
+            _info(f"Archive already present: {archive.name}")
+        except Exception:  # noqa: BLE001
+            _info("Existing archive is incomplete — resuming download…")
+            _download_file(url, archive)
+    else:
+        _download_file(url, archive)
 
     _info("Extracting…")
     try:
@@ -542,9 +574,8 @@ def _validate_wav(path: str, sample_rate: int) -> None:
                     f"  Convert: ffmpeg -i {path} -ar {sample_rate} -ac 1 out.wav"
                 )
             if f.samplerate != sample_rate:
-                _error(
-                    f"Audio sample rate must be {sample_rate} Hz, got {f.samplerate} Hz.\n"
-                    f"  Convert: ffmpeg -i {path} -ar {sample_rate} -ac 1 out.wav"
+                _info(
+                    f"Audio is {f.samplerate} Hz; resampling to {sample_rate} Hz."
                 )
     except Exception as exc:
         _error(f"Cannot read audio file: {exc}")
@@ -580,6 +611,8 @@ def main() -> None:
             raw_model_dir = f"models/{_REAZON_JA_EN_MLS_TARGET}"
         elif args.model_type == "cohere_transcribe":
             raw_model_dir = f"models/{_COHERE_TRANSCRIBE_TARGET}"
+        elif args.model_type == "multilingual_streaming":
+            raw_model_dir = f"models/{_MULTILINGUAL_STREAMING_TARGET}"
         elif args.offline:
             raw_model_dir = f"models/{_PARAKEET_TARGET}"
         else:
@@ -623,10 +656,10 @@ def main() -> None:
         )
         cfg.offline = True
 
-    # Remap ReazonSpeech aliases to an empty string so sherpa-onnx uses its
-    # auto-detect path instead of triggering the slower double-load fallback.
-    _REAZON_ALIASES = {"ja", "ja-en", "ja-en-mls-5k"}
-    if cfg.model_type in _REAZON_ALIASES:
+    # Remap model-type aliases that sherpa-onnx doesn't accept in from_transducer.
+    # Use "" so sherpa-onnx auto-detects the architecture from the model files.
+    _TRANSDUCER_AUTODETECT_ALIASES = {"ja", "ja-en", "ja-en-mls-5k", "multilingual_streaming"}
+    if cfg.model_type in _TRANSDUCER_AUTODETECT_ALIASES:
         cfg.model_type = ""
 
     cfg.vad_model = _validate_vad(cfg.vad_type, cfg.ten_vad_model, cfg.offline, project_dir)

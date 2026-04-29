@@ -374,9 +374,8 @@ class TestRequireSherpaOnnx:
         original = engine_module.sherpa_onnx
         try:
             engine_module.sherpa_onnx = None
-            with patch.dict("sys.modules", {}, clear=False):
-                # Remove sherpa_onnx from sys.modules to force ImportError
-                sys.modules.pop("sherpa_onnx", None)
+            # Mock the import to raise ImportError
+            with patch("builtins.__import__", side_effect=ImportError("No module named 'sherpa_onnx'")):
                 with pytest.raises(RuntimeError, match="sherpa-onnx"):
                     engine_module._require_sherpa_onnx()
         finally:
