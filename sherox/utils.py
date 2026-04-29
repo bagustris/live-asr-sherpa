@@ -37,6 +37,12 @@ def download_file(url: str, dest: Path) -> None:
 
     try:
         with urllib.request.urlopen(req) as response:
+            # If we requested a range but server ignored it (200 OK), don't append
+            if existing_size > 0 and response.status != 206:
+                _info("Server does not support resume — restarting download…")
+                existing_size = 0
+                dest.write_bytes(b"")
+
             # Get total size from Content-Range header if resuming, or Content-Length otherwise
             if "Content-Range" in response.headers:
                 # Format: "bytes start-end/total"
@@ -59,6 +65,13 @@ def download_file(url: str, dest: Path) -> None:
                         pct = min(100, downloaded * 100 // total_size)
                         sys.stdout.write(f"\r  {pct}%")
                         sys.stdout.flush()
+    except urllib.error.HTTPError as exc:
+        if exc.code == 416 and existing_size > 0:
+            _info("Server rejected resume range — restarting download…")
+            dest.unlink(missing_ok=True)
+            download_file(url, dest)
+            return
+        _error(f"Download failed: {exc}")
     except Exception as exc:  # noqa: BLE001
         _error(f"Download failed: {exc}")
     print()

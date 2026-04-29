@@ -16,6 +16,7 @@ class TestDownloadFile:
         url = "http://example.com/test.txt"
 
         mock_response = MagicMock()
+        mock_response.status = 200
         mock_response.headers = {"Content-Length": "100"}
         mock_response.__enter__ = MagicMock(return_value=mock_response)
         mock_response.__exit__ = MagicMock(return_value=False)
@@ -36,6 +37,7 @@ class TestDownloadFile:
         dest.write_bytes(b"existing")
 
         mock_response = MagicMock()
+        mock_response.status = 206
         mock_response.headers = {"Content-Range": "bytes 8-15/16"}
         mock_response.__enter__ = MagicMock(return_value=mock_response)
         mock_response.__exit__ = MagicMock(return_value=False)
