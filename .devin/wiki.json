@@ -1,0 +1,251 @@
+{
+  "repo_notes": [
+    {
+      "content": ""
+    }
+  ],
+  "pages": [
+    {
+      "title": "Overview",
+      "purpose": "High-level introduction to the sherox toolkit: what it does, its three CLI tools (sherox.asr, sherox.segment, sherox.tts), supported models, and how the major subsystems relate. Links to child pages for setup and architecture details.",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Getting Started",
+      "purpose": "Installation, dependencies, Python version requirements, and first-run examples for each CLI tool. Covers model auto-download behaviour and the models/ directory layout.",
+      "parent": "Overview",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "CLI Reference",
+      "purpose": "Detailed reference for all four CLI entry points: sherox.asr, sherox.segment, sherox.tts, and sherox.sid. Covers every flag, its default value, and usage examples drawn from the module docstrings.",
+      "parent": "Overview",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Core Architecture",
+      "purpose": "Overview of how the sherox package is structured: the separation between configuration, engine factory, audio I/O, streaming loops, and CLI entry points. Links to child pages for each subsystem.",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Configuration System",
+      "purpose": "Deep dive into the three dataclasses (Config, SegmentConfig, TtsConfig) defined in sherox/config.py. Explains every field, its default, and how CLI arguments override defaults at runtime.",
+      "parent": "Core Architecture",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "ASR Engine Factory",
+      "purpose": "Explains sherox/asr_engine.py: the build_recognizer, build_offline_recognizer, build_vad, and build_diarization factory functions. Covers model-type routing, the _find glob helper, endpoint detection rules, and VAD configuration lifecycle.",
+      "parent": "Core Architecture",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Audio Ingestion",
+      "purpose": "Documents sherox/audio.py: the read_wav generator and mic_stream generator. Covers chunk-based streaming, mono/float32 constraints, queue-based callback architecture for microphone capture, and sample-rate requirements.",
+      "parent": "Core Architecture",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Streaming and Offline Processing Loops",
+      "purpose": "Explains sherox/streaming.py: run_streaming (online loop with partial hypotheses and endpoint detection) and run_offline_vad_streaming (VAD-segmented offline loop). Covers concurrent diarization via ThreadPoolExecutor, speaker colour palettes, and terminal rendering with rich.",
+      "parent": "Core Architecture",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "ASR Pipelines",
+      "purpose": "Overview of the two ASR execution modes (online streaming and offline VAD-segmented) and the supported model architectures. Links to child pages for each pipeline.",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Online Streaming Pipeline",
+      "purpose": "Detailed walkthrough of the online (streaming) ASR pipeline: how audio chunks flow from mic_stream/read_wav into OnlineRecognizer, partial hypothesis display, endpoint detection rules (rule1/rule2/rule3), stream reset, and optional concurrent diarization.",
+      "parent": "ASR Pipelines",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Offline VAD-Segmented Pipeline",
+      "purpose": "Detailed walkthrough of the offline pipeline: VAD accumulates audio until silence, then the full segment is sent to OfflineRecognizer. Covers Silero vs Ten-VAD selection, VAD parameters, and how offline-only model types (Whisper, NeMo, SenseVoice, Moonshine, FireRedASR) are auto-detected.",
+      "parent": "ASR Pipelines",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Speaker Diarization",
+      "purpose": "Explains the optional diarization feature: build_diarization factory, pyannote segmentation model, NeMo speaker embedding extractor, FastClustering, concurrent execution with ASR, dominant-speaker selection, and colour-coded terminal output.",
+      "parent": "ASR Pipelines",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Text-to-Speech (TTS)",
+      "purpose": "Overview and deep dive into sherox/tts.py: the sherox.tts CLI, TtsConfig, build_tts factory, synthesise function, model registry, auto-download, and playback via sounddevice.",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "TTS Engine and Model Registry",
+      "purpose": "Details the _TTS_MODELS registry (ISO 639-3 → model metadata), the build_tts factory that constructs sherpa_onnx.OfflineTts, the _ensure_model download/extraction flow, and the synthesise function that returns float32 PCM samples.",
+      "parent": "Text-to-Speech (TTS)",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "TTS CLI and Output Handling",
+      "purpose": "Documents the sherox.tts CLI: text input modes (--text, --file, stdin), language selection, speed control, speaker ID for multi-speaker models, WAV file output via soundfile, and live playback via sounddevice.",
+      "parent": "Text-to-Speech (TTS)",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "VAD Segmentation Tool",
+      "purpose": "Overview and deep dive into sherox/segment.py: the sherox.segment CLI, SegmentConfig, run_segment loop, timestamp formatting, optional WAV segment saving, and VAD model auto-download.",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "VAD Model Configuration",
+      "purpose": "Explains the two supported VAD backends (Silero and Ten-VAD), their ONNX model files, configuration parameters (threshold, min_silence_duration, min_speech_duration), and how build_vad constructs the VoiceActivityDetector.",
+      "parent": "VAD Segmentation Tool",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Segment Loop and Output",
+      "purpose": "Documents the run_segment function: chunk consumption, vad.accept_waveform, segment extraction from vad.front, timestamp formatting, optional WAV file saving per segment, mic-level RMS bar, and flush-on-exit behaviour.",
+      "parent": "VAD Segmentation Tool",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Benchmarking Framework",
+      "purpose": "Overview of the benchmark/ directory: purpose, CLI, and how it ties together the ASR engine, metrics, and LibriSpeech data. Links to child pages for the benchmark runner and metrics system.",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Benchmark Runner",
+      "purpose": "Deep dive into benchmark/benchmark.py: CLI flags, run_benchmark loop, manifest_from_librispeech crawler, load_audio preprocessing, transcribe_offline and transcribe_online functions, streaming simulation with chunk feeding and endpoint detection, and error-resilient execution.",
+      "parent": "Benchmarking Framework",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Metrics: WER, RTF, and Composite Score",
+      "purpose": "Documents benchmark/metrics.py: normalize_text, UtteranceResult dataclass and its compute() method, AggregateMetrics with corpus-level WER/RTF/latency/composite_score properties, and the editdistance-based Levenshtein calculation.",
+      "parent": "Benchmarking Framework",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Testing Infrastructure",
+      "purpose": "Overview of the tests/ directory: test package structure, conftest.py path injection, and the coverage of each test module. Links to child pages for unit tests and test patterns.",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Unit Tests: Audio, Config, and ASR Engine",
+      "purpose": "Covers test_audio.py (mock-based tests for read_wav and mic_stream), test_config.py (Config/SegmentConfig/TtsConfig validation), and test_asr_engine.py (factory function tests with mocked sherpa-onnx, model-type routing, VAD config lifecycle).",
+      "parent": "Testing Infrastructure",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Unit Tests: Streaming, ASR CLI, and Benchmark",
+      "purpose": "Covers test_streaming.py (run_streaming and run_offline_vad_streaming with mocked recognizers), test_asr.py (sherox.asr CLI integration tests), test_benchmark.py (manifest parsing, transcribe_online endpoint assembly), and test_benchmark_metrics.py (WER/RTF calculations).",
+      "parent": "Testing Infrastructure",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Glossary",
+      "purpose": "Definitions of all codebase-specific terms, abbreviations, model names, and domain concepts that an onboarding engineer needs to know. Each entry includes file/class/function pointers.",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    }
+  ]
+}
