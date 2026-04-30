@@ -52,6 +52,62 @@ _err_console = Console(stderr=True)
 # ── Model registry (ISO 639-3 → model metadata) ──────────────────────────────
 
 _TTS_MODELS: dict[str, dict] = {
+    "eng": {
+        "backend": "sherpa_onnx",
+        "url": (
+            "https://github.com/k2-fsa/sherpa-onnx/releases/download/"
+            "tts-models/vits-piper-en_US-amy-medium.tar.bz2"
+        ),
+        "archive": "vits-piper-en_US-amy-medium.tar.bz2",
+        "extracted": "vits-piper-en_US-amy-medium",
+        "model": "en_US-amy-medium.onnx",
+        "tokens": "tokens.txt",
+        "data_dir": "espeak-ng-data",
+        "sample_rate": 22050,
+        "description": "English US (Piper VITS, Amy, medium quality)",
+    },
+    "deu": {
+        "backend": "sherpa_onnx",
+        "url": (
+            "https://github.com/k2-fsa/sherpa-onnx/releases/download/"
+            "tts-models/vits-piper-de_DE-thorsten-medium.tar.bz2"
+        ),
+        "archive": "vits-piper-de_DE-thorsten-medium.tar.bz2",
+        "extracted": "vits-piper-de_DE-thorsten-medium",
+        "model": "de_DE-thorsten-medium.onnx",
+        "tokens": "tokens.txt",
+        "data_dir": "espeak-ng-data",
+        "sample_rate": 22050,
+        "description": "German (Piper VITS, Thorsten, medium quality)",
+    },
+    "fra": {
+        "backend": "sherpa_onnx",
+        "url": (
+            "https://github.com/k2-fsa/sherpa-onnx/releases/download/"
+            "tts-models/vits-piper-fr_FR-upmc-medium.tar.bz2"
+        ),
+        "archive": "vits-piper-fr_FR-upmc-medium.tar.bz2",
+        "extracted": "vits-piper-fr_FR-upmc-medium",
+        "model": "fr_FR-upmc-medium.onnx",
+        "tokens": "tokens.txt",
+        "data_dir": "espeak-ng-data",
+        "sample_rate": 22050,
+        "description": "French (Piper VITS, UPMC, medium quality)",
+    },
+    "spa": {
+        "backend": "sherpa_onnx",
+        "url": (
+            "https://github.com/k2-fsa/sherpa-onnx/releases/download/"
+            "tts-models/vits-piper-es_ES-mls_10246-medium.tar.bz2"
+        ),
+        "archive": "vits-piper-es_ES-mls_10246-medium.tar.bz2",
+        "extracted": "vits-piper-es_ES-mls_10246-medium",
+        "model": "es_ES-mls_10246-medium.onnx",
+        "tokens": "tokens.txt",
+        "data_dir": "espeak-ng-data",
+        "sample_rate": 22050,
+        "description": "Spanish (Piper VITS, MLS, medium quality)",
+    },
     "ind": {
         "backend": "sherpa_onnx",
         "url": (

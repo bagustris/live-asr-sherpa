@@ -11,13 +11,30 @@ from sherox.audio import mic_stream, read_wav
 # ---------------------------------------------------------------------------
 
 def _make_sf_mock(channels: int, samplerate: int, data: np.ndarray):
-    """Return a context-manager mock for sf.SoundFile."""
+    """Return a context-manager mock for sf.SoundFile that simulates streaming reads.
+
+    Calls with ``frames=N`` return the next *N* samples (streaming path).
+    Calls without ``frames`` return all remaining data (full-load path used when resampling).
+    """
     mock_file = MagicMock()
     mock_file.__enter__ = MagicMock(return_value=mock_file)
     mock_file.__exit__ = MagicMock(return_value=False)
     mock_file.channels = channels
     mock_file.samplerate = samplerate
-    mock_file.read.return_value = data
+
+    pos = [0]
+
+    def _read(*args, **kwargs):
+        n = kwargs.get("frames", None)
+        if n is None:
+            chunk = data[pos[0]:]
+            pos[0] = len(data)
+        else:
+            chunk = data[pos[0] : pos[0] + n]
+            pos[0] += n
+        return chunk
+
+    mock_file.read.side_effect = _read
     return mock_file
 
 
@@ -198,7 +215,8 @@ class TestRequireSounddeviceAudio:
 # ---------------------------------------------------------------------------
 
 class TestMicStreamStatus:
-    def test_status_printed_when_nonzero(self, capsys):
+    def test_status_printed_when_nonzero(self, caplog):
+        import logging
         import sherox.audio as audio_module
         mock_stream_ctx = MagicMock()
         mock_stream_ctx.__enter__ = MagicMock(return_value=mock_stream_ctx)
@@ -223,6 +241,6 @@ class TestMicStreamStatus:
         # Now call the callback again with a status
         import numpy as np
         indata = np.ones((1600, 1), dtype="float32")
-        callback_ref["cb"](indata, 1600, None, "input overflow")
-        out = capsys.readouterr().out
-        assert "input overflow" in out
+        with caplog.at_level(logging.WARNING):
+            callback_ref["cb"](indata, 1600, None, "input overflow")
+        assert "input overflow" in caplog.text

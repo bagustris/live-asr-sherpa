@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>sherox ASR</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: system-ui, sans-serif; background: #0f1117; color: #e2e8f0; min-height: 100vh; padding: 1.5rem; }
+  h1 { font-size: 1.5rem; font-weight: 700; margin-bottom: 0.25rem; }
+  .subtitle { color: #94a3b8; font-size: 0.875rem; margin-bottom: 1.5rem; }
+  .status { display: inline-flex; align-items: center; gap: 0.5rem; font-size: 0.8rem; padding: 0.25rem 0.75rem; border-radius: 999px; background: #1e293b; margin-bottom: 1.5rem; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: #64748b; }
+  .dot.ok { background: #22c55e; }
+  .dot.err { background: #ef4444; }
+  .card { background: #1e293b; border-radius: 0.75rem; padding: 1.25rem; margin-bottom: 1rem; }
+  h2 { font-size: 1rem; font-weight: 600; margin-bottom: 1rem; color: #cbd5e1; }
+  button { padding: 0.5rem 1.25rem; border-radius: 0.5rem; border: none; font-size: 0.875rem; font-weight: 600; cursor: pointer; transition: opacity 0.15s; }
+  button:disabled { opacity: 0.4; cursor: not-allowed; }
+  .btn-green { background: #22c55e; color: #000; }
+  .btn-red { background: #ef4444; color: #fff; }
+  .btn-blue { background: #3b82f6; color: #fff; }
+  input[type=file] { color: #94a3b8; font-size: 0.875rem; margin-bottom: 0.75rem; display: block; }
+  .transcript {
+    background: #0f1117; border-radius: 0.5rem; padding: 1rem;
+    min-height: 6rem; font-size: 0.925rem; line-height: 1.6;
+    white-space: pre-wrap; word-break: break-word; margin-top: 0.75rem;
+  }
+  .partial { color: #94a3b8; font-style: italic; }
+  .segment { color: #e2e8f0; }
+  .hint { color: #64748b; font-size: 0.75rem; margin-top: 0.5rem; }
+  .row { display: flex; gap: 0.75rem; align-items: center; flex-wrap: wrap; }
+  #bar-wrap { flex: 1; min-width: 100px; height: 6px; background: #0f1117; border-radius: 3px; overflow: hidden; }
+  #bar { height: 100%; width: 0%; background: #22c55e; border-radius: 3px; transition: width 0.05s; }
+</style>
+</head>
+<body>
+
+<h1>sherox ASR server</h1>
+<p class="subtitle">HTTP + WebSocket speech recognition</p>
+
+<div class="status" id="status">
+  <span class="dot" id="dot"></span>
+  <span id="status-text">checking…</span>
+</div>
+
+<!-- ── Live mic ─────────────────────────────────────────────────────────── -->
+<div class="card">
+  <h2>Live microphone</h2>
+  <div class="row" style="margin-bottom:0.75rem">
+    <button class="btn-green" id="btn-start">Start</button>
+    <button class="btn-red" id="btn-stop" disabled>Stop</button>
+    <div id="bar-wrap"><div id="bar"></div></div>
+  </div>
+  <div class="transcript" id="mic-out"><span style="color:#475569">Transcript will appear here…</span></div>
+  <p class="hint">
+    Audio is sent as int16 PCM at 16 kHz over WebSocket.<br>
+    Note: <code>getUserMedia</code> requires HTTPS or localhost. For remote servers, set up a TLS proxy.
+  </p>
+</div>
+
+<!-- ── File upload ──────────────────────────────────────────────────────── -->
+<div class="card">
+  <h2>File upload</h2>
+  <input type="file" id="audio-file" accept="audio/*">
+  <div class="row">
+    <button class="btn-blue" id="btn-upload">Transcribe</button>
+    <span id="upload-status" style="color:#94a3b8;font-size:0.8rem"></span>
+  </div>
+  <div class="transcript" id="file-out"></div>
+</div>
+
+<script>
+// ── Helpers ──────────────────────────────────────────────────────────────────
+const BASE = window.location.origin;
+const WS_URL = (location.protocol === 'https:' ? 'wss' : 'ws') + '://' + location.host + '/ws';
+
+function $(id) { return document.getElementById(id); }
+
+// ── Health check ─────────────────────────────────────────────────────────────
+async function checkHealth() {
+  try {
+    const r = await fetch(BASE + '/health');
+    const d = await r.json();
+    $('dot').className = 'dot ok';
+    $('status-text').textContent = `${d.model} · ${d.mode} mode`;
+  } catch {
+    $('dot').className = 'dot err';
+    $('status-text').textContent = 'server unreachable';
+  }
+}
+checkHealth();
+
+// ── Live mic ──────────────────────────────────────────────────────────────────
+let ws = null, audioCtx = null, processor = null, source = null;
+const CHUNK_SAMPLES = 1600;   // 100 ms at 16 kHz
+let sampleBuffer = new Float32Array(0);
+
+$('btn-start').addEventListener('click', async () => {
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+    audioCtx = new AudioContext({ sampleRate: 16000 });
+    source = audioCtx.createMediaStreamSource(stream);
+
+    // ScriptProcessor is deprecated but has universal support.
+    // Use AudioWorklet for production deployments.
+    processor = audioCtx.createScriptProcessor(CHUNK_SAMPLES, 1, 1);
+
+    processor.onaudioprocess = (e) => {
+      if (!ws || ws.readyState !== WebSocket.OPEN) return;
+      const f32 = e.inputBuffer.getChannelData(0);
+      const i16 = new Int16Array(f32.length);
+      let rms = 0;
+      for (let i = 0; i < f32.length; i++) {
+        i16[i] = Math.max(-32768, Math.min(32767, Math.round(f32[i] * 32768)));
+        rms += f32[i] * f32[i];
+      }
+      ws.send(i16.buffer);
+      // Level meter
+      const level = Math.min(100, Math.sqrt(rms / f32.length) * 500);
+      $('bar').style.width = level + '%';
+    };
+
+    source.connect(processor);
+    processor.connect(audioCtx.destination);
+
+    ws = new WebSocket(WS_URL);
+    ws.onopen = () => {
+      $('mic-out').innerHTML = '';
+      appendPartial('');
+    };
+    ws.onmessage = (e) => {
+      const msg = JSON.parse(e.data);
+      if (msg.type === 'segment') {
+        commitSegment(msg.text);
+      } else if (msg.type === 'partial') {
+        updatePartial(msg.text);
+      }
+    };
+    ws.onclose = () => { $('bar').style.width = '0%'; };
+    ws.onerror = () => appendSegment('[WebSocket error]');
+
+    $('btn-start').disabled = true;
+    $('btn-stop').disabled = false;
+  } catch (err) {
+    alert('Microphone error: ' + err.message);
+  }
+});
+
+$('btn-stop').addEventListener('click', () => {
+  if (ws) { ws.close(); ws = null; }
+  if (processor) { processor.disconnect(); processor = null; }
+  if (source) { source.disconnect(); source = null; }
+  if (audioCtx) { audioCtx.close(); audioCtx = null; }
+  $('bar').style.width = '0%';
+  $('btn-start').disabled = false;
+  $('btn-stop').disabled = true;
+});
+
+// partial span kept at bottom of transcript
+let _partialSpan = null;
+
+function appendPartial(text) {
+  if (!_partialSpan) {
+    _partialSpan = document.createElement('span');
+    _partialSpan.className = 'partial';
+    $('mic-out').appendChild(_partialSpan);
+  }
+  _partialSpan.textContent = text;
+}
+
+function updatePartial(text) { appendPartial(text); }
+
+function commitSegment(text) {
+  if (_partialSpan) { _partialSpan.remove(); _partialSpan = null; }
+  const span = document.createElement('span');
+  span.className = 'segment';
+  span.textContent = text + '\n';
+  $('mic-out').appendChild(span);
+  appendPartial('');
+  $('mic-out').scrollTop = $('mic-out').scrollHeight;
+}
+
+function appendSegment(text) {
+  const span = document.createElement('span');
+  span.className = 'segment';
+  span.textContent = text + '\n';
+  $('mic-out').appendChild(span);
+}
+
+// ── File upload ───────────────────────────────────────────────────────────────
+$('btn-upload').addEventListener('click', async () => {
+  const file = $('audio-file').files[0];
+  if (!file) { alert('Please select an audio file.'); return; }
+
+  $('btn-upload').disabled = true;
+  $('upload-status').textContent = 'transcribing…';
+  $('file-out').textContent = '';
+
+  try {
+    const fd = new FormData();
+    fd.append('file', file);
+    const r = await fetch(BASE + '/transcribe', { method: 'POST', body: fd });
+    const d = await r.json();
+    if (r.ok) {
+      $('file-out').textContent = d.text || '(empty)';
+      $('upload-status').textContent = 'done';
+    } else {
+      $('file-out').textContent = 'Error: ' + (d.error || r.statusText);
+      $('upload-status').textContent = 'error';
+    }
+  } catch (err) {
+    $('file-out').textContent = 'Network error: ' + err.message;
+    $('upload-status').textContent = 'error';
+  } finally {
+    $('btn-upload').disabled = false;
+  }
+});
+</script>
+</body>
+</html>

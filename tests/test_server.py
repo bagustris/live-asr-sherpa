@@ -334,21 +334,35 @@ class TestInt16ToFloat32:
 # ── _transcribe_bytes ─────────────────────────────────────────────────────────
 
 class TestTranscribeBytes:
+    def _make_asr(self, offline_client, mode="offline"):
+        """Build a minimal _AppState matching the fixture's setup."""
+        cfg = Config(model_dir="/fake/model", sample_rate=16000, offline=(mode == "offline"))
+        return srv._AppState(
+            recognizer=MagicMock(),
+            cfg=cfg,
+            project_dir=Path("/fake"),
+            mode=mode,
+            model_name="model",
+        )
+
     def test_wrong_rate_raises_value_error(self, offline_client):
         wav = _make_wav_bytes(sr=8000)
+        asr = self._make_asr(offline_client)
         with pytest.raises(ValueError, match="Hz"):
-            srv._transcribe_bytes(wav)
+            srv._transcribe_bytes(wav, asr)
 
     def test_stereo_downmixed(self, offline_client):
         wav = _make_wav_bytes(sr=16000, channels=2)
+        asr = self._make_asr(offline_client)
         with patch.object(srv, "_run_asr", return_value="ok"):
-            text = srv._transcribe_bytes(wav)
+            text = srv._transcribe_bytes(wav, asr)
         assert text == "ok"
 
     def test_offline_calls_run_asr(self, offline_client):
         wav = _make_wav_bytes()
+        asr = self._make_asr(offline_client)
         with patch.object(srv, "_run_asr", return_value="result") as mock_asr:
-            text = srv._transcribe_bytes(wav)
+            text = srv._transcribe_bytes(wav, asr)
         mock_asr.assert_called_once()
         assert text == "result"
 

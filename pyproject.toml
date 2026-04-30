@@ -9,6 +9,7 @@ dependencies = [
     "soundfile>=0.13.1",
     "numpy>=2.2.6",
     "rich>=13.0.0",
+    "scipy>=1.10.0",
 ]
 
 [project.scripts]
@@ -35,6 +36,9 @@ server = [
 ]
 tts-ja = [
     "piper-plus",
+]
+denoise = [
+    "noisereduce>=3.0",
 ]
 
 [tool.setuptools.packages.find]

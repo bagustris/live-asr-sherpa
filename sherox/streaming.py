@@ -4,7 +4,7 @@ import os
 import sys
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor, Future
-from typing import Deque, Generator, Optional, Tuple
+from typing import Any, Callable, Deque, Generator, NamedTuple, Optional, Tuple
 
 import logging
 import numpy as np
@@ -112,7 +112,7 @@ def _rich_print(
         _console.print(f"{_PREFIX}{text}")
 
 
-def _dominant_speaker(result: sherpa_onnx.OfflineSpeakerDiarizationResult) -> int:
+def _dominant_speaker(result: Any) -> int:
     """Return the speaker id that covers the most time in this segment."""
     segments = result.sort_by_start_time()
     if not segments:
@@ -123,15 +123,132 @@ def _dominant_speaker(result: sherpa_onnx.OfflineSpeakerDiarizationResult) -> in
     return max(duration, key=duration.__getitem__)
 
 
+# ── Result types ─────────────────────────────────────────────────────────────
+
+class _ASRResult(NamedTuple):
+    text: str
+    tokens: list[str]
+    timestamps: list[float]
+
+
+class _PendingSegment(NamedTuple):
+    asr_future: Future
+    diar_future: Optional[Future]
+    start_s: float
+    end_s: float
+
+
+# ── Core ASR helpers ─────────────────────────────────────────────────────────
+
+def _run_asr(
+    recognizer: Any,
+    samples: np.ndarray,
+    sample_rate: int,
+) -> str:
+    """Decode *samples* with an offline recognizer and return stripped text."""
+    stream = recognizer.create_stream()
+    stream.accept_waveform(sample_rate, samples)
+    recognizer.decode_stream(stream)
+    return stream.result.text.strip()
+
+
+def _run_asr_full(
+    recognizer: Any,
+    samples: np.ndarray,
+    sample_rate: int,
+) -> _ASRResult:
+    """Decode *samples* and return text + per-token timing (when available)."""
+    stream = recognizer.create_stream()
+    stream.accept_waveform(sample_rate, samples)
+    recognizer.decode_stream(stream)
+    result = stream.result
+    text = result.text.strip()
+    tokens: list[str] = list(getattr(result, "tokens", []) or [])
+    timestamps: list[float] = list(getattr(result, "timestamps", []) or [])
+    return _ASRResult(text=text, tokens=tokens, timestamps=timestamps)
+
+
+def _print_word_timestamps(tokens: list[str], timestamps: list[float]) -> None:
+    """Print per-token timing in a compact table below the transcript line."""
+    if not tokens or not timestamps:
+        return
+    pairs = list(zip(tokens, timestamps, strict=False))
+    parts = "  ".join(f"{t}@{ts:.2f}s" for t, ts in pairs)
+    _console.print(f"{_PREFIX}  [{parts}]", style="dim")
+
+
+# ── Subtitle / caption writers ───────────────────────────────────────────────
+
+def _fmt_srt_time(seconds: float) -> str:
+    h = int(seconds // 3600)
+    m = int((seconds % 3600) // 60)
+    s = int(seconds % 60)
+    ms = int((seconds % 1) * 1000)
+    return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
+
+
+def _fmt_vtt_time(seconds: float) -> str:
+    h = int(seconds // 3600)
+    m = int((seconds % 3600) // 60)
+    s = int(seconds % 60)
+    ms = int((seconds % 1) * 1000)
+    return f"{h:02d}:{m:02d}:{s:02d}.{ms:03d}"
+
+
+def write_srt(
+    subtitles: list[tuple[float, float, str]],
+    path: str,
+) -> None:
+    """Write *subtitles* as an SRT file to *path*.
+
+    Each subtitle is a (start_s, end_s, text) tuple.
+    """
+    lines: list[str] = []
+    for idx, (start, end, text) in enumerate(subtitles, start=1):
+        lines.append(str(idx))
+        lines.append(f"{_fmt_srt_time(start)} --> {_fmt_srt_time(end)}")
+        lines.append(text)
+        lines.append("")
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.write("\n".join(lines))
+
+
+def write_vtt(
+    subtitles: list[tuple[float, float, str]],
+    path: str,
+) -> None:
+    """Write *subtitles* as a WebVTT file to *path*."""
+    lines: list[str] = ["WEBVTT", ""]
+    for start, end, text in subtitles:
+        lines.append(f"{_fmt_vtt_time(start)} --> {_fmt_vtt_time(end)}")
+        lines.append(text)
+        lines.append("")
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.write("\n".join(lines))
+
+
+def write_txt(
+    subtitles: list[tuple[float, float, str]],
+    path: str,
+) -> None:
+    """Write plain transcript text (one line per segment) to *path*."""
+    with open(path, "w", encoding="utf-8") as fh:
+        for _, _, text in subtitles:
+            fh.write(text + "\n")
+
+
 # ── Online (streaming) recogniser loop ──────────────────────────────────────
 
 def run_streaming(
-    recognizer: sherpa_onnx.OnlineRecognizer,
+    recognizer: Any,
     audio_gen: Generator[np.ndarray, None, None],
     sample_rate: int = 16000,
     show_mic_level: bool = False,
-    diarization: Optional[sherpa_onnx.OfflineSpeakerDiarization] = None,
+    diarization: Any = None,
     show_speaker_tag: bool = False,
+    word_timestamps: bool = False,
+    punctuation: Any = None,
+    subtitles: Optional[list[tuple[float, float, str]]] = None,
 ) -> None:
     """Feed incremental audio chunks into the recognizer and render output.
 
@@ -145,12 +262,24 @@ def run_streaming(
     concurrently with the next ASR utterance, keeping added latency near zero.
     Each speaker's output is colour-coded; when *show_speaker_tag* is ``True``
     a ``[Speaker N]`` prefix is also printed.
+
+    When *word_timestamps* is ``True``, per-token timing is printed after each
+    finalised segment (model-dependent; silently skipped when unavailable).
+
+    When *punctuation* is set (an ``OfflinePunctuation`` instance), the
+    finalised text is punctuated before display.
+
+    When *subtitles* is a list, finalised (start_s, end_s, text) tuples are
+    appended to it for later serialisation.
     """
     stream = recognizer.create_stream()
     last_partial = ""
     # Buffer raw audio for the current utterance (used for diarization).
     audio_buf: list[np.ndarray] = []
-    executor: Optional[ThreadPoolExecutor] = ThreadPoolExecutor(max_workers=1) if diarization is not None else None
+    elapsed_s = 0.0
+    executor: Optional[ThreadPoolExecutor] = (
+        ThreadPoolExecutor(max_workers=1) if diarization is not None else None
+    )
     pending: Optional[Future] = None  # diarization future for the *previous* utterance
 
     def _submit_diarization(samples: np.ndarray) -> Optional[Future]:
@@ -158,10 +287,16 @@ def run_streaming(
             return None
         return executor.submit(diarization.process, samples)
 
-    def _flush_pending(pending_future: Optional[Future], pending_text: str) -> None:
+    def _flush_pending(pending_future: Optional[Future], pending_text: str, pending_start: float, pending_end: float) -> None:
         """Print the pending utterance with its diarization label (if available)."""
         if not pending_text:
             return
+        final_text = pending_text
+        if punctuation is not None:
+            try:
+                final_text = punctuation.add_punctuation(final_text)
+            except Exception as exc:
+                logging.debug("Punctuation failed: %s", exc)
         speaker_id = None
         if pending_future is not None and pending_future.done():
             try:
@@ -170,16 +305,27 @@ def run_streaming(
             except Exception as exc:
                 logging.debug(
                     "Diarization failed for utterance %r: %s",
-                    pending_text,
+                    final_text,
                     exc,
                     exc_info=True,
                 )
-        _rich_print(pending_text, speaker_id, show_speaker_tag=show_speaker_tag)
+        _rich_print(final_text, speaker_id, show_speaker_tag=show_speaker_tag)
+        if word_timestamps:
+            result_obj = recognizer.get_result(stream)
+            _print_word_timestamps(
+                list(getattr(result_obj, "tokens", []) or []),
+                list(getattr(result_obj, "timestamps", []) or []),
+            )
+        if subtitles is not None:
+            subtitles.append((pending_start, pending_end, final_text))
 
     pending_text = ""
+    pending_start = 0.0
+    pending_end = 0.0
 
     try:
         for chunk in audio_gen:
+            chunk_s = len(chunk) / sample_rate
             stream.accept_waveform(sample_rate, chunk)
             if diarization is not None:
                 audio_buf.append(chunk)
@@ -207,7 +353,9 @@ def run_streaming(
                         sys.stdout.flush()
                     _clear_line(last_partial)
                     # Flush the previous utterance (diarization may now be done).
-                    _flush_pending(pending, pending_text)
+                    _flush_pending(pending, pending_text, pending_start, pending_end)
+                    seg_start = elapsed_s - chunk_s
+                    seg_end = elapsed_s
                     # Submit diarization for this utterance, but avoid queueing
                     # multiple diarization tasks when using a single worker.
                     if diarization is not None and audio_buf:
@@ -215,15 +363,19 @@ def run_streaming(
                         if pending is None or pending.done():
                             pending = _submit_diarization(seg_audio)
                             pending_text = text
+                            pending_start = seg_start
+                            pending_end = seg_end
                         else:
                             # Diarization worker is still busy; skip diarization
                             # for this utterance and flush plain text immediately.
-                            _flush_pending(None, text)
+                            _flush_pending(None, text, seg_start, seg_end)
                             pending_text = ""
                     else:
                         pending = None
                         pending_text = text
-                        _flush_pending(None, pending_text)
+                        pending_start = seg_start
+                        pending_end = seg_end
+                        _flush_pending(None, pending_text, pending_start, pending_end)
                         pending_text = ""
                 recognizer.reset(stream)
                 audio_buf.clear()
@@ -233,12 +385,14 @@ def run_streaming(
                 sys.stdout.flush()
                 last_partial = text
 
+            elapsed_s += chunk_s
+
     except KeyboardInterrupt:
         pass
     finally:
         _flush_tail(recognizer, stream, sample_rate, last_partial)
         # Flush the last pending diarization result.
-        _flush_pending(pending, pending_text)
+        _flush_pending(pending, pending_text, pending_start, pending_end)
         if executor is not None:
             executor.shutdown(wait=True)
 
@@ -246,13 +400,17 @@ def run_streaming(
 # ── Offline VAD-segmented loop ───────────────────────────────────────────────
 
 def run_offline_vad_streaming(
-    recognizer: sherpa_onnx.OfflineRecognizer,
-    vad: sherpa_onnx.VoiceActivityDetector,
+    recognizer: Any,
+    vad: Any,
     audio_gen: Generator[np.ndarray, None, None],
     sample_rate: int = 48000,
     show_mic_level: bool = False,
-    diarization: Optional[sherpa_onnx.OfflineSpeakerDiarization] = None,
+    diarization: Any = None,
     show_speaker_tag: bool = False,
+    word_timestamps: bool = False,
+    punctuation: Any = None,
+    subtitles: Optional[list[tuple[float, float, str]]] = None,
+    progress_callback: Optional[Callable[[float], None]] = None,
 ) -> None:
     """VAD-segmented offline ASR with optional concurrent speaker diarization.
 
@@ -261,53 +419,73 @@ def run_offline_vad_streaming(
     order (FIFO) so the transcript stays sequential. Each speaker's output
     is colour-coded; when *show_speaker_tag* is ``True`` a ``[Speaker N]``
     prefix is also printed.
+
+    *word_timestamps*: print per-token timing after each segment (model-dependent).
+    *punctuation*: an OfflinePunctuation instance for post-processing.
+    *subtitles*: if a list, (start_s, end_s, text) tuples are appended.
+    *progress_callback*: called with elapsed_seconds after each audio chunk.
     """
     max_workers = 4 if diarization is not None else 2
     executor = ThreadPoolExecutor(max_workers=max_workers)
-    # pending: ordered queue of (asr_future, diar_future_or_None)
-    pending: Deque[Tuple[Future, Optional[Future]]] = deque()
+    pending: Deque[_PendingSegment] = deque()
+    elapsed_s = 0.0
 
-    def _submit(samples: np.ndarray) -> None:
-        asr_f = executor.submit(_run_asr, recognizer, samples, sample_rate)
-        diar_f = executor.submit(diarization.process, samples) if diarization is not None else None
-        pending.append((asr_f, diar_f))
+    def _submit(samples: np.ndarray, start_s: float, end_s: float) -> None:
+        asr_f = executor.submit(_run_asr_full, recognizer, samples, sample_rate)
+        diar_f = (
+            executor.submit(diarization.process, samples)
+            if diarization is not None
+            else None
+        )
+        pending.append(_PendingSegment(asr_f, diar_f, start_s, end_s))
 
-    def _print_result(asr_f: Future, diar_f: Optional[Future]) -> None:
-        text = asr_f.result()
-        speaker_id: Optional[int] = None
-        if diar_f is not None and text:
+    def _print_result(seg: _PendingSegment) -> None:
+        asr_result: _ASRResult = seg.asr_future.result()
+        text = asr_result.text
+        if not text:
+            return
+        if punctuation is not None:
             try:
-                speaker_id = _dominant_speaker(diar_f.result())
+                text = punctuation.add_punctuation(text)
+            except Exception as exc:
+                logging.debug("Punctuation failed: %s", exc)
+        speaker_id: Optional[int] = None
+        if seg.diar_future is not None:
+            try:
+                speaker_id = _dominant_speaker(seg.diar_future.result())
             except Exception as exc:
                 logging.debug("Diarization failed: %s", exc, exc_info=True)
-        if text:
-            try:
-                width = shutil.get_terminal_size(fallback=(80, 20)).columns
-            except OSError:
-                width = 80
-            sys.stdout.write("\r" + " " * width + "\r")
-            sys.stdout.flush()
-            _rich_print(text, speaker_id, show_speaker_tag=show_speaker_tag)
+        try:
+            width = shutil.get_terminal_size(fallback=(80, 20)).columns
+        except OSError:
+            width = 80
+        sys.stdout.write("\r" + " " * width + "\r")
+        sys.stdout.flush()
+        _rich_print(text, speaker_id, show_speaker_tag=show_speaker_tag)
+        if word_timestamps:
+            _print_word_timestamps(asr_result.tokens, asr_result.timestamps)
+        if subtitles is not None:
+            subtitles.append((seg.start_s, seg.end_s, text))
 
     def _flush_ready() -> None:
         """Print results for futures at the front of the queue that are done."""
         while pending:
-            asr_f, diar_f = pending[0]
-            if not asr_f.done():
+            seg = pending[0]
+            if not seg.asr_future.done():
                 break
-            if diar_f is not None and not diar_f.done():
+            if seg.diar_future is not None and not seg.diar_future.done():
                 break
             pending.popleft()
-            _print_result(asr_f, diar_f)
+            _print_result(seg)
 
     def _drain_all() -> None:
         """Block until every pending result has been printed."""
         while pending:
-            asr_f, diar_f = pending.popleft()
-            _print_result(asr_f, diar_f)
+            _print_result(pending.popleft())
 
     try:
         for chunk in audio_gen:
+            elapsed_s += len(chunk) / sample_rate
             vad.accept_waveform(chunk)
 
             if show_mic_level:
@@ -316,11 +494,16 @@ def run_offline_vad_streaming(
                 sys.stdout.write(f"\r{_PREFIX}mic: {bar:<40} {energy:.4f}")
                 sys.stdout.flush()
 
+            if progress_callback is not None:
+                progress_callback(elapsed_s)
+
             while not vad.empty():
                 segment = vad.front
                 samples = np.array(segment.samples, dtype=np.float32)
+                start_s = getattr(segment, "start", 0) / sample_rate
+                end_s = start_s + len(samples) / sample_rate
                 vad.pop()
-                _submit(samples)
+                _submit(samples, start_s, end_s)
 
             _flush_ready()
 
@@ -332,8 +515,10 @@ def run_offline_vad_streaming(
         while not vad.empty():
             segment = vad.front
             samples = np.array(segment.samples, dtype=np.float32)
+            start_s = getattr(segment, "start", 0) / sample_rate
+            end_s = start_s + len(samples) / sample_rate
             vad.pop()
-            _submit(samples)
+            _submit(samples, start_s, end_s)
         executor.shutdown(wait=True)
         _drain_all()
         sys.stdout.write("\n")
@@ -341,10 +526,10 @@ def run_offline_vad_streaming(
 
 
 def _decode_and_print(
-    recognizer: sherpa_onnx.OfflineRecognizer,
+    recognizer: Any,
     samples: np.ndarray,
     sample_rate: int,
-    diarization: Optional[sherpa_onnx.OfflineSpeakerDiarization] = None,
+    diarization: Any = None,
     executor: Optional[ThreadPoolExecutor] = None,
     show_speaker_tag: bool = False,
     show_mic_level: bool = False,
@@ -374,17 +559,6 @@ def _decode_and_print(
         _rich_print(text, speaker_id, show_speaker_tag=show_speaker_tag)
 
 
-def _run_asr(
-    recognizer: sherpa_onnx.OfflineRecognizer,
-    samples: np.ndarray,
-    sample_rate: int,
-) -> str:
-    stream = recognizer.create_stream()
-    stream.accept_waveform(sample_rate, samples)
-    recognizer.decode_stream(stream)
-    return stream.result.text.strip()
-
-
 def _clear_line(partial: str) -> None:
     """Overwrite the partial hypothesis line with spaces to prevent leftover text."""
     if partial:
@@ -394,8 +568,8 @@ def _clear_line(partial: str) -> None:
 
 
 def _flush_tail(
-    recognizer: sherpa_onnx.OnlineRecognizer,
-    stream: sherpa_onnx.OnlineStream,
+    recognizer: Any,
+    stream: Any,
     sample_rate: int,
     last_partial: str,
 ) -> None:
@@ -410,3 +584,4 @@ def _flush_tail(
         _console.print(f"{_PREFIX}{text}")
     sys.stdout.write("\n")
     sys.stdout.flush()
+

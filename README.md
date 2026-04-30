@@ -20,7 +20,7 @@ Documentation:  [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwi
 
 ## Prerequisites
 
-- Python 3.8+
+- Python 3.11+
 - A working microphone (for `--mic` mode)
 - Linux recommended (Ubuntu compatible)
 

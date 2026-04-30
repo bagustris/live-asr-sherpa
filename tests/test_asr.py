@@ -22,8 +22,13 @@ class TestParseArgs:
     def test_wav_mode(self):
         with patch("sys.argv", ["sherox.asr", "--wav", "audio.wav"]):
             args = main_module.parse_args()
-        assert args.wav == "audio.wav"
+        assert args.wav == ["audio.wav"]
         assert args.mic is False
+
+    def test_wav_multiple_files(self):
+        with patch("sys.argv", ["sherox.asr", "--wav", "a.wav", "b.wav"]):
+            args = main_module.parse_args()
+        assert args.wav == ["a.wav", "b.wav"]
 
     def test_mic_and_wav_are_mutually_exclusive(self):
         with patch("sys.argv", ["sherox.asr", "--mic", "--wav", "audio.wav"]):
@@ -135,6 +140,61 @@ class TestParseArgs:
             args = main_module.parse_args()
         assert args.ten_vad_model == "ten-vad.onnx"
 
+    def test_default_device_is_cpu(self):
+        with patch("sys.argv", ["sherox.asr", "--mic"]):
+            args = main_module.parse_args()
+        assert args.device == "cpu"
+
+    def test_device_cuda(self):
+        with patch("sys.argv", ["sherox.asr", "--mic", "--device", "cuda"]):
+            args = main_module.parse_args()
+        assert args.device == "cuda"
+
+    def test_default_denoise_is_false(self):
+        with patch("sys.argv", ["sherox.asr", "--mic"]):
+            args = main_module.parse_args()
+        assert args.denoise is False
+
+    def test_denoise_flag(self):
+        with patch("sys.argv", ["sherox.asr", "--wav", "audio.wav", "--denoise"]):
+            args = main_module.parse_args()
+        assert args.denoise is True
+
+    def test_default_word_timestamps_is_false(self):
+        with patch("sys.argv", ["sherox.asr", "--mic"]):
+            args = main_module.parse_args()
+        assert args.word_timestamps is False
+
+    def test_word_timestamps_flag(self):
+        with patch("sys.argv", ["sherox.asr", "--mic", "--word-timestamps"]):
+            args = main_module.parse_args()
+        assert args.word_timestamps is True
+
+    def test_default_punctuation_is_false(self):
+        with patch("sys.argv", ["sherox.asr", "--mic"]):
+            args = main_module.parse_args()
+        assert args.punctuation is False
+
+    def test_punctuation_flag(self):
+        with patch("sys.argv", ["sherox.asr", "--mic", "--punctuation"]):
+            args = main_module.parse_args()
+        assert args.punctuation is True
+
+    def test_default_output_is_empty(self):
+        with patch("sys.argv", ["sherox.asr", "--mic"]):
+            args = main_module.parse_args()
+        assert args.output == ""
+
+    def test_output_format_choices(self):
+        for fmt in ("srt", "vtt", "txt"):
+            with patch("sys.argv", ["sherox.asr", "--mic", "--output-format", fmt]):
+                args = main_module.parse_args()
+            assert args.output_format == fmt
+
+    def test_output_format_invalid_exits(self):
+        with patch("sys.argv", ["sherox.asr", "--mic", "--output-format", "pdf"]):
+            with pytest.raises(SystemExit):
+                main_module.parse_args()
 
 # ---------------------------------------------------------------------------
 # _validate_vad
@@ -281,29 +341,49 @@ class TestValidateModel:
 # ---------------------------------------------------------------------------
 
 class TestValidateRuntimeArgs:
-    def test_speaker_tag_requires_diarization(self):
-        args = argparse.Namespace(
-            sample_rate=16000,
-            capture_rate=16000,
-            chunk_size=0.16,
-            threads=4,
-            speaker_tag=True,
-            diarization=False,
-            num_speakers=-1,
-        )
-        with pytest.raises(SystemExit):
-            main_module._validate_runtime_args(args)
-
-    def test_num_speakers_zero_is_rejected(self):
-        args = argparse.Namespace(
+    def _base_args(self, **overrides):
+        defaults = dict(
             sample_rate=16000,
             capture_rate=16000,
             chunk_size=0.16,
             threads=4,
             speaker_tag=False,
-            diarization=True,
-            num_speakers=0,
+            diarization=False,
+            num_speakers=-1,
+            denoise=False,
+            wav=None,
+            output="",
+            output_dir="",
         )
+        defaults.update(overrides)
+        return argparse.Namespace(**defaults)
+
+    def test_speaker_tag_requires_diarization(self):
+        args = self._base_args(speaker_tag=True, diarization=False)
+        with pytest.raises(SystemExit):
+            main_module._validate_runtime_args(args)
+
+    def test_num_speakers_zero_is_rejected(self):
+        args = self._base_args(diarization=True, num_speakers=0)
+        with pytest.raises(SystemExit):
+            main_module._validate_runtime_args(args)
+
+    def test_denoise_requires_wav(self):
+        args = self._base_args(denoise=True, wav=None)
+        with pytest.raises(SystemExit):
+            main_module._validate_runtime_args(args)
+
+    def test_output_with_multiple_wav_exits(self):
+        args = self._base_args(wav=["a.wav", "b.wav"], output="/out.srt")
+        with pytest.raises(SystemExit):
+            main_module._validate_runtime_args(args)
+
+    def test_output_with_single_wav_ok(self):
+        args = self._base_args(wav=["a.wav"], output="/out.srt")
+        main_module._validate_runtime_args(args)  # must not raise
+
+    def test_output_dir_without_wav_exits(self):
+        args = self._base_args(wav=None, output_dir="/some/dir")
         with pytest.raises(SystemExit):
             main_module._validate_runtime_args(args)
 
@@ -765,9 +845,11 @@ class TestMain:
                         diarization=False, capture_rate=16000, model_dir=None):
         """Return a dict of patches for testing main()."""
         import argparse
+        # Wrap single WAV path in a list to match nargs='+' behaviour.
+        wav_list = [wav] if isinstance(wav, str) else wav
         args = argparse.Namespace(
-            mic=wav is None,
-            wav=wav,
+            mic=wav_list is None,
+            wav=wav_list,
             model_dir=model_dir,
             model_type=model_type,
             offline=offline,
@@ -784,6 +866,14 @@ class TestMain:
             diarization_emb_model="",
             num_speakers=-1,
             speaker_tag=False,
+            device="cpu",
+            denoise=False,
+            word_timestamps=False,
+            punctuation=False,
+            punct_model="",
+            output="",
+            output_dir="",
+            output_format="txt",
         )
         return args
 

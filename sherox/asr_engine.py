@@ -36,6 +36,9 @@ class _MissingSherpaOnnxProxy(SimpleNamespace):
             SpeakerEmbeddingExtractorConfig=_MissingSherpaSymbol(),
             FastClusteringConfig=_MissingSherpaSymbol(),
             OfflineSpeakerDiarization=_MissingSherpaSymbol(),
+            OfflinePunctuationConfig=_MissingSherpaSymbol(),
+            OfflinePunctuationModelConfig=_MissingSherpaSymbol(),
+            OfflinePunctuation=_MissingSherpaSymbol(),
         )
 
     def __getattr__(self, name):
@@ -129,6 +132,7 @@ def build_recognizer(cfg: Config):
             sample_rate=cfg.sample_rate,
             feature_dim=80,
             decoding_method="greedy_search",
+            provider=cfg.device,
             **_ENDPOINT,
         )
     if mt in _ONLINE_WENET_CTC:
@@ -138,6 +142,7 @@ def build_recognizer(cfg: Config):
             num_threads=cfg.num_threads,
             sample_rate=cfg.sample_rate,
             feature_dim=80,
+            provider=cfg.device,
             **_ENDPOINT,
         )
     if mt in _ONLINE_ZIPFORMER2_CTC:
@@ -147,6 +152,7 @@ def build_recognizer(cfg: Config):
             num_threads=cfg.num_threads,
             sample_rate=cfg.sample_rate,
             feature_dim=80,
+            provider=cfg.device,
             **_ENDPOINT,
         )
     if mt in _ONLINE_CTC:
@@ -156,6 +162,7 @@ def build_recognizer(cfg: Config):
             num_threads=cfg.num_threads,
             sample_rate=cfg.sample_rate,
             feature_dim=80,
+            provider=cfg.device,
             **_ENDPOINT,
         )
     # Default: transducer (zipformer, zipformer2, conformer, lstm, or auto-detect)
@@ -169,6 +176,7 @@ def build_recognizer(cfg: Config):
         feature_dim=80,
         decoding_method="greedy_search",
         model_type=cfg.model_type,
+        provider=cfg.device,
         **_ENDPOINT,
     )
 
@@ -191,6 +199,7 @@ def build_offline_recognizer(cfg: Config):
             num_threads=cfg.num_threads,
             language=cfg.language,
             task="transcribe",
+            provider=cfg.device,
         )
     if mt in _OFFLINE_PARAFORMER:
         return sherpa_onnx.OfflineRecognizer.from_paraformer(
@@ -200,6 +209,7 @@ def build_offline_recognizer(cfg: Config):
             sample_rate=cfg.sample_rate,
             feature_dim=80,
             decoding_method="greedy_search",
+            provider=cfg.device,
         )
     if mt in _OFFLINE_CTC:
         return sherpa_onnx.OfflineRecognizer.from_ctc(
@@ -208,6 +218,7 @@ def build_offline_recognizer(cfg: Config):
             num_threads=cfg.num_threads,
             sample_rate=cfg.sample_rate,
             feature_dim=80,
+            provider=cfg.device,
         )
     if mt in _OFFLINE_SENSE_VOICE:
         return sherpa_onnx.OfflineRecognizer.from_sense_voice(
@@ -216,6 +227,7 @@ def build_offline_recognizer(cfg: Config):
             num_threads=cfg.num_threads,
             language=cfg.language,
             use_itn=True,
+            provider=cfg.device,
         )
     if mt in _OFFLINE_MOONSHINE:
         return sherpa_onnx.OfflineRecognizer.from_moonshine(
@@ -225,6 +237,7 @@ def build_offline_recognizer(cfg: Config):
             uncached_decoder=_find(d, "uncached_decode*.onnx"),
             cached_decoder=_find(d, "cached_decode*.onnx"),
             num_threads=cfg.num_threads,
+            provider=cfg.device,
         )
     if mt in _OFFLINE_FIRE_RED_ASR:
         return sherpa_onnx.OfflineRecognizer.from_fire_red_asr(
@@ -232,6 +245,7 @@ def build_offline_recognizer(cfg: Config):
             encoder=_find(d, "encoder*.onnx"),
             decoder=_find(d, "decoder*.onnx"),
             num_threads=cfg.num_threads,
+            provider=cfg.device,
         )
     if mt in _OFFLINE_COHERE_TRANSCRIBE:
         return sherpa_onnx.OfflineRecognizer.from_cohere_transcribe(
@@ -240,6 +254,7 @@ def build_offline_recognizer(cfg: Config):
             tokens=tokens,
             language=cfg.language,
             debug=False,
+            provider=cfg.device,
         )
     # Default: transducer (nemo_transducer or auto-detect)
     return sherpa_onnx.OfflineRecognizer.from_transducer(
@@ -252,6 +267,7 @@ def build_offline_recognizer(cfg: Config):
         feature_dim=80,
         decoding_method="greedy_search",
         model_type=cfg.model_type,
+        provider=cfg.device,
     )
 
 
@@ -333,3 +349,24 @@ def build_diarization(cfg: Config):
             "Check that the model files exist and are valid .onnx files."
         )
     return sherpa_onnx.OfflineSpeakerDiarization(config)
+
+
+def build_punctuation(cfg: Config):
+    """Build a Sherpa-ONNX OfflinePunctuation model.
+
+    The model at *cfg.punct_model* must be a CT-Transformer model directory
+    (e.g. sherpa-onnx-punct-ct-transformer-zh-en-vocab272727-*).
+    Note: this model was primarily trained on Chinese and English text;
+    punctuation quality for other languages may be lower.
+    """
+    if not cfg.punct_model:
+        raise ValueError(
+            "cfg.punct_model path is empty — set it before calling build_punctuation()."
+        )
+    sherpa_onnx = _require_sherpa_onnx()
+    config = sherpa_onnx.OfflinePunctuationConfig(
+        model=sherpa_onnx.OfflinePunctuationModelConfig(
+            ct_transformer=cfg.punct_model,
+        ),
+    )
+    return sherpa_onnx.OfflinePunctuation(config)

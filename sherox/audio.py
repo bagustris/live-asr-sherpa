@@ -1,4 +1,6 @@
+import logging
 import queue
+from math import gcd
 from types import SimpleNamespace
 from typing import Generator
 
@@ -39,16 +41,25 @@ def _require_sounddevice():
 
 
 def _resample(data: np.ndarray, orig_sr: int, target_sr: int) -> np.ndarray:
-    """Linear-interpolation resample from orig_sr to target_sr."""
+    """High-quality polyphase resample from orig_sr to target_sr.
+
+    Uses scipy.signal.resample_poly when available (core dep), with a
+    linear-interpolation fallback for environments without scipy.
+    """
     if orig_sr == target_sr:
         return data
-    n_orig = len(data)
-    n_new = int(n_orig * target_sr / orig_sr)
-    return np.interp(
-        np.linspace(0, n_orig - 1, n_new),
-        np.arange(n_orig),
-        data,
-    ).astype(np.float32)
+    try:
+        from scipy.signal import resample_poly  # noqa: PLC0415
+        g = gcd(target_sr, orig_sr)
+        return resample_poly(data, target_sr // g, orig_sr // g).astype(np.float32)
+    except ImportError:  # pragma: no cover - scipy is a core dep
+        n_orig = len(data)
+        n_new = int(n_orig * target_sr / orig_sr)
+        return np.interp(
+            np.linspace(0, n_orig - 1, n_new),
+            np.arange(n_orig),
+            data,
+        ).astype(np.float32)
 
 
 def read_wav(
@@ -58,8 +69,11 @@ def read_wav(
 ) -> Generator[np.ndarray, None, None]:
     """Read a mono audio file (WAV, FLAC, etc.) and yield float32 chunks.
 
-    If the file's sample rate differs from *target_sr*, the audio is
-    resampled via linear interpolation before yielding.
+    When the file's sample rate matches *target_sr*, audio is streamed
+    directly in chunks without loading the full file into RAM.  When
+    resampling is required, the file is loaded once and resampled with
+    scipy.signal.resample_poly before chunking, avoiding boundary
+    artifacts that block-wise resampling would introduce.
     """
     sf = _require_soundfile()
     with sf.SoundFile(path) as f:
@@ -69,16 +83,32 @@ def read_wav(
                 f"Convert with: ffmpeg -i <in> -ar {target_sr} -ac 1 out.wav"
             )
         orig_sr = f.samplerate
-        data = f.read(dtype="float32")
+        chunk_frames = int(target_sr * chunk_size)
+
+        if orig_sr == target_sr:
+            # Stream directly: no resampling, no full-file load.
+            while True:
+                block = f.read(frames=chunk_frames, dtype="float32")
+                if len(block) == 0:
+                    break
+                yield block
+        else:
+            # Rates differ: load full file, resample once, then chunk.
+            data = f.read(dtype="float32")
 
     if orig_sr != target_sr:
         data = _resample(data, orig_sr, target_sr)
+        offset = 0
+        while offset < len(data):
+            yield data[offset : offset + chunk_frames]
+            offset += chunk_frames
 
-    chunk_frames = int(target_sr * chunk_size)
-    offset = 0
-    while offset < len(data):
-        yield data[offset : offset + chunk_frames]
-        offset += chunk_frames
+
+def wav_duration(path: str) -> float:
+    """Return the duration of a WAV/audio file in seconds."""
+    sf = _require_soundfile()
+    with sf.SoundFile(path) as f:
+        return len(f) / f.samplerate
 
 
 def mic_stream(
@@ -93,6 +123,9 @@ def mic_stream(
 
     Uses a callback-based InputStream so audio capture never blocks the
     decoding loop — chunks are queued and consumed independently.
+
+    PortAudio status messages (overflows, underflows) are logged as
+    warnings rather than printed to stdout.
     """
     sd = _require_sounddevice()
     chunk_frames = int(capture_rate * chunk_size)
@@ -102,7 +135,7 @@ def mic_stream(
         indata: np.ndarray, frames: int, time, status  # noqa: ANN001
     ) -> None:
         if status:
-            print(f"[audio] {status}", flush=True)
+            logging.warning("[audio] %s", status)
         # indata shape: (frames, 1) — flatten to 1-D
         q.put(indata[:, 0].copy())
 
@@ -115,3 +148,52 @@ def mic_stream(
     ):
         while True:
             yield q.get()
+
+
+def denoise_gen(
+    audio_gen: Generator[np.ndarray, None, None],
+    sample_rate: int,
+    min_duration: float = 1.0,
+) -> Generator[np.ndarray, None, None]:
+    """Wrap an audio generator with noisereduce denoising.
+
+    Audio is accumulated for at least *min_duration* seconds before
+    denoising, which gives noisereduce enough context to estimate the
+    noise profile.  The denoised audio is then re-chunked at the
+    original chunk size and yielded.
+
+    Only suitable for offline (WAV file) processing where the added
+    latency is acceptable.
+    """
+    try:
+        import noisereduce as nr  # noqa: PLC0415
+    except ImportError as exc:  # pragma: no cover
+        raise RuntimeError(
+            "noisereduce is required for --denoise. "
+            "Install it with: pip install 'sherox[denoise]'"
+        ) from exc
+
+    min_samples = int(sample_rate * min_duration)
+    buf: list[np.ndarray] = []
+    buf_len = 0
+
+    def _flush(buffer: list[np.ndarray], chunk_size: int) -> Generator[np.ndarray, None, None]:
+        combined = np.concatenate(buffer)
+        denoised = nr.reduce_noise(y=combined, sr=sample_rate).astype(np.float32)
+        offset = 0
+        while offset < len(denoised):
+            yield denoised[offset : offset + chunk_size]
+            offset += chunk_size
+
+    chunk_size = 0
+    for chunk in audio_gen:
+        chunk_size = len(chunk)
+        buf.append(chunk)
+        buf_len += chunk_size
+        if buf_len >= min_samples:
+            yield from _flush(buf, chunk_size)
+            buf = []
+            buf_len = 0
+
+    if buf:
+        yield from _flush(buf, chunk_size or 1)

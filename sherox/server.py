@@ -26,6 +26,7 @@ import json
 import logging
 import threading
 from contextlib import asynccontextmanager
+from dataclasses import dataclass, field
 from io import BytesIO
 from pathlib import Path
 from typing import Any
@@ -33,7 +34,7 @@ from typing import Any
 import numpy as np
 
 try:
-    from fastapi import FastAPI, File, UploadFile, WebSocket, WebSocketDisconnect
+    from fastapi import FastAPI, File, Request, UploadFile, WebSocket, WebSocketDisconnect
     from fastapi.middleware.cors import CORSMiddleware
     from fastapi.responses import JSONResponse
     from fastapi.routing import APIRouter
@@ -53,15 +54,18 @@ from .streaming import _run_asr
 
 logger = logging.getLogger(__name__)
 
-# ── Module-level state (set by _create_app / lifespan, read-only after startup)
 
-_recognizer: Any = None
-_cfg: Config | None = None
-_project_dir: Path | None = None
-_mode: str = "offline"          # "offline" | "online"
-_model_name: str = ""
-_online_lock: asyncio.Lock | None = None    # guards online recognizer (async path)
-_online_thread_lock = threading.Lock()      # guards online recognizer (executor path)
+# ── App state ─────────────────────────────────────────────────────────────────
+
+@dataclass
+class _AppState:
+    recognizer: Any
+    cfg: Config
+    project_dir: Path
+    mode: str                            # "offline" | "online"
+    model_name: str
+    online_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    online_thread_lock: threading.Lock = field(default_factory=threading.Lock)
 
 
 # ── Validation wrappers ───────────────────────────────────────────────────────
@@ -88,10 +92,8 @@ def _startup_validate_vad(
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global _recognizer, _mode, _model_name, _online_lock
-
-    cfg = _cfg
-    assert cfg is not None, "Call _create_app() before running the server."
+    cfg: Config = app.state.cfg
+    project_dir: Path = app.state.project_dir
     loop = asyncio.get_event_loop()
 
     await loop.run_in_executor(None, _startup_validate_model, cfg.model_dir, cfg.model_type)
@@ -99,19 +101,25 @@ async def lifespan(app: FastAPI):
     if cfg.offline:
         cfg.vad_model = await loop.run_in_executor(
             None, _startup_validate_vad,
-            cfg.vad_type, cfg.ten_vad_model, True, _project_dir,
+            cfg.vad_type, cfg.ten_vad_model, True, project_dir,
         )
-        _recognizer = await loop.run_in_executor(None, build_offline_recognizer, cfg)
-        _mode = "offline"
+        recognizer = await loop.run_in_executor(None, build_offline_recognizer, cfg)
+        mode = "offline"
     else:
-        _recognizer = await loop.run_in_executor(None, build_recognizer, cfg)
-        _mode = "online"
-        _online_lock = asyncio.Lock()
+        recognizer = await loop.run_in_executor(None, build_recognizer, cfg)
+        mode = "online"
 
-    _model_name = Path(cfg.model_dir).name
-    logger.info("Model '%s' ready (%s mode).", _model_name, _mode)
+    model_name = Path(cfg.model_dir).name
+    app.state.asr = _AppState(
+        recognizer=recognizer,
+        cfg=cfg,
+        project_dir=project_dir,
+        mode=mode,
+        model_name=model_name,
+    )
+    logger.info("Model '%s' ready (%s mode).", model_name, mode)
     yield
-    _recognizer = None
+    app.state.asr = None
 
 
 # ── Router ────────────────────────────────────────────────────────────────────
@@ -122,16 +130,11 @@ router = APIRouter()
 # ── App factory ───────────────────────────────────────────────────────────────
 
 def _create_app(cfg: Config, project_dir: Path) -> FastAPI:
-    """Create and configure the FastAPI application.
-
-    Must be called before ``uvicorn.run`` or ``TestClient`` so that the module
-    globals ``_cfg`` and ``_project_dir`` are set before the lifespan runs.
-    """
-    global _cfg, _project_dir
-    _cfg = cfg
-    _project_dir = project_dir
-
+    """Create and configure the FastAPI application."""
     app = FastAPI(title="sherox ASR server", version="0.1.0", lifespan=lifespan)
+    app.state.cfg = cfg
+    app.state.project_dir = project_dir
+
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"],
@@ -154,23 +157,25 @@ def _create_app(cfg: Config, project_dir: Path) -> FastAPI:
 # ── Routes ────────────────────────────────────────────────────────────────────
 
 @router.get("/health")
-async def health():
+async def health(request: Request):
     """Return server status and loaded model information."""
-    return {"status": "ok", "model": _model_name, "mode": _mode}
+    asr: _AppState = request.app.state.asr
+    return {"status": "ok", "model": asr.model_name, "mode": asr.mode}
 
 
 @router.post("/transcribe")
-async def transcribe(file: UploadFile = File(...)):
+async def transcribe(request: Request, file: UploadFile = File(...)):
     """Transcribe an uploaded audio file (WAV, FLAC, OGG…).
 
     The audio must be at the server's configured sample rate (default 16 kHz).
     Stereo files are automatically downmixed to mono.
     Returns ``{"text": "<transcription>"}`` on success.
     """
+    asr: _AppState = request.app.state.asr
     raw = await file.read()
     loop = asyncio.get_event_loop()
     try:
-        text = await loop.run_in_executor(None, _transcribe_bytes, raw)
+        text = await loop.run_in_executor(None, lambda: _transcribe_bytes(raw, asr))
     except ValueError as exc:
         return JSONResponse(status_code=422, content={"error": str(exc)})
     return {"text": text}
@@ -190,10 +195,11 @@ async def websocket_endpoint(ws: WebSocket):
     - ``{"type": "partial", "text": "..."}``  — live hypothesis (online mode only)
     """
     await ws.accept()
-    if _mode == "offline":
-        await _handle_ws_offline(ws)
+    asr: _AppState = ws.app.state.asr
+    if asr.mode == "offline":
+        await _handle_ws_offline(ws, asr)
     else:
-        await _handle_ws_online(ws)
+        await _handle_ws_online(ws, asr)
 
 
 # ── Inference helpers ─────────────────────────────────────────────────────────
@@ -205,37 +211,37 @@ def _int16_to_float32(data: bytes) -> np.ndarray:
     return np.frombuffer(data, dtype=np.int16).astype(np.float32) / 32768.0
 
 
-def _transcribe_bytes(raw: bytes) -> str:
+def _transcribe_bytes(raw: bytes, asr: _AppState) -> str:
     """Decode uploaded audio bytes and run ASR. Runs in a thread-pool executor."""
     import soundfile as sf  # noqa: PLC0415
     samples, sr = sf.read(BytesIO(raw), dtype="float32", always_2d=False)
     if samples.ndim == 2:
         samples = samples.mean(axis=1)  # stereo → mono
-    if sr != _cfg.sample_rate:
+    if sr != asr.cfg.sample_rate:
         raise ValueError(
-            f"Audio must be {_cfg.sample_rate} Hz, got {sr} Hz. "
+            f"Audio must be {asr.cfg.sample_rate} Hz, got {sr} Hz. "
             "Resample before uploading (e.g. ffmpeg -i input.wav -ar 16000 out.wav)."
         )
-    if _mode == "offline":
-        return _run_asr(_recognizer, samples, sr)
-    return _online_transcribe_sync(samples, sr)
+    if asr.mode == "offline":
+        return _run_asr(asr.recognizer, samples, sr)
+    return _online_transcribe_sync(samples, sr, asr)
 
 
-def _online_transcribe_sync(samples: np.ndarray, sr: int) -> str:
+def _online_transcribe_sync(samples: np.ndarray, sr: int, asr: _AppState) -> str:
     """Thread-safe single-pass transcription with the online recognizer."""
-    with _online_thread_lock:
-        stream = _recognizer.create_stream()
+    with asr.online_thread_lock:
+        stream = asr.recognizer.create_stream()
         stream.accept_waveform(sr, samples)
         tail = np.zeros(int(sr * 0.5), dtype=np.float32)  # half-second silence to force endpoint
         stream.accept_waveform(sr, tail)
-        while _recognizer.is_ready(stream):
-            _recognizer.decode_stream(stream)
-        return _recognizer.get_result(stream).strip()
+        while asr.recognizer.is_ready(stream):
+            asr.recognizer.decode_stream(stream)
+        return asr.recognizer.get_result(stream).strip()
 
 
 # ── WebSocket handlers ────────────────────────────────────────────────────────
 
-async def _handle_ws_offline(ws: WebSocket) -> None:
+async def _handle_ws_offline(ws: WebSocket, asr: _AppState) -> None:
     """Per-connection handler for offline (VAD-segmented) mode.
 
     Each connection owns its own VAD instance (VAD is stateful).
@@ -243,11 +249,11 @@ async def _handle_ws_offline(ws: WebSocket) -> None:
     _run_asr() creates a fresh stream per call.
     """
     loop = asyncio.get_event_loop()
-    vad = await loop.run_in_executor(None, build_vad, _cfg)
+    vad = await loop.run_in_executor(None, build_vad, asr.cfg)
 
     async def _decode_and_send(samples: np.ndarray) -> None:
         text = await loop.run_in_executor(
-            None, _run_asr, _recognizer, samples, _cfg.sample_rate
+            None, _run_asr, asr.recognizer, samples, asr.cfg.sample_rate
         )
         if text:
             try:
@@ -275,16 +281,16 @@ async def _handle_ws_offline(ws: WebSocket) -> None:
         await _drain_vad()
 
 
-async def _handle_ws_online(ws: WebSocket) -> None:
+async def _handle_ws_online(ws: WebSocket, asr: _AppState) -> None:
     """Per-connection handler for online (streaming) mode.
 
     Each connection owns its own stream object. The shared recognizer is
-    guarded by _online_lock so concurrent connections don't race on
+    guarded by asr.online_lock so concurrent connections don't race on
     decode_stream. Partial hypotheses are streamed as they change;
     endpoint detection triggers a final segment message.
     """
     loop = asyncio.get_event_loop()
-    stream = _recognizer.create_stream()
+    stream = asr.recognizer.create_stream()
     last_partial = ""
 
     try:
@@ -292,17 +298,17 @@ async def _handle_ws_online(ws: WebSocket) -> None:
             data = await ws.receive_bytes()
             chunk = _int16_to_float32(data)
 
-            async with _online_lock:
-                stream.accept_waveform(_cfg.sample_rate, chunk)
-                while _recognizer.is_ready(stream):
-                    await loop.run_in_executor(None, _recognizer.decode_stream, stream)
-                text = _recognizer.get_result(stream).strip()
-                is_ep = _recognizer.is_endpoint(stream)
+            async with asr.online_lock:
+                stream.accept_waveform(asr.cfg.sample_rate, chunk)
+                while asr.recognizer.is_ready(stream):
+                    await loop.run_in_executor(None, asr.recognizer.decode_stream, stream)
+                text = asr.recognizer.get_result(stream).strip()
+                is_ep = asr.recognizer.is_endpoint(stream)
 
             if is_ep and text:
                 await ws.send_text(json.dumps({"type": "segment", "text": text}))
-                async with _online_lock:
-                    _recognizer.reset(stream)
+                async with asr.online_lock:
+                    asr.recognizer.reset(stream)
                 last_partial = ""
             elif text and text != last_partial:
                 await ws.send_text(json.dumps({"type": "partial", "text": text}))

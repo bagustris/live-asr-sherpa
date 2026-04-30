@@ -1,0 +1,49 @@
+{
+  "sessions": {
+    "00a435e4-3303-4082-bffa-7fb34c682cfd": {
+      "user_message_count": 2,
+      "agent_message_count": 11,
+      "start_timestamp": "2026-04-23T12:41:50.061Z",
+      "end_timestamp": "2026-04-23T12:43:18.571Z",
+      "markdown_size_bytes": 14093,
+      "provider": "claude-code",
+      "last_updated": "2026-04-24T10:32:34Z"
+    },
+    "019d5699-00c4-7dc1-a049-cc3d4938d42d": {
+      "user_message_count": 1,
+      "agent_message_count": 19,
+      "start_timestamp": "2026-04-04T03:48:04.344Z",
+      "end_timestamp": "2026-04-04T03:49:09.990Z",
+      "markdown_size_bytes": 33413,
+      "provider": "codex-cli",
+      "last_updated": "2026-04-24T10:33:12Z"
+    },
+    "019d57be-6b1d-7ba2-9179-bc96b0ccc392": {
+      "user_message_count": 1,
+      "agent_message_count": 135,
+      "start_timestamp": "2026-04-04T09:06:34.103Z",
+      "end_timestamp": "2026-04-04T09:19:08.940Z",
+      "markdown_size_bytes": 225112,
+      "provider": "codex-cli",
+      "last_updated": "2026-04-24T10:33:12Z"
+    },
+    "a1ee6930-da8d-4bf7-b7f4-c09208587bc1": {
+      "user_message_count": 1,
+      "agent_message_count": 21,
+      "start_timestamp": "2026-04-04T14:12:08.762Z",
+      "end_timestamp": "2026-04-04T14:14:39.304Z",
+      "markdown_size_bytes": 39613,
+      "provider": "gemini-cli",
+      "last_updated": "2026-04-24T10:32:34Z"
+    },
+    "df6cad24-e22e-43e5-bdae-d049d10f34b4": {
+      "user_message_count": 17,
+      "agent_message_count": 280,
+      "start_timestamp": "2026-04-24T08:59:34.678Z",
+      "end_timestamp": "2026-04-24T22:39:48.508Z",
+      "markdown_size_bytes": 556611,
+      "provider": "claude-code",
+      "last_updated": "2026-04-24T22:39:48Z"
+    }
+  }
+}

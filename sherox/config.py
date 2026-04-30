@@ -44,6 +44,17 @@ class Config:
     diarization_num_speakers: int = -1
     diarization_cluster_threshold: float = 0.5
 
+    # Hardware / inference
+    device: str = "cpu"              # ONNX Runtime provider: "cpu", "cuda", "coreml"
+
+    # Audio pre-processing
+    denoise: bool = False            # noise reduction pre-processing (offline WAV only)
+
+    # Output / post-processing
+    word_timestamps: bool = False    # display per-token timing after each segment
+    punctuation: bool = False        # punctuation restoration post-processing
+    punct_model: str = ""            # path to OfflinePunctuation model, resolved by asr.py
+
 
 # ── Segment ───────────────────────────────────────────────────────────────────
 

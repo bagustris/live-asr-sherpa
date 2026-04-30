@@ -749,3 +749,57 @@ class TestRunOfflineVadStreamingDiarization:
             )
 
         mock_executor.shutdown.assert_called_once_with(wait=True)
+
+
+# ---------------------------------------------------------------------------
+# Subtitle writers
+# ---------------------------------------------------------------------------
+
+from sherox.streaming import write_srt, write_vtt, write_txt
+
+
+class TestWriteSrt:
+    def test_writes_correctly_formatted_srt(self, tmp_path):
+        subtitles = [(0.0, 1.5, "Hello world"), (2.0, 3.0, "Goodbye")]
+        out = str(tmp_path / "out.srt")
+        write_srt(subtitles, out)
+        text = open(out).read()
+        assert "1\n" in text
+        assert "00:00:00,000 --> 00:00:01,500" in text
+        assert "Hello world" in text
+        assert "2\n" in text
+        assert "00:00:02,000 --> 00:00:03,000" in text
+        assert "Goodbye" in text
+
+    def test_empty_subtitles_creates_file(self, tmp_path):
+        out = str(tmp_path / "empty.srt")
+        write_srt([], out)
+        assert open(out).read() == ""
+
+
+class TestWriteVtt:
+    def test_starts_with_webvtt_header(self, tmp_path):
+        out = str(tmp_path / "out.vtt")
+        write_vtt([(0.0, 1.0, "Hi")], out)
+        text = open(out).read()
+        assert text.startswith("WEBVTT")
+
+    def test_formats_timestamps(self, tmp_path):
+        out = str(tmp_path / "out.vtt")
+        write_vtt([(3661.5, 3662.0, "Late")], out)
+        text = open(out).read()
+        # 3661.5s = 1h01m01.500s
+        assert "01:01:01.500 --> 01:01:02.000" in text
+
+
+class TestWriteTxt:
+    def test_writes_one_line_per_segment(self, tmp_path):
+        out = str(tmp_path / "out.txt")
+        write_txt([(0.0, 1.0, "Line one"), (1.0, 2.0, "Line two")], out)
+        lines = open(out).read().splitlines()
+        assert lines == ["Line one", "Line two"]
+
+    def test_empty_subtitles_creates_empty_file(self, tmp_path):
+        out = str(tmp_path / "empty.txt")
+        write_txt([], out)
+        assert open(out).read() == ""
