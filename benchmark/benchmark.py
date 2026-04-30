@@ -194,7 +194,12 @@ def load_manifest(path: str) -> List[Tuple[str, str]]:
 # ---------------------------------------------------------------------------
 
 def load_audio(path: str, target_sr: int = 16000) -> Tuple[np.ndarray, float]:
-    """Load an audio file; convert to mono float32 and resample if needed."""
+    """Load an audio file; convert to mono float32 and resample if needed.
+
+    Resampling preference order (fastest → slowest, all high-quality):
+      1. soxr     — C-based SoX resampler (~10 ms / 30 s, HQ quality)
+      2. scipy.signal.resample_poly — polyphase FIR with Kaiser β=14
+    """
     sf = _require_soundfile()
     audio, sr = sf.read(path, dtype="float32", always_2d=False)
     if audio.ndim == 2:
@@ -202,13 +207,16 @@ def load_audio(path: str, target_sr: int = 16000) -> Tuple[np.ndarray, float]:
 
     if sr != target_sr:
         try:
-            import resampy
-            audio = resampy.resample(audio, sr, target_sr)
+            import soxr  # noqa: PLC0415
+            audio = soxr.resample(audio, sr, target_sr, quality="HQ").astype(np.float32)
         except ImportError:
-            raise RuntimeError(
-                f"Cannot resample {sr}→{target_sr} Hz for {path}: "
-                "resampy not installed. Install with: pip install resampy"
-            )
+            from math import gcd  # noqa: PLC0415
+            from scipy.signal import resample_poly  # noqa: PLC0415
+            g = gcd(target_sr, sr)
+            audio = resample_poly(
+                audio, target_sr // g, sr // g,
+                window=("kaiser", 14.0), padtype="line",
+            ).astype(np.float32)
 
     duration = len(audio) / target_sr
     return audio, duration

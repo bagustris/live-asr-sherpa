@@ -40,6 +40,10 @@ tts-ja = [
 denoise = [
     "noisereduce>=3.0",
 ]
+benchmark = [
+    "soxr>=0.3.0",
+    "editdistance>=0.6.0",
+]
 
 [tool.setuptools.packages.find]
 where = ["."]
