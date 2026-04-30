@@ -43,15 +43,26 @@ def _require_sounddevice():
 def _resample(data: np.ndarray, orig_sr: int, target_sr: int) -> np.ndarray:
     """High-quality polyphase resample from orig_sr to target_sr.
 
-    Uses scipy.signal.resample_poly when available (core dep), with a
-    linear-interpolation fallback for environments without scipy.
+    Uses scipy.signal.resample_poly with a Kaiser window (β=14, ~90 dB stopband
+    attenuation).  This is preferred over scipy.signal.resample (FFT-based) for
+    audio because FFT resampling assumes a periodic signal and produces
+    wrap-around ringing artifacts at the edges; polyphase FIR filtering is
+    non-circular and avoids those artifacts entirely.
+
+    Falls back to linear interpolation if scipy is somehow unavailable.
     """
     if orig_sr == target_sr:
         return data
     try:
         from scipy.signal import resample_poly  # noqa: PLC0415
         g = gcd(target_sr, orig_sr)
-        return resample_poly(data, target_sr // g, orig_sr // g).astype(np.float32)
+        return resample_poly(
+            data,
+            target_sr // g,
+            orig_sr // g,
+            window=("kaiser", 14.0),  # ~90 dB stopband; default β=5 gives only ~60 dB
+            padtype="line",           # linear edge extrapolation reduces end-of-signal transients
+        ).astype(np.float32)
     except ImportError:  # pragma: no cover - scipy is a core dep
         n_orig = len(data)
         n_new = int(n_orig * target_sr / orig_sr)
