@@ -301,6 +301,22 @@ def test_run_benchmark_handles_transcription_error(tmp_path):
     assert results[0].hypothesis == ""
 
 
+def test_run_benchmark_uses_cer_for_compact_japanese_progress(tmp_path, capsys):
+    """Compact progress output should use CER when Japanese is the primary metric."""
+    import soundfile as sf
+
+    path = str(tmp_path / "utt.wav")
+    sf.write(path, np.zeros(8000, dtype=np.float32), 16000)
+    records = [(path, "今日 は 晴れ")]
+
+    rec = _make_offline_recognizer("今日は晴れ")
+    bm.run_benchmark(rec, records, offline=True, language="ja")
+
+    output = capsys.readouterr().out
+    assert "CER=  0.0%" in output
+    assert "✓" in output
+
+
 def test_validate_args_rejects_nonpositive_max_utts():
     args = argparse.Namespace(sample_rate=16000, chunk_size=0.1, threads=4, max_utts=0)
     with pytest.raises(SystemExit):

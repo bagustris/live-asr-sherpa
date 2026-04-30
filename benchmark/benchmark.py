@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
 """
-live-asr-sherpa benchmark — evaluate WER, RTF, latency, and composite score
+live-asr-sherpa benchmark — evaluate WER, CER, RTF, latency, and composite score
 for any model supported by live-asr-sherpa on LibriSpeech audio.
 
 Metrics reported (per utterance and aggregate):
     WER             Word Error Rate — transcription accuracy (lower is better)
+    CER             Character Error Rate — primary metric for Japanese (lower is better)
     RTF             Real-Time Factor — processing speed (lower is better)
     Latency (ms)    Wall-clock time to produce each transcription (lower is better)
-    Composite Score (WER + mean_RTF) / 2 — single ranking metric (lower is better)
+    Composite Score (primary_error_rate + mean_RTF) / 2 — single ranking metric
+                    Uses CER for Japanese (--language ja/jpn), WER otherwise.
 
 Input — one of:
     --data-dir PATH   LibriSpeech split directory (auto-builds manifest)
@@ -37,6 +39,10 @@ Usage examples:
     python benchmark.py --data-dir /data/AISHELL/test \\
         --offline --model-type sense_voice --language zh \\
         --model-dir ../models/sense_voice
+
+    # Benchmark a Japanese model (uses CER as primary metric)
+    python benchmark.py --data-dir /data/ja-test \\
+        --offline --language ja --model-dir ../models/whisper-ja
 
     # Use a pre-built manifest
     python benchmark.py --manifest data/test-clean.tsv --offline
@@ -269,9 +275,12 @@ def run_benchmark(
     sample_rate: int = 16000,
     chunk_size: float = 0.1,
     verbose: bool = False,
+    language: str = "en",
 ) -> Tuple[List[UtteranceResult], AggregateMetrics]:
-    """Run all utterances through the recognizer; collect WER/RTF/latency."""
+    """Run all utterances through the recognizer; collect WER/CER/RTF/latency."""
     results: List[UtteranceResult] = []
+    primary_error_metric = "cer" if language.lower() in {"ja", "jpn"} else "wer"
+    primary_metric_label = "CER" if primary_error_metric == "cer" else "WER"
 
     for i, (audio_path, reference) in enumerate(records, 1):
         try:
@@ -302,31 +311,34 @@ def run_benchmark(
         ).compute()
 
         results.append(utt)
+        primary_error_rate = utt.cer if primary_error_metric == "cer" else utt.wer
 
         if verbose:
             print(
                 f"  [{i:4d}/{len(records)}] "
                 f"RTF={utt.rtf:.3f}  WER={utt.wer * 100:6.1f}%  "
-                f"Lat={utt.latency_ms:.0f}ms"
+                f"CER={utt.cer * 100:6.1f}%  Lat={utt.latency_ms:.0f}ms"
             )
             print(f"    REF: {reference[:80]}")
             print(f"    HYP: {utt.hypothesis[:80]}")
         else:
-            marker = "✓" if utt.wer == 0.0 else "✗"
+            marker = "✓" if primary_error_rate == 0.0 else "✗"
             print(
                 f"  [{i:4d}/{len(records)}] {marker}  "
-                f"RTF={utt.rtf:.3f}  WER={utt.wer * 100:5.1f}%  "
+                f"RTF={utt.rtf:.3f}  {primary_metric_label}={primary_error_rate * 100:5.1f}%  "
                 f"Lat={utt.latency_ms:.0f}ms",
                 flush=True,
             )
 
-    agg = AggregateMetrics.from_results(results)
+    agg = AggregateMetrics.from_results(results, primary_error_metric=primary_error_metric)
+    composite_label = "CER" if primary_error_metric == "cer" else "WER"
     print(f"\n  ── Aggregate ──")
     print(f"  Utterances      : {agg.n_utterances}")
     print(f"  WER             : {agg.wer_pct:.2f}%")
+    print(f"  CER             : {agg.cer_pct:.2f}%")
     print(f"  Mean RTF        : {agg.mean_rtf:.4f}")
     print(f"  Mean Latency    : {agg.mean_latency_ms:.1f} ms")
-    print(f"  Composite Score : {agg.composite_score:.4f}  (lower is better)")
+    print(f"  Composite Score : {agg.composite_score:.4f}  ({composite_label} + mean_RTF) / 2  (lower is better)")
     print(f"  Audio total     : {agg.total_audio_duration:.1f}s")
     print(f"  Proc total      : {agg.total_processing_time:.1f}s")
 
@@ -339,15 +351,17 @@ def run_benchmark(
 
 def print_summary(model_name: str, agg: AggregateMetrics) -> None:
     """Print a formatted summary table for a single model run."""
+    composite_label = "CER" if agg.primary_error_metric == "cer" else "WER"
     print("\n" + "=" * 62)
     print("  SUMMARY")
     print("=" * 62)
     print(f"  Model            : {model_name}")
     print(f"  Utterances       : {agg.n_utterances}")
     print(f"  WER (%)          : {agg.wer_pct:.2f}")
+    print(f"  CER (%)          : {agg.cer_pct:.2f}")
     print(f"  Mean RTF         : {agg.mean_rtf:.4f}")
     print(f"  Mean Latency(ms) : {agg.mean_latency_ms:.1f}")
-    print(f"  Composite Score  : {agg.composite_score:.4f}  (WER + mean_RTF) / 2")
+    print(f"  Composite Score  : {agg.composite_score:.4f}  ({composite_label} + mean_RTF) / 2")
     print("=" * 62)
 
 
@@ -516,6 +530,7 @@ def main() -> None:
         sample_rate=args.sample_rate,
         chunk_size=args.chunk_size,
         verbose=args.verbose,
+        language=args.language,
     )
 
     # Print summary
@@ -527,12 +542,15 @@ def main() -> None:
             "model_dir": model_dir,
             "model_type": cfg.model_type,
             "offline": args.offline,
+            "language": args.language,
             "threads": cfg.num_threads,
             "aggregate": {
                 "wer_pct": agg.wer_pct,
+                "cer_pct": agg.cer_pct,
                 "mean_rtf": agg.mean_rtf,
                 "mean_latency_ms": agg.mean_latency_ms,
                 "composite_score": agg.composite_score,
+                "primary_error_metric": agg.primary_error_metric,
                 "total_audio_duration_s": agg.total_audio_duration,
                 "total_processing_time_s": agg.total_processing_time,
                 "n_utterances": agg.n_utterances,
@@ -547,6 +565,8 @@ def main() -> None:
                     "latency_ms": r.latency_ms,
                     "edit_distance": r.edit_distance,
                     "wer": r.wer,
+                    "char_edit_distance": r.char_edit_distance,
+                    "cer": r.cer,
                     "rtf": r.rtf,
                 }
                 for r in results
