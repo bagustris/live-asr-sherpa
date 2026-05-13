@@ -90,6 +90,11 @@ class TestParseArgs:
             args = main_module.parse_args()
         assert args.language == "zh"
 
+    def test_lang_alias(self):
+        with patch("sys.argv", ["sherox.asr", "--mic", "--lang", "jp"]):
+            args = main_module.parse_args()
+        assert args.language == "jp"
+
     def test_custom_threads(self):
         with patch("sys.argv", ["sherox.asr", "--mic", "--threads", "8"]):
             args = main_module.parse_args()
@@ -104,6 +109,16 @@ class TestParseArgs:
         with patch("sys.argv", ["sherox.asr", "--mic", "--listening"]):
             args = main_module.parse_args()
         assert args.listening is True
+
+    def test_final_only_flag(self):
+        with patch("sys.argv", ["sherox.asr", "--mic", "--final-only"]):
+            args = main_module.parse_args()
+        assert args.final_only is True
+
+    def test_final_only_default_false(self):
+        with patch("sys.argv", ["sherox.asr", "--mic"]):
+            args = main_module.parse_args()
+        assert args.final_only is False
 
     def test_custom_model_dir(self):
         with patch("sys.argv", ["sherox.asr", "--mic", "--model-dir", "models/custom"]):
@@ -422,6 +437,8 @@ def _extracted_name_for(model_dir_name: str, model_type: str) -> str:
         main_module._REAZON_JA_EN_MLS_TARGET,
     ):
         return main_module._REAZON_JA_EN_EXTRACTED
+    if model_type == "parakeet-ctc-ja" or model_dir_name == main_module._PARAKEET_CTC_JA_INT8_TARGET:
+        return main_module._PARAKEET_CTC_JA_INT8_EXTRACTED
     if model_type == "cohere_transcribe" or model_dir_name == main_module._COHERE_TRANSCRIBE_TARGET:
         return main_module._COHERE_TRANSCRIBE_EXTRACTED
     if model_type == "multilingual_streaming" or model_dir_name == main_module._MULTILINGUAL_STREAMING_TARGET:
@@ -515,6 +532,17 @@ class TestDownloadModel:
         ja_url = _run_download_model(tmp_path, main_module._REAZON_JA_TARGET, "ja")
         ja_en_url = _run_download_model(tmp_path, main_module._REAZON_JA_EN_TARGET, "ja-en")
         assert ja_url != ja_en_url
+
+    def test_uses_parakeet_ctc_ja_url_for_parakeet_ctc_ja_model_type(self, tmp_path):
+        url = _run_download_model(tmp_path, main_module._PARAKEET_CTC_JA_INT8_TARGET, "parakeet-ctc-ja")
+        assert "parakeet" in url
+        assert "ja" in url
+        assert "int8" in url
+
+    def test_uses_parakeet_ctc_ja_url_for_parakeet_ctc_ja_dir_name(self, tmp_path):
+        url = _run_download_model(tmp_path, main_module._PARAKEET_CTC_JA_INT8_TARGET, "")
+        assert "parakeet" in url
+        assert "ja" in url
 
 
 # ---------------------------------------------------------------------------
@@ -874,11 +902,12 @@ class TestMain:
             output="",
             output_dir="",
             output_format="txt",
+            final_only=False,
         )
         return args
 
     def test_online_mic_mode(self):
-        args = self._common_patches(None)
+        args = self._common_patches(None, model_dir="models/zipformer-en-2023")
         mock_rec = MagicMock()
 
         with patch.object(main_module, "parse_args", return_value=args), \
@@ -894,7 +923,9 @@ class TestMain:
     def test_online_wav_mode(self, tmp_path):
         wav = tmp_path / "audio.wav"
         wav.touch()
-        args = self._common_patches(tmp_path, wav=str(wav))
+        args = self._common_patches(
+            tmp_path, wav=str(wav), model_dir="models/zipformer-en-2023"
+        )
         mock_rec = MagicMock()
 
         with patch.object(main_module, "parse_args", return_value=args), \
@@ -906,6 +937,29 @@ class TestMain:
              patch("sherox.asr.read_wav", return_value=iter([])), \
              patch("sherox.asr.run_streaming"):
             main_module.main()
+
+    def test_online_wav_final_only_skips_progress(self, tmp_path):
+        wav = tmp_path / "audio.wav"
+        wav.touch()
+        args = self._common_patches(
+            tmp_path, wav=str(wav), model_dir="models/zipformer-en-2023"
+        )
+        args.final_only = True
+        mock_rec = MagicMock()
+
+        with patch.object(main_module, "parse_args", return_value=args), \
+             patch.object(main_module, "_validate_runtime_args"), \
+             patch.object(main_module, "_validate_model"), \
+             patch.object(main_module, "_validate_vad", return_value=""), \
+             patch.object(main_module, "_validate_wav"), \
+             patch("sherox.asr.build_recognizer", return_value=mock_rec), \
+             patch("sherox.asr.read_wav", return_value=iter([])), \
+             patch("rich.progress.Progress") as mock_progress, \
+             patch("sherox.asr.run_streaming") as mock_run:
+            main_module.main()
+
+        mock_progress.assert_not_called()
+        assert mock_run.call_args.kwargs["final_only"] is True
 
     def test_offline_mic_mode(self):
         args = self._common_patches(None, offline=True)
@@ -1090,8 +1144,74 @@ class TestMain:
         called_dir = mock_vm.call_args[0][0]
         assert called_dir == custom_dir
 
+    def test_japanese_language_uses_japanese_default_model(self):
+        args = self._common_patches(None)
+        args.language = "jp"
+        mock_rec = MagicMock()
+
+        with patch.object(main_module, "parse_args", return_value=args), \
+             patch.object(main_module, "_validate_runtime_args"), \
+             patch.object(main_module, "_validate_model") as mock_vm, \
+             patch.object(main_module, "_validate_vad", return_value="models/silero_vad.onnx"), \
+             patch.object(main_module, "_validate_mic"), \
+             patch("sherox.asr.build_offline_recognizer", return_value=mock_rec) as mock_build, \
+             patch("sherox.asr.build_vad", return_value=MagicMock()), \
+             patch("sherox.asr.mic_stream", return_value=iter([])), \
+             patch("sherox.asr.run_offline_vad_streaming"):
+            main_module.main()
+
+        called_dir, called_type = mock_vm.call_args[0]
+        assert Path(called_dir).name == main_module._REAZON_JA_TARGET
+        assert called_type == "ja"
+        cfg = mock_build.call_args[0][0]
+        assert cfg.language == "ja"
+        assert cfg.offline is True
+
+    def test_english_language_uses_parakeet_int8_default_model(self):
+        args = self._common_patches(None)
+        mock_rec = MagicMock()
+
+        with patch.object(main_module, "parse_args", return_value=args), \
+             patch.object(main_module, "_validate_runtime_args"), \
+             patch.object(main_module, "_validate_model") as mock_vm, \
+             patch.object(main_module, "_validate_vad", return_value="models/silero_vad.onnx"), \
+             patch.object(main_module, "_validate_mic"), \
+             patch("sherox.asr.build_offline_recognizer", return_value=mock_rec) as mock_build, \
+             patch("sherox.asr.build_vad", return_value=MagicMock()), \
+             patch("sherox.asr.mic_stream", return_value=iter([])), \
+             patch("sherox.asr.run_offline_vad_streaming"):
+            main_module.main()
+
+        called_dir, called_type = mock_vm.call_args[0]
+        assert Path(called_dir).name == main_module._PARAKEET_INT8_TARGET
+        assert called_type == ""
+        cfg = mock_build.call_args[0][0]
+        assert cfg.language == "en"
+        assert cfg.offline is True
+
+    def test_nemo_transducer_uses_parakeet_int8_default_model(self):
+        args = self._common_patches(None, model_type="nemo_transducer")
+        mock_rec = MagicMock()
+
+        with patch.object(main_module, "parse_args", return_value=args), \
+             patch.object(main_module, "_validate_runtime_args"), \
+             patch.object(main_module, "_validate_model") as mock_vm, \
+             patch.object(main_module, "_validate_vad", return_value="models/silero_vad.onnx"), \
+             patch.object(main_module, "_validate_mic"), \
+             patch("sherox.asr.build_offline_recognizer", return_value=mock_rec), \
+             patch("sherox.asr.build_vad", return_value=MagicMock()), \
+             patch("sherox.asr.mic_stream", return_value=iter([])), \
+             patch("sherox.asr.run_offline_vad_streaming"):
+            main_module.main()
+
+        called_dir, called_type = mock_vm.call_args[0]
+        assert Path(called_dir).name == main_module._PARAKEET_INT8_TARGET
+        assert called_type == "nemo_transducer"
+
     def test_online_with_diarization(self):
-        args = self._common_patches(None, diarization=True)
+        args = self._common_patches(
+            None, diarization=True, model_dir="models/zipformer-en-2023"
+        )
         mock_rec = MagicMock()
         mock_diarizer = MagicMock()
 

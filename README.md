@@ -59,11 +59,13 @@ sherox.asr --wav path/to/audio.wav
 > ffmpeg -i input.wav -ar 16000 -ac 1 output.wav
 > ```
 
-The default Zipformer model (~300 MB) is downloaded automatically on first run.
+The default English Parakeet int8 model is downloaded automatically on first run.
 
 ## Speaker Diarization
 
 Add `--diarization` to any command to colour-code the transcript by speaker. Two lightweight models are downloaded automatically on first use (~7 MB segmentation + ~23 MB embedding):
+
+See [DIARIZATION_MODEL.md](DIARIZATION_MODEL.md) for the diarization model files, defaults, and manual override paths.
 
 ```bash
 # Microphone with diarization (auto-downloads all models)
@@ -129,116 +131,11 @@ Each identified speaker is printed in a distinct colour; audio that does not mat
 --listening           Show RMS energy bar for mic level calibration
 ```
 
-### Available embedding models
-
-| Model | Size | Lang | Notes |
-|-------|------|------|-------|
-| `nemo_en_titanet_large.onnx` | 96 MB | en | **Default**; highest accuracy |
-| `wespeaker_en_voxceleb_resnet293_LM.onnx` | 109 MB | en | WeSpeaker large |
-| `wespeaker_en_voxceleb_CAM++_LM.onnx` | 27 MB | en | Good accuracy/speed balance |
-| `nemo_en_speakerverification_speakernet.onnx` | 22 MB | en | Lightest option |
-| `wespeaker_zh_cnceleb_resnet34_LM.onnx` | 25 MB | zh | Chinese |
-| `3dspeaker_speech_campplus_sv_zh_en_16k-common_advanced.onnx` | 26 MB | zh/en | Bilingual |
-
-Download any model from the [speaker recognition models release](https://github.com/k2-fsa/sherpa-onnx/releases/tag/speaker-recongition-models) and pass it via `--model`.
+See [SID_MODEL.md](SID_MODEL.md) for the default speaker ID model, alternative embedding models, and related VAD dependency.
 
 ## Supported ASR Models
 
-All models from the [Sherpa-ONNX model zoo](https://k2-fsa.github.io/sherpa/onnx/pretrained_models/) can be used. Download and extract a model into the `models/` directory, then pass the directory name via `--model-dir` and the architecture via `--model-type`.
-
-> [!TIP]
-> Models marked **auto** are downloaded automatically on first run. All others must be downloaded manually from the [Sherpa-ONNX releases page](https://github.com/k2-fsa/sherpa-onnx/releases/tag/asr-models).
-
-### Online (Streaming) Models
-
-Use these with the default pipeline (no `--offline` flag). They support real-time partial hypotheses.
-
-| Model | `--model-dir` | `--model-type` | Lang | Notes |
-|-------|--------------|----------------|------|-------|
-| Zipformer En 2023 | `models/zipformer-en-2023` | *(blank)* | en | Default; **auto-downloaded** |
-| Zipformer En 2024 | `models/sherpa-onnx-streaming-zipformer-en-2024-02-13` | `zipformer2` | en | Newer, slightly higher accuracy |
-| Conformer En | `models/sherpa-onnx-streaming-conformer-en-2023-05-09` | `conformer` | en | Conformer transducer |
-| Zipformer ZH/EN | `models/sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20` | `zipformer` | zh/en | Bilingual |
-| Paraformer ZH/EN | `models/sherpa-onnx-streaming-paraformer-bilingual-zh-en` | `paraformer` | zh/en | Streaming paraformer |
-| WeNet CTC En | `models/sherpa-onnx-streaming-wenet-librispeech` | `wenet_ctc` | en | WeNet CTC |
-| Zipformer2 CTC En | `models/sherpa-onnx-streaming-zipformer2-ctc-2024-09-18` | `zipformer2_ctc` | en | CTC variant |
-
-Example:
-```bash
-sherox.asr --mic \
-  --model-dir models/sherpa-onnx-streaming-zipformer-en-2024-02-13 \
-  --model-type zipformer2
-```
-
-### Offline Models
-
-Use these with `--offline`. Audio is VAD-segmented before recognition (higher accuracy, higher latency). A [Silero VAD](https://github.com/snakers4/silero-vad) model (`silero_vad.onnx`) is auto-downloaded when needed.
-
-| Model | `--model-dir` | `--model-type` | Lang | Notes |
-|-------|--------------|----------------|------|-------|
-| Parakeet TDT 0.6B FP16 | `models/parakeet-tdt-0.6b-v2` | `nemo_transducer` | en | **Auto-downloaded** (`--offline` default) |
-| Parakeet TDT 0.6B INT8 | `models/parakeet-tdt-0.6b-v2-int8` | `nemo_transducer` | en | **Auto-downloaded**; smaller & faster |
-| Whisper tiny.en | `models/sherpa-onnx-whisper-tiny.en` | `whisper` | en | Smallest Whisper |
-| Whisper base.en | `models/sherpa-onnx-whisper-base.en` | `whisper` | en | |
-| Whisper small.en | `models/sherpa-onnx-whisper-small.en` | `whisper` | en | Good accuracy/speed balance |
-| Whisper medium.en | `models/sherpa-onnx-whisper-medium.en` | `whisper` | en | Higher accuracy |
-| Whisper large-v3 | `models/sherpa-onnx-whisper-large-v3` | `whisper` | multi | Multilingual; use `--language` |
-| Paraformer ZH | `models/sherpa-onnx-paraformer-zh-2023-09-14` | `paraformer` | zh | |
-| NeMo CTC En | `models/sherpa-onnx-nemo-ctc-en-conformer-medium` | `nemo_ctc` | en | NeMo Conformer CTC |
-| SenseVoice | `models/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17` | `sense_voice` | multi | 5 languages; use `--language` |
-| Moonshine tiny | `models/sherpa-onnx-moonshine-tiny-en-int8` | `moonshine` | en | Very fast, English only |
-| Moonshine base | `models/sherpa-onnx-moonshine-base-en-int8` | `moonshine` | en | Better accuracy than tiny |
-| FireRedASR | `models/sherpa-onnx-fire-red-asr-large-zh-2025-02-16` | `fire_red_asr` | zh | |
-| ReazonSpeech JA | `models/reazonspeech-ja` | `ja` | ja | **Auto-downloaded**; Japanese |
-| ReazonSpeech JA-EN | `models/reazonspeech-ja-en` | `ja-en` | ja/en | **Auto-downloaded**; bilingual |
-| ReazonSpeech JA-EN-MLS | `models/reazonspeech-ja-en-mls-5k` | `ja-en-mls-5k` | ja/en | **Auto-downloaded**; bilingual + MLS 5k |
-| Cohere Transcribe 14-Lang | `models/cohere-transcribe-14-lang-int8` | `cohere_transcribe` | multi | 14 languages; multilingual ASR |
-
-Examples:
-```bash
-# Parakeet TDT (auto-downloaded offline default)
-sherox.asr --mic --offline --model-type nemo_transducer
-
-# Parakeet TDT INT8 (smaller, auto-downloaded)
-sherox.asr --mic --offline \
-  --model-dir models/parakeet-tdt-0.6b-v2-int8 \
-  --model-type nemo_transducer
-
-# Whisper small (English)
-sherox.asr --mic --offline \
-  --model-dir models/sherpa-onnx-whisper-small.en \
-  --model-type whisper
-
-# Whisper large-v3 (multilingual)
-sherox.asr --mic --offline \
-  --model-dir models/sherpa-onnx-whisper-large-v3 \
-  --model-type whisper --language zh
-
-# SenseVoice (5 languages)
-sherox.asr --mic --offline \
-  --model-dir models/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17 \
-  --model-type sense_voice --language ja
-
-# Moonshine tiny
-sherox.asr --mic --offline \
-  --model-dir models/sherpa-onnx-moonshine-tiny-en-int8 \
-  --model-type moonshine
-
-# ReazonSpeech Japanese (auto-downloaded)
-sherox.asr --mic --model-type ja
-
-# ReazonSpeech bilingual Japanese-English
-sherox.asr --mic --model-type ja-en
-
-# ReazonSpeech bilingual + MLS 5k English
-sherox.asr --wav audio.wav --model-type ja-en-mls-5k
-
-# Cohere Transcribe multilingual (14 languages)
-sherox.asr --mic --offline --model-type cohere_transcribe --language en
-
-# Cohere Transcribe with different language (e.g., Chinese)
-sherox.asr --wav audio.wav --offline --model-type cohere_transcribe --language zh
-```
+See [ASR_MODEL.md](ASR_MODEL.md) for the complete supported ASR model catalog, grouped by streaming and offline usage, including built-in aliases and auto-downloaded defaults.
 
 ## CLI Reference
 
@@ -248,8 +145,8 @@ sherox.asr --wav audio.wav --offline --model-type cohere_transcribe --language z
 --mic                   Stream from microphone
 --wav PATH              Transcribe a WAV file
 --model-dir PATH        Sherpa-ONNX model directory
-                          Default (online):  models/zipformer-en-2023
-                          Default (offline): models/parakeet-tdt-0.6b-v2
+                          Default English: models/parakeet-tdt-0.6b-v2-int8
+                          Other languages: selected from --lang/--language when supported
 --model-type TYPE       Model architecture hint (leave blank for auto-detect)
                           Online:  transducer, zipformer, zipformer2, conformer, lstm,
                                    paraformer, ctc, wenet_ctc, zipformer2_ctc
@@ -319,6 +216,10 @@ sherox.tts --text "Halo dunia"
 # Japanese via Piper Plus Tsukuyomi
 sherox.tts --text "こんにちは、今日は良い天気ですね。" --lang jpn
 ```
+
+See [TTS_MODEL.md](TTS_MODEL.md) for the supported built-in TTS languages, backends, and model details.
+
+See [SEGMENT_MODEL.md](SEGMENT_MODEL.md) for the VAD models used by `sherox.segment`.
 
 ## Architecture
 

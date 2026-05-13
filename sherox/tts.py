@@ -7,6 +7,13 @@ Usage:
     # Synthesise Japanese with Piper Plus:
     sherox.tts --text "こんにちは、今日は良い天気ですね。" --lang jpn
 
+    # Synthesise Japanese with Sarashina2.2-TTS (zero-shot voice cloning):
+    sherox.tts --text "こんにちは。" --lang jpn-sarashina \\
+        --audio-prompt prompt.wav --audio-prompt-text "プロンプトの文章。"
+
+    # Sarashina without voice cloning (default voice):
+    sherox.tts --text "こんにちは。" --lang jpn-sarashina
+
     # Read from file:
     sherox.tts --file input.txt --lang ind
 
@@ -23,8 +30,9 @@ Usage:
     sherox.tts --text "Halo" --speed 0.85
 
 Supported languages (ISO 639-3):
-    ind   Indonesian  — vits-piper-id_ID-news_tts-medium  (22050 Hz, 1 speaker)
-    jpn   Japanese    — piper-plus tsukuyomi              (22050 Hz, 1 speaker)
+    ind           Indonesian  — vits-piper-id_ID-news_tts-medium  (22050 Hz, 1 speaker)
+    jpn           Japanese    — piper-plus tsukuyomi              (22050 Hz, 1 speaker)
+    jpn-sarashina Japanese    — Sarashina2.2-TTS, zero-shot       (24000 Hz, voice cloning)
 
 Models are auto-downloaded on first use into  models/<model-dir>/  at the project root.
 """
@@ -45,6 +53,7 @@ from .utils import download_file as _download_file
 
 sf = SimpleNamespace(write=None)
 piper_runtime = None
+sarashina_runtime = None
 
 _console = Console()
 _err_console = Console(stderr=True)
@@ -129,11 +138,27 @@ _TTS_MODELS: dict[str, dict] = {
         "sample_rate": 22050,
         "description": "Japanese (Piper Plus Tsukuyomi)",
     },
+    "jpn-sarashina": {
+        "backend": "sarashina",
+        "model_id": "sbintuitions/Sarashina-TTS",
+        "sample_rate": 24000,
+        "description": "Japanese (Sarashina2.2-TTS, zero-shot voice cloning)",
+    },
 }
 
 _SUPPORTED_LANGS = ", ".join(
     f"{code} ({meta['description']})" for code, meta in _TTS_MODELS.items()
 )
+
+_LANGUAGE_ALIASES = {
+    "id": "ind",
+    "id-id": "ind",
+    "ja": "jpn",
+    "jp": "jpn",
+    "ja-jp": "jpn",
+    "sarashina": "jpn-sarashina",
+    "jpn_sarashina": "jpn-sarashina",
+}
 
 
 def _info(msg: str) -> None:
@@ -143,6 +168,11 @@ def _info(msg: str) -> None:
 def _error(msg: str) -> None:
     _err_console.print(f"[bold red]\\[error][/bold red] {msg}")
     sys.exit(1)
+
+
+def _normalize_language(language: str) -> str:
+    normalized = language.lower().replace("_", "-")
+    return _LANGUAGE_ALIASES.get(normalized, normalized)
 
 
 def _require_soundfile():
@@ -181,6 +211,23 @@ def _require_piper_plus():
         PiperVoice=PiperVoice,
     )
     return piper_runtime
+
+
+def _require_sarashina():
+    global sarashina_runtime
+    if sarashina_runtime is not None:
+        return sarashina_runtime
+    try:
+        from sarashina_tts.generate.generate import SarashinaTTSGenerator  # noqa: PLC0415
+    except ImportError as exc:  # pragma: no cover - depends on environment
+        _error(
+            "sarashina-tts is required for Sarashina Japanese TTS. "
+            "Install it with: pip install 'sherox[tts-ja-sarashina]' or "
+            "git clone https://github.com/sbintuitions/sarashina2.2-tts && pip install -e sarashina2.2-tts"
+        )
+        raise AssertionError("unreachable") from exc
+    sarashina_runtime = SimpleNamespace(SarashinaTTSGenerator=SarashinaTTSGenerator)
+    return sarashina_runtime
 
 
 def _validate_runtime_args(args: argparse.Namespace) -> None:
@@ -248,6 +295,18 @@ def parse_args() -> argparse.Namespace:
         default=4,
         help="CPU thread count for ONNX runtime",
     )
+    parser.add_argument(
+        "--audio-prompt",
+        default=None,
+        metavar="PATH",
+        help="Reference WAV for zero-shot voice cloning (jpn-sarashina backend only)",
+    )
+    parser.add_argument(
+        "--audio-prompt-text",
+        default="",
+        metavar="TEXT",
+        help="Transcript of the --audio-prompt reference audio",
+    )
     return parser.parse_args()
 
 
@@ -269,6 +328,7 @@ def _safe_tar_members(tf: tarfile.TarFile, dest_dir: Path):
 
 def _ensure_model(lang: str, model_dir: Optional[Path], project_dir: Path) -> Path:
     """Return the resolved TTS model directory, downloading if needed."""
+    lang = _normalize_language(lang)
     if lang not in _TTS_MODELS:
         _error(
             f"Unsupported language '{lang}'. Supported: {list(_TTS_MODELS.keys())}"
@@ -321,7 +381,7 @@ def _ensure_model(lang: str, model_dir: Optional[Path], project_dir: Path) -> Pa
 def build_tts(cfg: TtsConfig, project_dir: Path):
     """Build a TTS backend instance from *cfg*."""
 
-    lang = cfg.language
+    lang = _normalize_language(cfg.language)
     if lang not in _TTS_MODELS:
         _error(
             f"Unsupported language '{lang}'. Supported: {list(_TTS_MODELS.keys())}"
@@ -349,6 +409,22 @@ def build_tts(cfg: TtsConfig, project_dir: Path):
             backend="piper_plus",
             model=piper_plus_mod.PiperVoice.load(model_path, config_path),
             language_id=meta["language_id"],
+        )
+
+    if meta["backend"] == "sarashina":
+        sarashina_mod = _require_sarashina()
+        models_root = project_dir / "models" / "sarashina"
+        models_root.mkdir(parents=True, exist_ok=True)
+        model_dir = cfg.model_dir if cfg.model_dir else str(models_root)
+        import torch  # noqa: PLC0415
+        use_cuda = torch.cuda.is_available()
+        generator = sarashina_mod.SarashinaTTSGenerator(
+            model_dir=model_dir,
+            decoder_fp16=use_cuda,
+        )
+        return SimpleNamespace(
+            backend="sarashina",
+            model=generator,
         )
 
     import sherpa_onnx  # noqa: PLC0415
@@ -414,6 +490,32 @@ def synthesise_to_file(tts, text: str, cfg: TtsConfig) -> Optional[tuple[np.ndar
         samples, sample_rate = soundfile.read(cfg.output, dtype="float32")
         return np.asarray(samples, dtype=np.float32), sample_rate
 
+    if backend == "sarashina":
+        generator = tts.model
+        audio_prompt_path = cfg.audio_prompt or None
+        audio_prompt_text = cfg.audio_prompt_text or ""
+
+        if audio_prompt_path:
+            audio_prompt_tokens = generator._extract_audio_prompt_tokens(audio_prompt_path)
+            flow_embedding = generator._extract_zero_shot_embedding(audio_prompt_path)
+            audio_prompt_feat = generator._extract_audio_prompt_feat(audio_prompt_path)
+            wavs = generator.generate(
+                [text],
+                flow_embedding=flow_embedding,
+                audio_prompt_text=audio_prompt_text,
+                audio_prompt_tokens=audio_prompt_tokens,
+                audio_prompt_feat=audio_prompt_feat,
+                audio_prompt_path=audio_prompt_path,
+            )
+        else:
+            wavs = generator.generate([text], flow_embedding=None)
+
+        samples = wavs[0].cpu().numpy().astype(np.float32)
+        sample_rate = 24000
+        soundfile = _require_soundfile()
+        soundfile.write(cfg.output, samples, samplerate=sample_rate)
+        return samples, sample_rate
+
     _error(f"Unsupported TTS backend: {backend}")
     raise AssertionError("unreachable")
 
@@ -454,15 +556,20 @@ def main() -> None:
     if not text:
         _error("No text provided. Use --text, --file, or pipe text via stdin.")
 
+    if args.audio_prompt and not Path(args.audio_prompt).exists():
+        _error(f"Audio prompt file not found: {args.audio_prompt}")
+
     model_dir_arg = Path(args.model_dir) if args.model_dir else None
     cfg = TtsConfig(
         model_dir=str(model_dir_arg) if model_dir_arg else "",
-        language=args.lang,
+        language=_normalize_language(args.lang),
         speaker_id=args.speaker_id,
         speed=args.speed,
         output=args.output,
         play=args.play,
         num_threads=args.threads,
+        audio_prompt=args.audio_prompt or "",
+        audio_prompt_text=args.audio_prompt_text or "",
     )
 
     _info(f"Language: {cfg.language}  |  speed: {cfg.speed}  |  speaker: {cfg.speaker_id}")

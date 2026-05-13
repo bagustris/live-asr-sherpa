@@ -227,16 +227,17 @@ def test_transcribe_online_collects_endpoint_text():
     assert "first segment" in result
 
 
-def test_load_audio_raises_when_resample_needed_and_resampy_missing(tmp_path):
-    """load_audio raises RuntimeError when sr != target_sr and resampy is absent."""
+def test_load_audio_falls_back_to_scipy_when_soxr_missing(tmp_path):
+    """load_audio falls back to scipy.signal.resample_poly when soxr is absent."""
     import soundfile as sf
 
     path = str(tmp_path / "audio48k.wav")
     sf.write(path, np.zeros(48000, dtype=np.float32), 48000)
 
-    with patch.dict("sys.modules", {"resampy": None}):
-        with pytest.raises(RuntimeError, match="resampy not installed"):
-            bm.load_audio(path, target_sr=16000)
+    with patch.dict("sys.modules", {"soxr": None}):
+        audio, duration = bm.load_audio(path, target_sr=16000)
+    assert duration == pytest.approx(1.0)
+    assert len(audio) == 16000
 
 
 def test_load_audio_no_error_when_sample_rates_match(tmp_path):

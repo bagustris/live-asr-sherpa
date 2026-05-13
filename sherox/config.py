@@ -11,7 +11,7 @@ from dataclasses import dataclass
 class Config:
     """Configuration for the ASR module (sherox.asr)."""
 
-    model_dir: str = "models/zipformer-en-2023"
+    model_dir: str = "models/parakeet-tdt-0.6b-v2-int8"
     sample_rate: int = 16000
     chunk_size: float = 0.16    # seconds (~2560 samples at 16 kHz)
     num_threads: int = 4
@@ -117,3 +117,7 @@ class TtsConfig:
 
     # Play audio through the default output device instead of (or in addition to) saving.
     play: bool = False
+
+    # Sarashina backend — zero-shot voice cloning parameters.
+    audio_prompt: str = ""       # Path to reference WAV file (empty = default voice)
+    audio_prompt_text: str = ""  # Transcript of the reference audio

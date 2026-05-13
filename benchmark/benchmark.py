@@ -76,8 +76,8 @@ from metrics import AggregateMetrics, UtteranceResult  # noqa: E402
 
 # Default paths
 DEFAULT_DATA_DIR = "/data/LibriSpeech/dev-clean-2"
-DEFAULT_ONLINE_MODEL_DIR = str(_PROJECT_DIR / "models" / "zipformer-en-2023")
-DEFAULT_OFFLINE_MODEL_DIR = str(_PROJECT_DIR / "models" / "parakeet-tdt-0.6b-v2")
+DEFAULT_ONLINE_MODEL_DIR = str(_PROJECT_DIR / "models" / "parakeet-tdt-0.6b-v2-int8")
+DEFAULT_OFFLINE_MODEL_DIR = str(_PROJECT_DIR / "models" / "parakeet-tdt-0.6b-v2-int8")
 
 
 def _require_soundfile():
@@ -407,8 +407,7 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="PATH",
         help=(
             "Path to the model directory. "
-            "Default: models/zipformer-en-2023 (online) or "
-            "models/parakeet-tdt-0.6b-v2 (--offline)."
+            "Default: models/parakeet-tdt-0.6b-v2-int8."
         ),
     )
     p.add_argument(
@@ -490,7 +489,8 @@ def main() -> None:
 
     # Resolve model directory
     if args.model_dir is None:
-        model_dir = DEFAULT_OFFLINE_MODEL_DIR if args.offline else DEFAULT_ONLINE_MODEL_DIR
+        model_dir = DEFAULT_OFFLINE_MODEL_DIR
+        args.offline = True
     else:
         model_dir = args.model_dir
 

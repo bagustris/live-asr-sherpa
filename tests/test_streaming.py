@@ -219,6 +219,56 @@ class TestRunStreaming:
 
         assert "mic:" not in capsys.readouterr().out
 
+    def test_final_only_suppresses_partial(self, capsys):
+        """When final_only=True, intermediate partial hypotheses are not printed."""
+        rec, stream = self._make_recognizer()
+        partials = ["partial one", "partial two longer"]
+        rec.get_result.side_effect = [
+            MagicMock(strip=MagicMock(return_value=p)) for p in partials
+        ]
+        rec.is_endpoint.return_value = False
+
+        with patch("sherox.streaming._flush_tail"):
+            run_streaming(
+                rec,
+                iter([np.zeros(2560, dtype="float32"),
+                      np.zeros(2560, dtype="float32")]),
+                final_only=True,
+            )
+
+        out = capsys.readouterr().out
+        assert "partial" not in out
+
+    def test_final_only_still_prints_finalised_segment(self, capsys):
+        """final_only must NOT suppress finalised endpoint segments."""
+        rec, stream = self._make_recognizer()
+        rec.get_result.return_value = MagicMock(
+            strip=MagicMock(return_value="final segment")
+        )
+        rec.is_endpoint.return_value = True
+
+        with patch("sherox.streaming._flush_tail"):
+            run_streaming(
+                rec,
+                iter([np.zeros(2560, dtype="float32")]),
+                final_only=True,
+            )
+
+        assert "final segment" in capsys.readouterr().out
+
+    def test_final_only_default_is_false(self, capsys):
+        """Omitting final_only keeps the previous partial-output behaviour."""
+        rec, stream = self._make_recognizer()
+        rec.get_result.return_value = MagicMock(
+            strip=MagicMock(return_value="streaming partial")
+        )
+        rec.is_endpoint.return_value = False
+
+        with patch("sherox.streaming._flush_tail"):
+            run_streaming(rec, iter([np.zeros(2560, dtype="float32")]))
+
+        assert "streaming partial" in capsys.readouterr().out
+
 
 # ---------------------------------------------------------------------------
 # run_offline_vad_streaming

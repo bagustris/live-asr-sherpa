@@ -57,6 +57,11 @@ class TestParseArgs:
             args = tts_module.parse_args()
         assert args.lang == "jpn"
 
+    def test_custom_lang_alias(self):
+        with patch("sys.argv", ["sherox.tts", "--lang", "jp"]):
+            args = tts_module.parse_args()
+        assert args.lang == "jp"
+
     def test_custom_speed(self):
         with patch("sys.argv", ["sherox.tts", "--speed", "0.8"]):
             args = tts_module.parse_args()
@@ -208,8 +213,15 @@ class TestSafeTarMembers:
 # ---------------------------------------------------------------------------
 
 class TestEnsureModel:
+    def test_language_alias_is_normalized(self, tmp_path):
+        meta = tts_module._TTS_MODELS["ind"]
+        target = tmp_path / "models" / meta["extracted"]
+        target.mkdir(parents=True)
+        result = tts_module._ensure_model("id", None, tmp_path)
+        assert result == target
+
     def test_returns_existing_target_dir(self, tmp_path):
-        meta = list(tts_module._TTS_MODELS.values())[0]
+        meta = tts_module._TTS_MODELS["ind"]
         target = tmp_path / "models" / meta["extracted"]
         target.mkdir(parents=True)
         result = tts_module._ensure_model("ind", None, tmp_path)
@@ -230,7 +242,7 @@ class TestEnsureModel:
             tts_module._ensure_model("ind", tmp_path / "no_such_dir", tmp_path)
 
     def test_downloads_and_extracts_when_missing(self, tmp_path):
-        meta = list(tts_module._TTS_MODELS.values())[0]
+        meta = tts_module._TTS_MODELS["ind"]
         target = tmp_path / "models" / meta["extracted"]
 
         def fake_download(url, dest):
@@ -290,7 +302,7 @@ class TestEnsureModel:
 
 class TestBuildTts:
     def test_builds_successfully(self, tmp_path):
-        meta = list(tts_module._TTS_MODELS.values())[0]
+        meta = tts_module._TTS_MODELS["ind"]
         model_dir = tmp_path / meta["extracted"]
         model_dir.mkdir()
         (model_dir / meta["model"]).touch()
@@ -338,7 +350,7 @@ class TestBuildTts:
             tts_module.build_tts(cfg, tmp_path)
 
     def test_exits_on_invalid_config(self, tmp_path):
-        meta = list(tts_module._TTS_MODELS.values())[0]
+        meta = tts_module._TTS_MODELS["ind"]
         model_dir = tmp_path / meta["extracted"]
         model_dir.mkdir()
         (model_dir / meta["model"]).touch()
@@ -380,21 +392,15 @@ class TestBuildTts:
 
     def test_require_piper_plus_imports_when_not_cached(self):
         import sherox.tts as tts_module
-        mock_piper = SimpleNamespace(
-            get_voices=MagicMock(),
-            ensure_voice_exists=MagicMock(),
-            find_voice=MagicMock(),
-            PiperVoice=MagicMock(),
-        )
         original = tts_module.piper_runtime
         try:
             tts_module.piper_runtime = None
-            with patch.dict("sys.modules", {"piper.download": MagicMock(), "piper.voice": MagicMock()}):
-                with patch("piper.download.ensure_voice_exists", return_value=mock_piper.ensure_voice_exists), \
-                     patch("piper.download.find_voice", return_value=mock_piper.find_voice), \
-                     patch("piper.download.get_voices", return_value=mock_piper.get_voices), \
-                     patch("piper.voice.PiperVoice", return_value=mock_piper.PiperVoice):
-                    result = tts_module._require_piper_plus()
+            with patch.dict("sys.modules", {
+                "piper": MagicMock(),
+                "piper.download": MagicMock(),
+                "piper.voice": MagicMock(),
+            }):
+                result = tts_module._require_piper_plus()
             assert result is not None
             assert hasattr(result, "ensure_voice_exists")
         finally:
@@ -601,6 +607,17 @@ class TestMain:
             tts_module.main()
         mock_sf.write.assert_called_once()
 
+    def test_main_normalizes_language_alias(self, tmp_path):
+        out = str(tmp_path / "out.wav")
+        mock_sf = MagicMock()
+        with patch("sys.argv", ["sherox.tts", "--text", "Hi", "--lang", "jp", "--output", out]), \
+             patch.object(tts_module, "build_tts", return_value=self._mock_tts()) as mock_build, \
+             patch.object(tts_module, "_require_soundfile", return_value=mock_sf):
+            tts_module.main()
+
+        cfg = mock_build.call_args[0][0]
+        assert cfg.language == "jpn"
+
 
 # ---------------------------------------------------------------------------
 # _require_soundfile — success path
@@ -623,3 +640,244 @@ class TestRequireSoundfileTts:
         with patch.object(tts_module, "sf", fake_sf):
             result = tts_module._require_soundfile()
         assert result is fake_sf
+
+
+# ---------------------------------------------------------------------------
+# _require_sarashina
+# ---------------------------------------------------------------------------
+
+class TestRequireSarashina:
+    def test_returns_cached_runtime(self):
+        mock_sarashina = SimpleNamespace(SarashinaTTSGenerator=MagicMock())
+        original = tts_module.sarashina_runtime
+        try:
+            tts_module.sarashina_runtime = mock_sarashina
+            result = tts_module._require_sarashina()
+            assert result is mock_sarashina
+        finally:
+            tts_module.sarashina_runtime = original
+
+    def test_imports_when_not_cached(self):
+        original = tts_module.sarashina_runtime
+        try:
+            tts_module.sarashina_runtime = None
+            mock_gen = MagicMock()
+            mock_mod = MagicMock()
+            mock_mod.SarashinaTTSGenerator = mock_gen
+            with patch.dict("sys.modules", {
+                "sarashina_tts": MagicMock(),
+                "sarashina_tts.generate": MagicMock(),
+                "sarashina_tts.generate.generate": mock_mod,
+            }):
+                result = tts_module._require_sarashina()
+            assert result is not None
+            assert hasattr(result, "SarashinaTTSGenerator")
+        finally:
+            tts_module.sarashina_runtime = original
+
+
+# ---------------------------------------------------------------------------
+# build_tts — sarashina backend
+# ---------------------------------------------------------------------------
+
+class TestBuildTtsSarashina:
+    def test_builds_sarashina_successfully(self, tmp_path):
+        mock_generator = MagicMock()
+        mock_sarashina = SimpleNamespace(
+            SarashinaTTSGenerator=MagicMock(return_value=mock_generator)
+        )
+        cfg = TtsConfig(language="jpn-sarashina")
+        mock_torch = MagicMock()
+        mock_torch.cuda.is_available.return_value = False
+        with patch.object(tts_module, "_require_sarashina", return_value=mock_sarashina), \
+             patch.dict("sys.modules", {"torch": mock_torch}):
+            result = tts_module.build_tts(cfg, tmp_path)
+        assert result.backend == "sarashina"
+        assert result.model is mock_generator
+        call_kwargs = mock_sarashina.SarashinaTTSGenerator.call_args[1]
+        assert call_kwargs["decoder_fp16"] is False
+
+    def test_builds_sarashina_fp16_enabled_on_cuda(self, tmp_path):
+        mock_generator = MagicMock()
+        mock_sarashina = SimpleNamespace(
+            SarashinaTTSGenerator=MagicMock(return_value=mock_generator)
+        )
+        cfg = TtsConfig(language="jpn-sarashina")
+        mock_torch = MagicMock()
+        mock_torch.cuda.is_available.return_value = True
+        with patch.object(tts_module, "_require_sarashina", return_value=mock_sarashina), \
+             patch.dict("sys.modules", {"torch": mock_torch}):
+            result = tts_module.build_tts(cfg, tmp_path)
+        call_kwargs = mock_sarashina.SarashinaTTSGenerator.call_args[1]
+        assert call_kwargs["decoder_fp16"] is True
+
+    def test_builds_sarashina_with_custom_model_dir(self, tmp_path):
+        custom_dir = tmp_path / "my_sarashina"
+        custom_dir.mkdir()
+        mock_generator = MagicMock()
+        mock_sarashina = SimpleNamespace(
+            SarashinaTTSGenerator=MagicMock(return_value=mock_generator)
+        )
+        cfg = TtsConfig(language="jpn-sarashina", model_dir=str(custom_dir))
+        mock_torch = MagicMock()
+        mock_torch.cuda.is_available.return_value = False
+        with patch.object(tts_module, "_require_sarashina", return_value=mock_sarashina), \
+             patch.dict("sys.modules", {"torch": mock_torch}):
+            result = tts_module.build_tts(cfg, tmp_path)
+        assert result.backend == "sarashina"
+        call_kwargs = mock_sarashina.SarashinaTTSGenerator.call_args[1]
+        assert call_kwargs["model_dir"] == str(custom_dir)
+
+    def test_sarashina_alias_resolves(self, tmp_path):
+        mock_generator = MagicMock()
+        mock_sarashina = SimpleNamespace(
+            SarashinaTTSGenerator=MagicMock(return_value=mock_generator)
+        )
+        cfg = TtsConfig(language="sarashina")
+        mock_torch = MagicMock()
+        mock_torch.cuda.is_available.return_value = False
+        with patch.object(tts_module, "_require_sarashina", return_value=mock_sarashina), \
+             patch.dict("sys.modules", {"torch": mock_torch}):
+            result = tts_module.build_tts(cfg, tmp_path)
+        assert result.backend == "sarashina"
+
+    def test_ensure_model_exits_for_sarashina_backend(self, tmp_path):
+        with pytest.raises(SystemExit):
+            tts_module._ensure_model("jpn-sarashina", None, tmp_path)
+
+
+# ---------------------------------------------------------------------------
+# synthesise_to_file — sarashina backend
+# ---------------------------------------------------------------------------
+
+class TestSynthesiseToFileSarashina:
+    def _make_tts(self):
+        mock_generator = MagicMock()
+        import torch
+        mock_wav = torch.zeros(24000)
+        mock_generator.generate.return_value = [mock_wav]
+        return SimpleNamespace(backend="sarashina", model=mock_generator)
+
+    def test_synthesise_without_audio_prompt(self):
+        try:
+            import torch
+        except ImportError:
+            pytest.skip("torch not installed")
+        tts = self._make_tts()
+        mock_sf = MagicMock()
+        cfg = TtsConfig(language="jpn-sarashina", output="out.wav")
+        with patch.object(tts_module, "_require_soundfile", return_value=mock_sf):
+            result = tts_module.synthesise_to_file(tts, "こんにちは。", cfg)
+        tts.model.generate.assert_called_once_with(["こんにちは。"], flow_embedding=None)
+        assert result[1] == 24000
+        mock_sf.write.assert_called_once()
+
+    def test_synthesise_with_audio_prompt(self, tmp_path):
+        try:
+            import torch
+        except ImportError:
+            pytest.skip("torch not installed")
+        prompt_file = tmp_path / "prompt.wav"
+        prompt_file.touch()
+        tts = self._make_tts()
+        mock_sf = MagicMock()
+        cfg = TtsConfig(
+            language="jpn-sarashina",
+            output="out.wav",
+            audio_prompt=str(prompt_file),
+            audio_prompt_text="テスト音声です。",
+        )
+        with patch.object(tts_module, "_require_soundfile", return_value=mock_sf):
+            result = tts_module.synthesise_to_file(tts, "こんにちは。", cfg)
+        tts.model._extract_audio_prompt_tokens.assert_called_once_with(str(prompt_file))
+        tts.model._extract_zero_shot_embedding.assert_called_once_with(str(prompt_file))
+        tts.model._extract_audio_prompt_feat.assert_called_once_with(str(prompt_file))
+        tts.model.generate.assert_called_once()
+        assert result[1] == 24000
+
+    def test_synthesise_returns_float32(self):
+        try:
+            import torch
+        except ImportError:
+            pytest.skip("torch not installed")
+        tts = self._make_tts()
+        mock_sf = MagicMock()
+        cfg = TtsConfig(language="jpn-sarashina", output="out.wav")
+        with patch.object(tts_module, "_require_soundfile", return_value=mock_sf):
+            samples, sr = tts_module.synthesise_to_file(tts, "テスト", cfg)
+        assert samples.dtype == np.float32
+
+
+# ---------------------------------------------------------------------------
+# parse_args — audio-prompt args
+# ---------------------------------------------------------------------------
+
+class TestParseArgsAudioPrompt:
+    def test_audio_prompt_default_none(self):
+        with patch("sys.argv", ["sherox.tts"]):
+            args = tts_module.parse_args()
+        assert args.audio_prompt is None
+        assert args.audio_prompt_text == ""
+
+    def test_audio_prompt_set(self):
+        with patch("sys.argv", ["sherox.tts", "--audio-prompt", "ref.wav"]):
+            args = tts_module.parse_args()
+        assert args.audio_prompt == "ref.wav"
+
+    def test_audio_prompt_text_set(self):
+        with patch("sys.argv", ["sherox.tts", "--audio-prompt-text", "テスト"]):
+            args = tts_module.parse_args()
+        assert args.audio_prompt_text == "テスト"
+
+
+# ---------------------------------------------------------------------------
+# main — sarashina integration
+# ---------------------------------------------------------------------------
+
+class TestMainSarashina:
+    def _mock_sarashina_tts(self):
+        try:
+            import torch
+        except ImportError:
+            return None
+        mock_generator = MagicMock()
+        mock_wav = torch.zeros(24000)
+        mock_generator.generate.return_value = [mock_wav]
+        return SimpleNamespace(backend="sarashina", model=mock_generator)
+
+    def test_main_exits_when_audio_prompt_not_found(self, tmp_path):
+        out = str(tmp_path / "out.wav")
+        with patch("sys.argv", [
+            "sherox.tts", "--text", "こんにちは。",
+            "--lang", "jpn-sarashina",
+            "--audio-prompt", str(tmp_path / "missing.wav"),
+            "--output", out,
+        ]), pytest.raises(SystemExit):
+            tts_module.main()
+
+    def test_main_passes_audio_prompt_to_cfg(self, tmp_path):
+        try:
+            import torch
+        except ImportError:
+            pytest.skip("torch not installed")
+        prompt_file = tmp_path / "prompt.wav"
+        prompt_file.touch()
+        out = str(tmp_path / "out.wav")
+        mock_tts = self._mock_sarashina_tts()
+        if mock_tts is None:
+            pytest.skip("torch not installed")
+        mock_sf = MagicMock()
+        with patch("sys.argv", [
+            "sherox.tts", "--text", "こんにちは。",
+            "--lang", "jpn-sarashina",
+            "--audio-prompt", str(prompt_file),
+            "--audio-prompt-text", "プロンプト。",
+            "--output", out,
+        ]), \
+        patch.object(tts_module, "build_tts", return_value=mock_tts) as mock_build, \
+        patch.object(tts_module, "_require_soundfile", return_value=mock_sf):
+            tts_module.main()
+        cfg = mock_build.call_args[0][0]
+        assert cfg.audio_prompt == str(prompt_file)
+        assert cfg.audio_prompt_text == "プロンプト。"
+        assert cfg.language == "jpn-sarashina"

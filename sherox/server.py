@@ -4,7 +4,7 @@ Usage:
     # Offline (VAD-segmented), Cohere Transcribe multilingual:
     sherox.server --offline --model-type cohere_transcribe --language ja
 
-    # Online (streaming), default zipformer English:
+    # Default English Parakeet int8:
     sherox.server --host 0.0.0.0 --port 8000
 
     # Custom host/port with Whisper:
@@ -329,7 +329,7 @@ _OFFLINE_ONLY_NAME_PATTERNS = (
     "fire_red_asr", "cohere", "reazonspeech",
 )
 _MODEL_TARGET = "zipformer-en-2023"
-_PARAKEET_TARGET = "parakeet-tdt-0.6b-v2"
+_PARAKEET_TARGET = "parakeet-tdt-0.6b-v2-int8"
 _COHERE_TARGET = "cohere-transcribe-14-lang-int8"
 _REAZON_JA_TARGET = "reazonspeech-ja"
 _REAZON_JA_EN_TARGET = "reazonspeech-ja-en"
@@ -390,7 +390,11 @@ def main() -> None:
             raw_model_dir = f"models/{_REAZON_JA_EN_MLS_TARGET}"
         elif args.model_type == "cohere_transcribe":
             raw_model_dir = f"models/{_COHERE_TARGET}"
-        elif args.offline:
+        elif (
+            args.offline
+            or args.model_type == "nemo_transducer"
+            or args.language.lower() in {"en", "eng"}
+        ):
             raw_model_dir = f"models/{_PARAKEET_TARGET}"
         else:
             raw_model_dir = f"models/{_MODEL_TARGET}"

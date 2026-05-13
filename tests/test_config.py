@@ -4,7 +4,7 @@ from sherox.config import Config, SegmentConfig, TtsConfig
 
 
 def test_default_model_dir():
-    assert Config().model_dir == "models/zipformer-en-2023"
+    assert Config().model_dir == "models/parakeet-tdt-0.6b-v2-int8"
 
 
 def test_default_sample_rate():

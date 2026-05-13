@@ -249,6 +249,7 @@ def run_streaming(
     word_timestamps: bool = False,
     punctuation: Any = None,
     subtitles: Optional[list[tuple[float, float, str]]] = None,
+    final_only: bool = False,
 ) -> None:
     """Feed incremental audio chunks into the recognizer and render output.
 
@@ -271,6 +272,9 @@ def run_streaming(
 
     When *subtitles* is a list, finalised (start_s, end_s, text) tuples are
     appended to it for later serialisation.
+
+    When *final_only* is ``True``, intermediate partial hypotheses are suppressed
+    and only finalised segments are printed.
     """
     stream = recognizer.create_stream()
     last_partial = ""
@@ -381,9 +385,12 @@ def run_streaming(
                 audio_buf.clear()
                 last_partial = ""
             elif text != last_partial:
-                sys.stdout.write(f"\r{_PREFIX}{text}")
-                sys.stdout.flush()
-                last_partial = text
+                if not final_only:
+                    sys.stdout.write(f"\r{_PREFIX}{text}")
+                    sys.stdout.flush()
+                    last_partial = text
+                else:
+                    last_partial = ""
 
             elapsed_s += chunk_s
 

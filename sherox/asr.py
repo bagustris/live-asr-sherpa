@@ -1,7 +1,7 @@
 """Streaming ASR — entry point.
 
 Usage:
-    # Zipformer streaming (default, auto-detects model type):
+    # Parakeet English int8 (default, offline, auto-detects model type):
     sherox.asr --mic
     sherox.asr --wav path/to/audio.wav
 
@@ -32,6 +32,10 @@ Usage:
     sherox.asr --mic --model-type ja-en-mls-5k
     sherox.asr --wav path/to/audio.wav --model-type ja-en-mls-5k
 
+    # NeMo Parakeet CTC Japanese (offline, 0.6B int8, 35k vocab):
+    sherox.asr --mic --model-type parakeet-ctc-ja
+    sherox.asr --wav path/to/audio.wav --model-type parakeet-ctc-ja
+
     # Cohere Transcribe multilingual (offline, 14 languages):
     sherox.asr --mic --offline --model-type cohere_transcribe --language en
     sherox.asr --wav path/to/audio.wav --offline --model-type cohere_transcribe --language zh
@@ -54,12 +58,14 @@ Usage:
     sherox.asr --mic --offline --diarization --speaker-tag
 
     Models are stored under  models/<model-name>/  at the project root:
-      models/zipformer-en-2023/            (online transducer, default)
+      models/parakeet-tdt-0.6b-v2-int8/    (offline, int8, default English)
+      models/zipformer-en-2023/            (online transducer)
       models/parakeet-tdt-0.6b-v2/         (offline, fp16 — larger, more accurate)
       models/parakeet-tdt-0.6b-v2-int8/    (offline, int8 — smaller & faster)
       models/reazonspeech-ja/              (offline, ReazonSpeech Japanese)
       models/reazonspeech-ja-en/           (offline, ReazonSpeech bilingual ja-en)
       models/reazonspeech-ja-en-mls-5k/    (offline, ReazonSpeech + MLS 5k bilingual)
+      models/parakeet-ctc-ja-int8/         (offline, NeMo Parakeet CTC Japanese int8)
       models/cohere-transcribe-14-lang-int8/  (offline, Cohere Transcribe multilingual)
       models/zipformer-multilingual-2025-02-10/  (online, 9 languages including Indonesian)
       models/silero_vad.onnx               (VAD, shared for offline use)
@@ -71,13 +77,14 @@ Usage:
                                  zipformer2_ctc, multilingual_streaming
     Offline --model-type values: (blank), transducer, nemo_transducer, paraformer,
                                  whisper, ctc, nemo_ctc, sense_voice, moonshine,
-                                 fire_red_asr, cohere_transcribe, ja, ja-en, ja-en-mls-5k
+                                 fire_red_asr, cohere_transcribe, ja, ja-en, ja-en-mls-5k,
+                                 parakeet-ctc-ja
 """
 
 import argparse
+from contextlib import nullcontext
 import sys
 import tarfile
-import urllib.request
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -156,7 +163,8 @@ def parse_args() -> argparse.Namespace:
         metavar="PATH",
         help=(
             "Path to the model directory. "
-            "Default: models/zipformer-en-2023 (online) or models/parakeet-tdt-0.6b-v2 (--offline)."
+            "Default: models/parakeet-tdt-0.6b-v2-int8 for English, "
+            "or a language-specific model when --lang/--language is set."
         ),
     )
     parser.add_argument("--sample-rate", type=int, default=16000, help="Audio sample rate (Hz)")
@@ -176,6 +184,7 @@ def parse_args() -> argparse.Namespace:
             "sense_voice, moonshine, fire_red_asr, cohere_transcribe. "
             "ReazonSpeech (offline): ja (Japanese), ja-en (bilingual Japanese-English), "
             "ja-en-mls-5k (bilingual trained on ReazonSpeech + MLS English 5k). "
+            "NeMo Parakeet CTC (offline): parakeet-ctc-ja (Japanese 0.6B int8). "
             "See https://k2-fsa.github.io/sherpa/onnx/pretrained_models/"
         ),
     )
@@ -209,6 +218,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--language",
+        "--lang",
         default="en",
         metavar="LANG",
         help="Language code for Whisper and SenseVoice models (e.g. en, zh, ja)",
@@ -302,6 +312,11 @@ def parse_args() -> argparse.Namespace:
         choices=["txt", "srt", "vtt"],
         help="Subtitle/transcript format for --output-dir (default: txt)",
     )
+    parser.add_argument(
+        "--final-only",
+        action="store_true",
+        help="Suppress intermediate partial transcripts; print only finalised segments",
+    )
     return parser.parse_args()
 
 
@@ -329,8 +344,8 @@ _PARAKEET_INT8_ARCHIVE = "sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8.tar.bz2"
 _PARAKEET_INT8_EXTRACTED = "sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8"
 _PARAKEET_INT8_TARGET = "parakeet-tdt-0.6b-v2-int8"
 
-# Default offline model (fp16)
-_PARAKEET_TARGET = _PARAKEET_FP16_TARGET
+# Default English model (offline int8)
+_PARAKEET_TARGET = _PARAKEET_INT8_TARGET
 
 # ── ReazonSpeech model URLs ───────────────────────────────────────────────────
 # ja: Japanese-only model (https://huggingface.co/reazon-research/reazonspeech-k2-v2)
@@ -356,6 +371,16 @@ _REAZON_JA_EN_EXTRACTED = "sherpa-onnx-zipformer-ja-en-reazonspeech-2025-01-17"
 _REAZON_JA_EN_TARGET = "reazonspeech-ja-en"
 _REAZON_JA_EN_MLS_TARGET = "reazonspeech-ja-en-mls-5k"
 
+# ── NeMo Parakeet CTC Japanese model URLs ─────────────────────────────────────
+# Japanese NeMo CTC model (0.6B parameters, 35k vocabulary, int8 quantized)
+_PARAKEET_CTC_JA_INT8_URL = (
+    "https://github.com/k2-fsa/sherpa-onnx/releases/download/"
+    "asr-models/sherpa-onnx-nemo-parakeet-tdt_ctc-0.6b-ja-35000-int8.tar.bz2"
+)
+_PARAKEET_CTC_JA_INT8_ARCHIVE = "sherpa-onnx-nemo-parakeet-tdt_ctc-0.6b-ja-35000-int8.tar.bz2"
+_PARAKEET_CTC_JA_INT8_EXTRACTED = "sherpa-onnx-nemo-parakeet-tdt_ctc-0.6b-ja-35000-int8"
+_PARAKEET_CTC_JA_INT8_TARGET = "parakeet-ctc-ja-int8"
+
 # ── Cohere Transcribe model URLs ──────────────────────────────────────────────
 # Multilingual model supporting 14 languages
 # (https://huggingface.co/CohereLabs/cohere-transcribe-03-2026)
@@ -377,6 +402,28 @@ _MULTILINGUAL_STREAMING_URL = (
 _MULTILINGUAL_STREAMING_ARCHIVE = "sherpa-onnx-streaming-zipformer-ar_en_id_ja_ru_th_vi_zh-2025-02-10.tar.bz2"
 _MULTILINGUAL_STREAMING_EXTRACTED = "sherpa-onnx-streaming-zipformer-ar_en_id_ja_ru_th_vi_zh-2025-02-10"
 _MULTILINGUAL_STREAMING_TARGET = "zipformer-multilingual-2025-02-10"
+
+_LANGUAGE_ALIASES = {
+    "eng": "en",
+    "jpn": "ja",
+    "jp": "ja",
+    "cmn": "zh",
+    "zho": "zh",
+    "zh-cn": "zh",
+    "zh-tw": "zh",
+    "ind": "id",
+}
+
+_ASR_LANGUAGE_DEFAULTS = {
+    "en": ("", _PARAKEET_TARGET),
+    "ja": ("ja", _REAZON_JA_TARGET),
+    "id": ("multilingual_streaming", _MULTILINGUAL_STREAMING_TARGET),
+    "zh": ("multilingual_streaming", _MULTILINGUAL_STREAMING_TARGET),
+    "ar": ("multilingual_streaming", _MULTILINGUAL_STREAMING_TARGET),
+    "ru": ("multilingual_streaming", _MULTILINGUAL_STREAMING_TARGET),
+    "th": ("multilingual_streaming", _MULTILINGUAL_STREAMING_TARGET),
+    "vi": ("multilingual_streaming", _MULTILINGUAL_STREAMING_TARGET),
+}
 
 _VAD_URL = (
     "https://github.com/k2-fsa/sherpa-onnx/releases/download/"
@@ -459,6 +506,11 @@ def _download_model(model_dir: str, model_type: str) -> None:
         url = _REAZON_JA_EN_URL
         archive_name = _REAZON_JA_EN_ARCHIVE
         extracted_name = _REAZON_JA_EN_EXTRACTED
+    # NeMo Parakeet CTC Japanese model
+    elif model_type == "parakeet-ctc-ja" or model_dir.name == _PARAKEET_CTC_JA_INT8_TARGET:
+        url = _PARAKEET_CTC_JA_INT8_URL
+        archive_name = _PARAKEET_CTC_JA_INT8_ARCHIVE
+        extracted_name = _PARAKEET_CTC_JA_INT8_EXTRACTED
     # Cohere Transcribe multilingual model
     elif model_type == "cohere_transcribe" or model_dir.name == _COHERE_TRANSCRIBE_TARGET:
         url = _COHERE_TRANSCRIBE_URL
@@ -526,6 +578,36 @@ def _download_model(model_dir: str, model_type: str) -> None:
 def _validate_model(model_dir: str, model_type: str) -> None:
     if not Path(model_dir).is_dir():
         _download_model(model_dir, model_type)
+
+
+def _normalize_language(language: str) -> str:
+    normalized = language.lower().replace("_", "-")
+    return _LANGUAGE_ALIASES.get(normalized, normalized)
+
+
+def _resolve_default_model(language: str, model_type: str, offline: bool) -> tuple[str, str]:
+    """Return (model_type, model_dir_name) for omitted --model-dir."""
+    if model_type == "parakeet-ctc-ja":
+        return model_type, _PARAKEET_CTC_JA_INT8_TARGET
+    if model_type == "ja":
+        return model_type, _REAZON_JA_TARGET
+    if model_type == "ja-en":
+        return model_type, _REAZON_JA_EN_TARGET
+    if model_type == "ja-en-mls-5k":
+        return model_type, _REAZON_JA_EN_MLS_TARGET
+    if model_type == "cohere_transcribe":
+        return model_type, _COHERE_TRANSCRIBE_TARGET
+    if model_type == "multilingual_streaming":
+        return model_type, _MULTILINGUAL_STREAMING_TARGET
+    if model_type == "nemo_transducer":
+        return model_type, _PARAKEET_TARGET
+    if model_type:
+        return model_type, _PARAKEET_TARGET if offline else _MODEL_TARGET
+    if language in _ASR_LANGUAGE_DEFAULTS:
+        return _ASR_LANGUAGE_DEFAULTS[language]
+    if offline:
+        return model_type, _PARAKEET_TARGET
+    return model_type, _MODEL_TARGET
 
 
 def _validate_vad(vad_type: str, ten_vad_model: str, offline: bool, project_dir: Path) -> str:
@@ -697,25 +779,16 @@ def main() -> None:
     _validate_runtime_args(args)
     # Normalize once so all downstream comparisons are case-insensitive.
     args.model_type = args.model_type.lower()
+    args.language = _normalize_language(args.language)
 
     # Resolve paths relative to the project root (one level above src/).
     project_dir = Path(__file__).resolve().parent.parent
     # Use a type-specific default dir when the user didn't pass --model-dir explicitly.
     if args.model_dir is None:
-        if args.model_type == "ja":
-            raw_model_dir = f"models/{_REAZON_JA_TARGET}"
-        elif args.model_type == "ja-en":
-            raw_model_dir = f"models/{_REAZON_JA_EN_TARGET}"
-        elif args.model_type == "ja-en-mls-5k":
-            raw_model_dir = f"models/{_REAZON_JA_EN_MLS_TARGET}"
-        elif args.model_type == "cohere_transcribe":
-            raw_model_dir = f"models/{_COHERE_TRANSCRIBE_TARGET}"
-        elif args.model_type == "multilingual_streaming":
-            raw_model_dir = f"models/{_MULTILINGUAL_STREAMING_TARGET}"
-        elif args.offline:
-            raw_model_dir = f"models/{_PARAKEET_TARGET}"
-        else:
-            raw_model_dir = f"models/{_MODEL_TARGET}"
+        args.model_type, model_dir_name = _resolve_default_model(
+            args.language, args.model_type, args.offline
+        )
+        raw_model_dir = f"models/{model_dir_name}"
     else:
         raw_model_dir = args.model_dir
     model_dir = Path(raw_model_dir)
@@ -747,7 +820,7 @@ def main() -> None:
     _validate_model(cfg.model_dir, cfg.model_type)
 
     # Auto-detect offline-only models and switch automatically.
-    _OFFLINE_ONLY_TYPES = {"nemo_transducer", "whisper", "nemo_ctc", "sense_voice", "moonshine", "fire_red_asr", "cohere_transcribe", "ja", "ja-en", "ja-en-mls-5k"}
+    _OFFLINE_ONLY_TYPES = {"nemo_transducer", "whisper", "nemo_ctc", "sense_voice", "moonshine", "fire_red_asr", "cohere_transcribe", "ja", "ja-en", "ja-en-mls-5k", "parakeet-ctc-ja"}
     _OFFLINE_ONLY_NAME_PATTERNS = ("parakeet", "nemo", "whisper", "sense_voice", "moonshine", "fire_red_asr", "cohere", "reazonspeech")
     model_name_lower = Path(cfg.model_dir).name.lower()
     if not cfg.offline and (
@@ -765,6 +838,11 @@ def main() -> None:
     _TRANSDUCER_AUTODETECT_ALIASES = {"ja", "ja-en", "ja-en-mls-5k", "multilingual_streaming"}
     if cfg.model_type in _TRANSDUCER_AUTODETECT_ALIASES:
         cfg.model_type = ""
+
+    # Remap convenience CTC aliases to the sherpa-onnx nemo_ctc model type.
+    _CTC_TYPE_ALIASES = {"parakeet-ctc-ja"}
+    if cfg.model_type in _CTC_TYPE_ALIASES:
+        cfg.model_type = "nemo_ctc"
 
     cfg.vad_model = _validate_vad(cfg.vad_type, cfg.ten_vad_model, cfg.offline, project_dir)
 
@@ -831,20 +909,26 @@ def main() -> None:
             except Exception:
                 total_s = 0.0
 
-            progress_ctx = Progress(
-                "[progress.description]{task.description}",
-                BarColumn(),
-                "[progress.percentage]{task.percentage:>3.0f}%",
-                TimeElapsedColumn(),
-                TimeRemainingColumn(),
-                console=Console(stderr=True),
-                transient=True,
+            use_progress = not args.final_only or cfg.offline
+            progress_ctx = (
+                Progress(
+                    "[progress.description]{task.description}",
+                    BarColumn(),
+                    "[progress.percentage]{task.percentage:>3.0f}%",
+                    TimeElapsedColumn(),
+                    TimeRemainingColumn(),
+                    console=Console(stderr=True),
+                    transient=True,
+                )
+                if use_progress
+                else nullcontext()
             )
             with progress_ctx as prog:
-                task_id = prog.add_task("Transcribing…", total=total_s or None)
+                task_id = prog.add_task("Transcribing…", total=total_s or None) if use_progress else None
 
                 def _progress_cb(elapsed: float, _tid=task_id, _prog=prog) -> None:
-                    _prog.update(_tid, completed=elapsed)
+                    if use_progress and _tid is not None:
+                        _prog.update(_tid, completed=elapsed)
 
                 if cfg.offline:
                     run_offline_vad_streaming(
@@ -871,6 +955,7 @@ def main() -> None:
                         word_timestamps=cfg.word_timestamps,
                         punctuation=punctuator,
                         subtitles=subtitles,
+                        final_only=args.final_only,
                     )
 
             # Write output file if requested.
@@ -912,6 +997,7 @@ def main() -> None:
                 show_speaker_tag=args.speaker_tag,
                 word_timestamps=cfg.word_timestamps,
                 punctuation=punctuator,
+                final_only=args.final_only,
             )
 
 
