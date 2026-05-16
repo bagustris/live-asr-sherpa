@@ -54,6 +54,54 @@ _VAD_URL = (
     "asr-models/silero_vad.onnx"
 )
 
+# Whisper's full set of supported language codes (ISO 639-1 + a few 3-letter
+# codes that Whisper uses verbatim — "haw", "jw"). Names are Title Case so
+# they display nicely in the terminal.
+LANGUAGE_NAMES: dict[str, str] = {
+    "en": "English", "zh": "Chinese", "de": "German", "es": "Spanish",
+    "ru": "Russian", "ko": "Korean", "fr": "French", "ja": "Japanese",
+    "pt": "Portuguese", "tr": "Turkish", "pl": "Polish", "ca": "Catalan",
+    "nl": "Dutch", "ar": "Arabic", "sv": "Swedish", "it": "Italian",
+    "id": "Indonesian", "hi": "Hindi", "fi": "Finnish", "vi": "Vietnamese",
+    "he": "Hebrew", "uk": "Ukrainian", "el": "Greek", "ms": "Malay",
+    "cs": "Czech", "ro": "Romanian", "da": "Danish", "hu": "Hungarian",
+    "ta": "Tamil", "no": "Norwegian", "th": "Thai", "ur": "Urdu",
+    "hr": "Croatian", "bg": "Bulgarian", "lt": "Lithuanian", "la": "Latin",
+    "mi": "Maori", "ml": "Malayalam", "cy": "Welsh", "sk": "Slovak",
+    "te": "Telugu", "fa": "Persian", "lv": "Latvian", "bn": "Bengali",
+    "sr": "Serbian", "az": "Azerbaijani", "sl": "Slovenian", "kn": "Kannada",
+    "et": "Estonian", "mk": "Macedonian", "br": "Breton", "eu": "Basque",
+    "is": "Icelandic", "hy": "Armenian", "ne": "Nepali", "mn": "Mongolian",
+    "bs": "Bosnian", "kk": "Kazakh", "sq": "Albanian", "sw": "Swahili",
+    "gl": "Galician", "mr": "Marathi", "pa": "Punjabi", "si": "Sinhala",
+    "km": "Khmer", "sn": "Shona", "yo": "Yoruba", "so": "Somali",
+    "af": "Afrikaans", "oc": "Occitan", "ka": "Georgian", "be": "Belarusian",
+    "tg": "Tajik", "sd": "Sindhi", "gu": "Gujarati", "am": "Amharic",
+    "yi": "Yiddish", "lo": "Lao", "uz": "Uzbek", "fo": "Faroese",
+    "ht": "Haitian Creole", "ps": "Pashto", "tk": "Turkmen", "nn": "Nynorsk",
+    "mt": "Maltese", "sa": "Sanskrit", "lb": "Luxembourgish", "my": "Myanmar",
+    "bo": "Tibetan", "tl": "Tagalog", "mg": "Malagasy", "as": "Assamese",
+    "tt": "Tatar", "haw": "Hawaiian", "ln": "Lingala", "ha": "Hausa",
+    "ba": "Bashkir", "jw": "Javanese", "su": "Sundanese", "yue": "Cantonese",
+}
+
+
+def language_name(code: str) -> str:
+    """Return the human-readable name for a Whisper language code.
+
+    Falls back to the code itself when the language is unknown so callers
+    always get something printable.
+    """
+    return LANGUAGE_NAMES.get(code.lower(), code)
+
+
+def _format_language(code: str) -> str:
+    """Format a detected language code for display, e.g. 'id (Indonesian)'."""
+    if not code or code == "unknown":
+        return "unknown"
+    name = LANGUAGE_NAMES.get(code.lower())
+    return f"{code} ({name})" if name else code
+
 
 def _info(msg: str) -> None:
     _console.print(f"[bold green]\\[info][/bold green] {msg}")
@@ -172,14 +220,26 @@ def _identify(slid, samples: np.ndarray, sample_rate: int) -> str:
     return lang if lang else "unknown"
 
 
+def _render(lang: str) -> str:
+    """Build a Rich-formatted line for a detected language code."""
+    if lang == "unknown":
+        return f"{_PREFIX}[bold yellow]unknown[/bold yellow]"
+    name = LANGUAGE_NAMES.get(lang.lower())
+    if name:
+        return (
+            f"{_PREFIX}[bold bright_cyan]{lang}[/bold bright_cyan] "
+            f"[dim]({name})[/dim]"
+        )
+    return f"{_PREFIX}[bold bright_cyan]{lang}[/bold bright_cyan]"
+
+
 def run_wav(cfg: LidConfig) -> None:
     slid = _build_slid(cfg)
 
     _info(f"Processing: {cfg.wav}\n")
     samples, sr = _load_wav_flat(cfg.wav)
     lang = _identify(slid, samples, sr)
-    colour = "bright_cyan" if lang != "unknown" else "yellow"
-    _console.print(f"{_PREFIX}[bold {colour}]{lang}[/bold {colour}]")
+    _console.print(_render(lang))
 
 
 def run_mic(cfg: LidConfig) -> None:
@@ -195,10 +255,9 @@ def run_mic(cfg: LidConfig) -> None:
 
     def _process(samples: np.ndarray) -> None:
         lang = _identify(slid, samples, cfg.capture_rate)
-        colour = "bright_cyan" if lang != "unknown" else "yellow"
         sys.stdout.write(f"\r{' ' * 44}\r")
         sys.stdout.flush()
-        _console.print(f"{_PREFIX}[bold {colour}]{lang}[/bold {colour}]")
+        _console.print(_render(lang))
 
     audio = mic_stream(capture_rate=cfg.capture_rate, chunk_size=cfg.chunk_size)
     _info("Listening on microphone — press Ctrl+C to stop.\n")

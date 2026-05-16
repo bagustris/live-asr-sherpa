@@ -221,6 +221,47 @@ class TestIdentify:
 
 
 # ---------------------------------------------------------------------------
+# language_name / _format_language / _render
+# ---------------------------------------------------------------------------
+
+class TestLanguageNaming:
+    def test_known_code(self):
+        assert lid_module.language_name("id") == "Indonesian"
+        assert lid_module.language_name("ja") == "Japanese"
+        assert lid_module.language_name("en") == "English"
+
+    def test_unknown_code_falls_back_to_input(self):
+        assert lid_module.language_name("xx") == "xx"
+
+    def test_case_insensitive(self):
+        assert lid_module.language_name("ID") == "Indonesian"
+        assert lid_module.language_name("JA") == "Japanese"
+
+    def test_format_language_known(self):
+        assert lid_module._format_language("id") == "id (Indonesian)"
+
+    def test_format_language_unknown_code(self):
+        assert lid_module._format_language("xx") == "xx"
+
+    def test_format_language_empty(self):
+        assert lid_module._format_language("") == "unknown"
+        assert lid_module._format_language("unknown") == "unknown"
+
+    def test_render_includes_code_and_name(self):
+        out = lid_module._render("id")
+        assert "id" in out
+        assert "Indonesian" in out
+
+    def test_render_unknown(self):
+        out = lid_module._render("unknown")
+        assert "unknown" in out
+
+    def test_render_known_code_missing_name_keeps_code(self):
+        out = lid_module._render("xx")
+        assert "xx" in out
+
+
+# ---------------------------------------------------------------------------
 # run_wav
 # ---------------------------------------------------------------------------
 
@@ -234,7 +275,9 @@ class TestRunWav:
         slid.compute.return_value = "en"
         with patch.object(lid_module, "_build_slid", return_value=slid):
             lid_module.run_wav(cfg)
-        assert "en" in capsys.readouterr().out
+        out = capsys.readouterr().out
+        assert "en" in out
+        assert "English" in out
 
     def test_prints_unknown_on_empty(self, tmp_path, capsys):
         wav = tmp_path / "test.wav"
