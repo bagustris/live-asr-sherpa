@@ -96,7 +96,8 @@ _ONLINE_ZIPFORMER2_CTC = {"zipformer2_ctc"}
 
 _OFFLINE_PARAFORMER = {"paraformer"}
 _OFFLINE_WHISPER = {"whisper"}
-_OFFLINE_CTC = {"ctc", "nemo_ctc"}
+_OFFLINE_NEMO_CTC = {"nemo_ctc"}
+_OFFLINE_CTC = {"ctc"}
 _OFFLINE_SENSE_VOICE = {"sense_voice"}
 _OFFLINE_MOONSHINE = {"moonshine"}
 _OFFLINE_FIRE_RED_ASR = {"fire_red_asr"}
@@ -211,8 +212,17 @@ def build_offline_recognizer(cfg: Config):
             decoding_method="greedy_search",
             provider=cfg.device,
         )
+    if mt in _OFFLINE_NEMO_CTC:
+        return sherpa_onnx.OfflineRecognizer.from_nemo_ctc(
+            tokens=tokens,
+            model=_find(d, "model*.onnx"),
+            num_threads=cfg.num_threads,
+            sample_rate=cfg.sample_rate,
+            feature_dim=80,
+            provider=cfg.device,
+        )
     if mt in _OFFLINE_CTC:
-        return sherpa_onnx.OfflineRecognizer.from_ctc(
+        return sherpa_onnx.OfflineRecognizer.from_wenet_ctc(
             tokens=tokens,
             model=_find(d, "model*.onnx"),
             num_threads=cfg.num_threads,

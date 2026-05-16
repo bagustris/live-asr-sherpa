@@ -53,10 +53,10 @@ Use these with `--offline`. Audio is VAD-segmented before recognition, which usu
 | Moonshine tiny | `models/sherpa-onnx-moonshine-tiny-en-int8` | `moonshine` | en | Very fast, English only |
 | Moonshine base | `models/sherpa-onnx-moonshine-base-en-int8` | `moonshine` | en | Better accuracy than tiny |
 | FireRedASR | `models/sherpa-onnx-fire-red-asr-large-zh-2025-02-16` | `fire_red_asr` | zh | |
-| ReazonSpeech JA | `models/reazonspeech-ja` | `ja` | ja | **Auto-downloaded**; Japanese |
-| ReazonSpeech JA-EN | `models/reazonspeech-ja-en` | `ja-en` | ja/en | **Auto-downloaded**; bilingual |
-| ReazonSpeech JA-EN-MLS | `models/reazonspeech-ja-en-mls-5k` | `ja-en-mls-5k` | ja/en | **Auto-downloaded**; bilingual plus MLS 5k |
-| NeMo Parakeet CTC JA | `models/parakeet-ctc-ja-int8` | `parakeet-ctc-ja` | ja | **Auto-downloaded**; Japanese 0.6B int8 CTC |
+| NeMo Parakeet CTC JA | `models/parakeet-ctc-ja-int8` | `parakeet-ctc-ja` | ja | **Auto-downloaded**; default Japanese; 0.6B int8 CTC |
+| ReazonSpeech JA | `models/reazonspeech-ja` | `reazonspeech-ja` | ja | **Auto-downloaded**; Japanese |
+| ReazonSpeech JA-EN | `models/reazonspeech-ja-en` | `reazonspeech-ja-en` | ja/en | **Auto-downloaded**; bilingual |
+| ReazonSpeech JA-EN-MLS | `models/reazonspeech-ja-en-mls-5k` | `reazonspeech-ja-en-mls-5k` | ja/en | **Auto-downloaded**; bilingual plus MLS 5k |
 | Cohere Transcribe 14-Lang | `models/cohere-transcribe-14-lang-int8` | `cohere_transcribe` | multi | 14 languages; multilingual ASR |
 
 Examples:
@@ -90,17 +90,17 @@ sherox.asr --mic --offline \
   --model-dir models/sherpa-onnx-moonshine-tiny-en-int8 \
   --model-type moonshine
 
+# NeMo Parakeet CTC Japanese (default for --language ja)
+sherox.asr --wav audio.wav --model-type parakeet-ctc-ja
+
 # ReazonSpeech Japanese (auto-downloaded)
-sherox.asr --mic --model-type ja
+sherox.asr --mic --model-type reazonspeech-ja
 
 # ReazonSpeech bilingual Japanese-English
-sherox.asr --mic --model-type ja-en
+sherox.asr --mic --model-type reazonspeech-ja-en
 
 # ReazonSpeech bilingual + MLS 5k English
-sherox.asr --wav audio.wav --model-type ja-en-mls-5k
-
-# NeMo Parakeet CTC Japanese
-sherox.asr --wav audio.wav --model-type parakeet-ctc-ja
+sherox.asr --wav audio.wav --model-type reazonspeech-ja-en-mls-5k
 
 # Cohere Transcribe multilingual (14 languages)
 sherox.asr --mic --offline --model-type cohere_transcribe --language en
@@ -138,7 +138,7 @@ Offline:
 - `moonshine`
 - `fire_red_asr`
 - `cohere_transcribe`
-- `ja`
-- `ja-en`
-- `ja-en-mls-5k`
 - `parakeet-ctc-ja`
+- `reazonspeech-ja`
+- `reazonspeech-ja-en`
+- `reazonspeech-ja-en-mls-5k`

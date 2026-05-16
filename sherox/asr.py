@@ -21,16 +21,16 @@ Usage:
     sherox.asr --mic --offline --model-type sense_voice
 
     # ReazonSpeech Japanese (offline):
-    sherox.asr --mic --model-type ja
-    sherox.asr --wav path/to/audio.wav --model-type ja
+    sherox.asr --mic --model-type reazonspeech-ja
+    sherox.asr --wav path/to/audio.wav --model-type reazonspeech-ja
 
     # ReazonSpeech bilingual Japanese-English (offline):
-    sherox.asr --mic --model-type ja-en
-    sherox.asr --wav path/to/audio.wav --model-type ja-en
+    sherox.asr --mic --model-type reazonspeech-ja-en
+    sherox.asr --wav path/to/audio.wav --model-type reazonspeech-ja-en
 
     # ReazonSpeech bilingual trained on ReazonSpeech + MLS English 5k (offline):
-    sherox.asr --mic --model-type ja-en-mls-5k
-    sherox.asr --wav path/to/audio.wav --model-type ja-en-mls-5k
+    sherox.asr --mic --model-type reazonspeech-ja-en-mls-5k
+    sherox.asr --wav path/to/audio.wav --model-type reazonspeech-ja-en-mls-5k
 
     # NeMo Parakeet CTC Japanese (offline, 0.6B int8, 35k vocab):
     sherox.asr --mic --model-type parakeet-ctc-ja
@@ -77,8 +77,8 @@ Usage:
                                  zipformer2_ctc, multilingual_streaming
     Offline --model-type values: (blank), transducer, nemo_transducer, paraformer,
                                  whisper, ctc, nemo_ctc, sense_voice, moonshine,
-                                 fire_red_asr, cohere_transcribe, ja, ja-en, ja-en-mls-5k,
-                                 parakeet-ctc-ja
+                                 fire_red_asr, cohere_transcribe, parakeet-ctc-ja,
+                                 reazonspeech-ja, reazonspeech-ja-en, reazonspeech-ja-en-mls-5k
 """
 
 import argparse
@@ -182,9 +182,9 @@ def parse_args() -> argparse.Namespace:
             "ctc, wenet_ctc, zipformer2_ctc, multilingual_streaming. "
             "Offline: transducer, nemo_transducer, paraformer, whisper, ctc, nemo_ctc, "
             "sense_voice, moonshine, fire_red_asr, cohere_transcribe. "
-            "ReazonSpeech (offline): ja (Japanese), ja-en (bilingual Japanese-English), "
-            "ja-en-mls-5k (bilingual trained on ReazonSpeech + MLS English 5k). "
-            "NeMo Parakeet CTC (offline): parakeet-ctc-ja (Japanese 0.6B int8). "
+            "ReazonSpeech (offline): reazonspeech-ja (Japanese), reazonspeech-ja-en (bilingual Japanese-English), "
+            "reazonspeech-ja-en-mls-5k (bilingual trained on ReazonSpeech + MLS English 5k). "
+            "NeMo Parakeet CTC (offline): parakeet-ctc-ja (Japanese 0.6B int8, default for --language ja). "
             "See https://k2-fsa.github.io/sherpa/onnx/pretrained_models/"
         ),
     )
@@ -416,7 +416,7 @@ _LANGUAGE_ALIASES = {
 
 _ASR_LANGUAGE_DEFAULTS = {
     "en": ("", _PARAKEET_TARGET),
-    "ja": ("ja", _REAZON_JA_TARGET),
+    "ja": ("parakeet-ctc-ja", _PARAKEET_CTC_JA_INT8_TARGET),
     "id": ("multilingual_streaming", _MULTILINGUAL_STREAMING_TARGET),
     "zh": ("multilingual_streaming", _MULTILINGUAL_STREAMING_TARGET),
     "ar": ("multilingual_streaming", _MULTILINGUAL_STREAMING_TARGET),
@@ -495,12 +495,12 @@ def _download_model(model_dir: str, model_type: str) -> None:
     model_dir = Path(model_dir)
 
     # ReazonSpeech Japanese model
-    if model_type == "ja" or model_dir.name == _REAZON_JA_TARGET:
+    if model_type == "reazonspeech-ja" or model_dir.name == _REAZON_JA_TARGET:
         url = _REAZON_JA_URL
         archive_name = _REAZON_JA_ARCHIVE
         extracted_name = _REAZON_JA_EXTRACTED
     # ReazonSpeech bilingual ja-en and ja-en-mls-5k (same sherpa-onnx archive)
-    elif model_type in ("ja-en", "ja-en-mls-5k") or model_dir.name in (
+    elif model_type in ("reazonspeech-ja-en", "reazonspeech-ja-en-mls-5k") or model_dir.name in (
         _REAZON_JA_EN_TARGET, _REAZON_JA_EN_MLS_TARGET
     ):
         url = _REAZON_JA_EN_URL
@@ -589,11 +589,11 @@ def _resolve_default_model(language: str, model_type: str, offline: bool) -> tup
     """Return (model_type, model_dir_name) for omitted --model-dir."""
     if model_type == "parakeet-ctc-ja":
         return model_type, _PARAKEET_CTC_JA_INT8_TARGET
-    if model_type == "ja":
+    if model_type == "reazonspeech-ja":
         return model_type, _REAZON_JA_TARGET
-    if model_type == "ja-en":
+    if model_type == "reazonspeech-ja-en":
         return model_type, _REAZON_JA_EN_TARGET
-    if model_type == "ja-en-mls-5k":
+    if model_type == "reazonspeech-ja-en-mls-5k":
         return model_type, _REAZON_JA_EN_MLS_TARGET
     if model_type == "cohere_transcribe":
         return model_type, _COHERE_TRANSCRIBE_TARGET
@@ -820,7 +820,7 @@ def main() -> None:
     _validate_model(cfg.model_dir, cfg.model_type)
 
     # Auto-detect offline-only models and switch automatically.
-    _OFFLINE_ONLY_TYPES = {"nemo_transducer", "whisper", "nemo_ctc", "sense_voice", "moonshine", "fire_red_asr", "cohere_transcribe", "ja", "ja-en", "ja-en-mls-5k", "parakeet-ctc-ja"}
+    _OFFLINE_ONLY_TYPES = {"nemo_transducer", "whisper", "nemo_ctc", "sense_voice", "moonshine", "fire_red_asr", "cohere_transcribe", "reazonspeech-ja", "reazonspeech-ja-en", "reazonspeech-ja-en-mls-5k", "parakeet-ctc-ja"}
     _OFFLINE_ONLY_NAME_PATTERNS = ("parakeet", "nemo", "whisper", "sense_voice", "moonshine", "fire_red_asr", "cohere", "reazonspeech")
     model_name_lower = Path(cfg.model_dir).name.lower()
     if not cfg.offline and (
@@ -835,7 +835,7 @@ def main() -> None:
 
     # Remap model-type aliases that sherpa-onnx doesn't accept in from_transducer.
     # Use "" so sherpa-onnx auto-detects the architecture from the model files.
-    _TRANSDUCER_AUTODETECT_ALIASES = {"ja", "ja-en", "ja-en-mls-5k", "multilingual_streaming"}
+    _TRANSDUCER_AUTODETECT_ALIASES = {"reazonspeech-ja", "reazonspeech-ja-en", "reazonspeech-ja-en-mls-5k", "multilingual_streaming"}
     if cfg.model_type in _TRANSDUCER_AUTODETECT_ALIASES:
         cfg.model_type = ""
 
