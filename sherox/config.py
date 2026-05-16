@@ -96,6 +96,33 @@ class SidConfig:
     show_mic_level: bool = False
 
 
+# ── Spoken Language Identification ───────────────────────────────────────────
+
+@dataclass
+class LidConfig:
+    """Configuration for the Spoken Language Identification module (sherox.lid).
+
+    Uses multilingual Whisper encoder/decoder ONNX pairs published by sherpa-onnx.
+    """
+
+    # Resolved paths set by lid._resolve_model()
+    encoder: str = ""
+    decoder: str = ""
+
+    # Whisper variant — controls which archive is auto-downloaded:
+    #   tiny | base | small | medium
+    size: str = "tiny"
+
+    num_threads: int = 4
+    provider: str = "cpu"           # "cpu" | "cuda" | "coreml"
+    sample_rate: int = 16000        # expected rate for WAV input
+    capture_rate: int = 16000       # mic capture rate (resampled internally)
+    chunk_size: float = 0.1         # seconds per mic chunk
+    vad_model: str = ""             # resolved path to silero_vad.onnx (mic mode)
+    wav: str = ""                   # path to input WAV file (--wav mode)
+    show_mic_level: bool = False
+
+
 # ── TTS ───────────────────────────────────────────────────────────────────────
 
 @dataclass
