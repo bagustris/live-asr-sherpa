@@ -10,6 +10,7 @@ Tools for evaluating live-asr-sherpa models on accuracy, speed, and composite sc
 | [`benchmark_ja.py`](#benchmark_japy--japanese-adlib-devterm) | [adlib-devterm](https://huggingface.co/datasets/holotherapper/adlib-devterm) (HuggingFace) | Japanese | CER |
 | [`benchmark_jvnv.py`](#benchmark_jvnvpy--japanese-jvnv-emotional-speech) | [JVNV v1](https://ss-takashi.sakura.ne.jp/corpus/jvnv/) (local) | Japanese | CER |
 | [`bench_resample.py`](#bench_resamplepy--resampler-quality) | Synthetic signal | — | SNR / passband ripple |
+| [`update_asr_leaderboard_jp.py`](#updating-the-japanese-asr-leaderboard) | — | Japanese | Regenerates [`ASR_LEADERBOARD_JP.md`](ASR_LEADERBOARD_JP.md) |
 
 ## Install
 
@@ -304,6 +305,57 @@ python benchmark/bench_resample.py
 Reports SNR (band-limited), edge SNR, passband ripple, and processing time for each resampler (soxr HQ/VHQ, scipy polyphase with different Kaiser windows, scipy FFT).
 
 ---
+
+## Updating the Japanese ASR leaderboard
+
+[`ASR_LEADERBOARD_JP.md`](ASR_LEADERBOARD_JP.md) is **derived** from the result JSON files
+produced by `benchmark_ja.py` and `benchmark_jvnv.py`. Do not edit it by hand — it gets
+regenerated.
+
+### Workflow
+
+1. Run both Japanese benchmarks for the model under test, passing `--output` so the
+   aggregate metrics land in a JSON file:
+
+    ```bash
+    MODEL=parakeet-ctc-ja   # or whisper, sense_voice, reazonspeech-ja, ...
+
+    python benchmark/benchmark_ja.py --offline --model-type "$MODEL" \
+      --output "benchmark/results_${MODEL}_adlib.json"
+
+    python benchmark/benchmark_jvnv.py --offline --jvnv-dir /data/jvnv_v1 \
+      --model-type "$MODEL" \
+      --output "benchmark/results_${MODEL}_jvnv.json"
+    ```
+
+2. Regenerate the leaderboard:
+
+    ```bash
+    python benchmark/update_asr_leaderboard_jp.py
+    ```
+
+The script scans `benchmark/*.json` and `results*.json` in the repo root, groups results
+by `model_dir`, computes per-model averages across the two datasets, and rewrites
+`benchmark/ASR_LEADERBOARD_JP.md` with rows sorted by Avg CER ascending.
+
+### How models are grouped
+
+- **Grouping key:** the basename of the JSON's `model_dir` field (e.g.
+  `parakeet-ctc-ja-int8`). Filenames are ignored — two JSONs with different names but the
+  same `model_dir` merge into a single row.
+- **Dataset key:** the `dataset` field inside the JSON (`holotherapper/adlib-devterm` or
+  `JVNV`). Other datasets are skipped.
+- **Display name:** mapped via the `MODEL_LABELS` dict at the top of
+  [`update_asr_leaderboard_jp.py`](update_asr_leaderboard_jp.py); falls back to the
+  `model_dir` basename for unknown models. To add a friendlier name for a new model, add
+  one entry to that dict and re-run the script.
+
+### Adding a new dataset
+
+1. Add the dataset's `"dataset"` field value → display label in the `DATASETS` dict in
+   `update_asr_leaderboard_jp.py`.
+2. Append the display label to `DATASET_ORDER`.
+3. Re-run the script — the new column appears automatically.
 
 ## Comparing results across benchmarks
 

@@ -392,6 +392,28 @@ _COHERE_TRANSCRIBE_ARCHIVE = "sherpa-onnx-cohere-transcribe-14-lang-int8-2026-04
 _COHERE_TRANSCRIBE_EXTRACTED = "sherpa-onnx-cohere-transcribe-14-lang-int8-2026-04-01"
 _COHERE_TRANSCRIBE_TARGET = "cohere-transcribe-14-lang-int8"
 
+# ── Whisper Large-V3 model URLs ───────────────────────────────────────────────
+# Multilingual Whisper model (~3 GB). Triggered only when --model-dir matches the
+# canonical directory name; `--model-type whisper` alone is ambiguous since other
+# Whisper variants (tiny/base/small/medium) share the same type.
+_WHISPER_LARGE_V3_URL = (
+    "https://github.com/k2-fsa/sherpa-onnx/releases/download/"
+    "asr-models/sherpa-onnx-whisper-large-v3.tar.bz2"
+)
+_WHISPER_LARGE_V3_ARCHIVE = "sherpa-onnx-whisper-large-v3.tar.bz2"
+_WHISPER_LARGE_V3_EXTRACTED = "sherpa-onnx-whisper-large-v3"
+_WHISPER_LARGE_V3_TARGET = "sherpa-onnx-whisper-large-v3"
+
+# ── SenseVoice model URLs ─────────────────────────────────────────────────────
+# Multilingual model: zh / en / ja / ko / yue
+_SENSE_VOICE_URL = (
+    "https://github.com/k2-fsa/sherpa-onnx/releases/download/"
+    "asr-models/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17.tar.bz2"
+)
+_SENSE_VOICE_ARCHIVE = "sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17.tar.bz2"
+_SENSE_VOICE_EXTRACTED = "sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17"
+_SENSE_VOICE_TARGET = "sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17"
+
 # ── Multilingual streaming zipformer model URLs ────────────────────────────────
 # Streaming multilingual model supporting 9 languages: Arabic, English, Indonesian,
 # Japanese, Russian, Thai, Vietnamese, Chinese (simplified & traditional)
@@ -516,6 +538,16 @@ def _download_model(model_dir: str, model_type: str) -> None:
         url = _COHERE_TRANSCRIBE_URL
         archive_name = _COHERE_TRANSCRIBE_ARCHIVE
         extracted_name = _COHERE_TRANSCRIBE_EXTRACTED
+    # Whisper Large-V3 (only triggered by canonical dir name — `whisper` type is ambiguous)
+    elif model_dir.name == _WHISPER_LARGE_V3_TARGET:
+        url = _WHISPER_LARGE_V3_URL
+        archive_name = _WHISPER_LARGE_V3_ARCHIVE
+        extracted_name = _WHISPER_LARGE_V3_EXTRACTED
+    # SenseVoice multilingual model
+    elif model_type == "sense_voice" or model_dir.name == _SENSE_VOICE_TARGET:
+        url = _SENSE_VOICE_URL
+        archive_name = _SENSE_VOICE_ARCHIVE
+        extracted_name = _SENSE_VOICE_EXTRACTED
     # Multilingual streaming zipformer model
     elif model_type == "multilingual_streaming" or model_dir.name == _MULTILINGUAL_STREAMING_TARGET:
         url = _MULTILINGUAL_STREAMING_URL
