@@ -190,13 +190,13 @@ def build_offline_recognizer(cfg: Config):
     sherpa_onnx = _require_sherpa_onnx()
     d = Path(cfg.model_dir)
     mt = cfg.model_type.lower()
-    tokens = _find(d, "tokens.txt")
+    tokens = _find(d, "*tokens.txt")
 
     if mt in _OFFLINE_WHISPER:
         return sherpa_onnx.OfflineRecognizer.from_whisper(
             tokens=tokens,
-            encoder=_find(d, "encoder*.onnx"),
-            decoder=_find(d, "decoder*.onnx"),
+            encoder=_find(d, "*encoder*.onnx"),
+            decoder=_find(d, "*decoder*.onnx"),
             num_threads=cfg.num_threads,
             language=cfg.language,
             task="transcribe",
