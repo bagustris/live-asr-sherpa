@@ -1,4 +1,4 @@
-# Speech Processing Inference Toolkit
+# Speech AI Inference Toolkit
 
 *Minimal, light, live speech recognition (and others) on Local PC*
 
