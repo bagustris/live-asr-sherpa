@@ -1207,7 +1207,7 @@ class TestMain:
         assert called_type == "nemo_ctc"
 
     def test_german_lang_aliases_resolve_to_de(self):
-        for alias in ("deu", "ger", "deutsch", "german"):
+        for alias in ("deu", "ger", "deutsch", "german", "de-DE", "de_DE", "de-AT", "de-CH"):
             assert main_module._normalize_language(alias) == "de", (
                 f"alias {alias!r} did not resolve to 'de'"
             )

@@ -467,6 +467,9 @@ _LANGUAGE_ALIASES = {
     "ger": "de",
     "deutsch": "de",
     "german": "de",
+    "de-de": "de",
+    "de-at": "de",
+    "de-ch": "de",
 }
 
 _ASR_LANGUAGE_DEFAULTS = {
