@@ -20,6 +20,14 @@ Usage:
     # SenseVoice (offline):
     sherox.asr --mic --offline --model-type sense_voice
 
+    # German streaming (online, auto-downloaded):
+    sherox.asr --mic --lang de
+    sherox.asr --wav audio.wav --lang de
+
+    # German NeMo CTC (offline, auto-downloaded):
+    sherox.asr --mic --lang de --offline
+    sherox.asr --wav audio.wav --lang de --offline
+
     # ReazonSpeech Japanese (offline):
     sherox.asr --mic --model-type reazonspeech-ja
     sherox.asr --wav path/to/audio.wav --model-type reazonspeech-ja
@@ -62,6 +70,8 @@ Usage:
       models/zipformer-en-2023/            (online transducer)
       models/parakeet-tdt-0.6b-v2/         (offline, fp16 — larger, more accurate)
       models/parakeet-tdt-0.6b-v2-int8/    (offline, int8 — smaller & faster)
+      models/zipformer-de-2025/            (online streaming, default German)
+      models/nemo-de-int8/                 (offline, default German --offline)
       models/reazonspeech-ja/              (offline, ReazonSpeech Japanese)
       models/reazonspeech-ja-en/           (offline, ReazonSpeech bilingual ja-en)
       models/reazonspeech-ja-en-mls-5k/    (offline, ReazonSpeech + MLS 5k bilingual)
@@ -425,6 +435,25 @@ _MULTILINGUAL_STREAMING_ARCHIVE = "sherpa-onnx-streaming-zipformer-ar_en_id_ja_r
 _MULTILINGUAL_STREAMING_EXTRACTED = "sherpa-onnx-streaming-zipformer-ar_en_id_ja_ru_th_vi_zh-2025-02-10"
 _MULTILINGUAL_STREAMING_TARGET = "zipformer-multilingual-2025-02-10"
 
+# ── German model URLs ─────────────────────────────────────────────────────────
+# German streaming zipformer (online, default for --lang de)
+_GERMAN_STREAMING_URL = (
+    "https://github.com/k2-fsa/sherpa-onnx/releases/download/"
+    "asr-models/sherpa-onnx-streaming-zipformer-de-kroko-2025-08-06.tar.bz2"
+)
+_GERMAN_STREAMING_ARCHIVE = "sherpa-onnx-streaming-zipformer-de-kroko-2025-08-06.tar.bz2"
+_GERMAN_STREAMING_EXTRACTED = "sherpa-onnx-streaming-zipformer-de-kroko-2025-08-06"
+_GERMAN_STREAMING_TARGET = "zipformer-de-2025"
+
+# German NeMo FastConformer CTC (offline, default for --lang de --offline)
+_GERMAN_NEMO_URL = (
+    "https://github.com/k2-fsa/sherpa-onnx/releases/download/"
+    "asr-models/sherpa-onnx-nemo-stt_de_fastconformer_hybrid_large_pc-int8.tar.bz2"
+)
+_GERMAN_NEMO_ARCHIVE = "sherpa-onnx-nemo-stt_de_fastconformer_hybrid_large_pc-int8.tar.bz2"
+_GERMAN_NEMO_EXTRACTED = "sherpa-onnx-nemo-stt_de_fastconformer_hybrid_large_pc-int8"
+_GERMAN_NEMO_TARGET = "nemo-de-int8"
+
 _LANGUAGE_ALIASES = {
     "eng": "en",
     "jpn": "ja",
@@ -434,6 +463,10 @@ _LANGUAGE_ALIASES = {
     "zh-cn": "zh",
     "zh-tw": "zh",
     "ind": "id",
+    "deu": "de",
+    "ger": "de",
+    "deutsch": "de",
+    "german": "de",
 }
 
 _ASR_LANGUAGE_DEFAULTS = {
@@ -445,6 +478,7 @@ _ASR_LANGUAGE_DEFAULTS = {
     "ru": ("multilingual_streaming", _MULTILINGUAL_STREAMING_TARGET),
     "th": ("multilingual_streaming", _MULTILINGUAL_STREAMING_TARGET),
     "vi": ("multilingual_streaming", _MULTILINGUAL_STREAMING_TARGET),
+    # de is handled explicitly in _resolve_default_model (online vs offline differ)
 }
 
 _VAD_URL = (
@@ -553,6 +587,16 @@ def _download_model(model_dir: str, model_type: str) -> None:
         url = _MULTILINGUAL_STREAMING_URL
         archive_name = _MULTILINGUAL_STREAMING_ARCHIVE
         extracted_name = _MULTILINGUAL_STREAMING_EXTRACTED
+    # German streaming zipformer (online default for --lang de)
+    elif model_dir.name == _GERMAN_STREAMING_TARGET:
+        url = _GERMAN_STREAMING_URL
+        archive_name = _GERMAN_STREAMING_ARCHIVE
+        extracted_name = _GERMAN_STREAMING_EXTRACTED
+    # German NeMo CTC (offline default for --lang de --offline)
+    elif model_dir.name == _GERMAN_NEMO_TARGET:
+        url = _GERMAN_NEMO_URL
+        archive_name = _GERMAN_NEMO_ARCHIVE
+        extracted_name = _GERMAN_NEMO_EXTRACTED
     # Use parakeet as the default offline model download target
     elif model_type == "nemo_transducer" or model_dir.name in (
         _PARAKEET_FP16_TARGET, _PARAKEET_INT8_TARGET
@@ -635,6 +679,11 @@ def _resolve_default_model(language: str, model_type: str, offline: bool) -> tup
         return model_type, _PARAKEET_TARGET
     if model_type:
         return model_type, _PARAKEET_TARGET if offline else _MODEL_TARGET
+    # German: online uses streaming zipformer, offline uses NeMo CTC
+    if language == "de":
+        if offline:
+            return "nemo_ctc", _GERMAN_NEMO_TARGET
+        return "", _GERMAN_STREAMING_TARGET
     if language in _ASR_LANGUAGE_DEFAULTS:
         return _ASR_LANGUAGE_DEFAULTS[language]
     if offline:

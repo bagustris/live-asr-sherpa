@@ -1167,6 +1167,51 @@ class TestMain:
         assert cfg.language == "ja"
         assert cfg.offline is True
 
+    def test_german_language_uses_streaming_zipformer_online(self):
+        args = self._common_patches(None)
+        args.language = "de"
+        mock_rec = MagicMock()
+
+        with patch.object(main_module, "parse_args", return_value=args), \
+             patch.object(main_module, "_validate_runtime_args"), \
+             patch.object(main_module, "_validate_model") as mock_vm, \
+             patch.object(main_module, "_validate_vad", return_value=""), \
+             patch.object(main_module, "_validate_mic"), \
+             patch("sherox.asr.build_recognizer", return_value=mock_rec), \
+             patch("sherox.asr.mic_stream", return_value=iter([])), \
+             patch("sherox.asr.run_streaming"):
+            main_module.main()
+
+        called_dir, called_type = mock_vm.call_args[0]
+        assert Path(called_dir).name == main_module._GERMAN_STREAMING_TARGET
+        assert called_type == ""
+
+    def test_german_language_offline_uses_nemo_ctc(self):
+        args = self._common_patches(None, offline=True)
+        args.language = "de"
+        mock_rec = MagicMock()
+
+        with patch.object(main_module, "parse_args", return_value=args), \
+             patch.object(main_module, "_validate_runtime_args"), \
+             patch.object(main_module, "_validate_model") as mock_vm, \
+             patch.object(main_module, "_validate_vad", return_value="models/silero_vad.onnx"), \
+             patch.object(main_module, "_validate_mic"), \
+             patch("sherox.asr.build_offline_recognizer", return_value=mock_rec), \
+             patch("sherox.asr.build_vad", return_value=MagicMock()), \
+             patch("sherox.asr.mic_stream", return_value=iter([])), \
+             patch("sherox.asr.run_offline_vad_streaming"):
+            main_module.main()
+
+        called_dir, called_type = mock_vm.call_args[0]
+        assert Path(called_dir).name == main_module._GERMAN_NEMO_TARGET
+        assert called_type == "nemo_ctc"
+
+    def test_german_lang_aliases_resolve_to_de(self):
+        for alias in ("deu", "ger", "deutsch", "german"):
+            assert main_module._normalize_language(alias) == "de", (
+                f"alias {alias!r} did not resolve to 'de'"
+            )
+
     def test_english_language_uses_parakeet_int8_default_model(self):
         args = self._common_patches(None)
         mock_rec = MagicMock()

@@ -19,6 +19,7 @@ Use these with the default pipeline and do not pass `--offline`. They support re
 | WeNet CTC En | `models/sherpa-onnx-streaming-wenet-librispeech` | `wenet_ctc` | en | WeNet CTC |
 | Zipformer2 CTC En | `models/sherpa-onnx-streaming-zipformer2-ctc-2024-09-18` | `zipformer2_ctc` | en | CTC variant |
 | Multilingual Streaming Zipformer | `models/zipformer-multilingual-2025-02-10` | `multilingual_streaming` | ar/en/id/ja/ru/th/vi/zh | **Auto-downloaded when selected**; built-in alias for `sherpa-onnx-streaming-zipformer-ar_en_id_ja_ru_th_vi_zh-2025-02-10` |
+| Zipformer DE | `models/zipformer-de-2025` | *(blank)* | de | German; **auto-downloaded** when `--lang de` (default online German model) |
 
 Example:
 
@@ -54,6 +55,7 @@ Use these with `--offline`. Audio is VAD-segmented before recognition, which usu
 | Moonshine base | `models/sherpa-onnx-moonshine-base-en-int8` | `moonshine` | en | Better accuracy than tiny |
 | FireRedASR | `models/sherpa-onnx-fire-red-asr-large-zh-2025-02-16` | `fire_red_asr` | zh | |
 | NeMo Parakeet CTC JA | `models/parakeet-ctc-ja-int8` | `parakeet-ctc-ja` | ja | **Auto-downloaded**; default Japanese; 0.6B int8 CTC |
+| NeMo FastConformer DE | `models/nemo-de-int8` | `nemo_ctc` | de | **Auto-downloaded** when `--lang de --offline`; German offline default |
 | ReazonSpeech JA | `models/reazonspeech-ja` | `reazonspeech-ja` | ja | **Auto-downloaded**; Japanese |
 | ReazonSpeech JA-EN | `models/reazonspeech-ja-en` | `reazonspeech-ja-en` | ja/en | **Auto-downloaded**; bilingual |
 | ReazonSpeech JA-EN-MLS | `models/reazonspeech-ja-en-mls-5k` | `reazonspeech-ja-en-mls-5k` | ja/en | **Auto-downloaded**; bilingual plus MLS 5k |
@@ -92,6 +94,14 @@ sherox.asr --mic --offline \
 
 # NeMo Parakeet CTC Japanese (default for --language ja)
 sherox.asr --wav audio.wav --model-type parakeet-ctc-ja
+
+# German streaming (online, auto-downloaded, default for --lang de)
+sherox.asr --mic --lang de
+sherox.asr --wav audio.wav --lang de
+
+# German NeMo CTC (offline, auto-downloaded, default for --lang de --offline)
+sherox.asr --mic --lang de --offline
+sherox.asr --wav audio.wav --lang de --offline
 
 # ReazonSpeech Japanese (auto-downloaded)
 sherox.asr --mic --model-type reazonspeech-ja
