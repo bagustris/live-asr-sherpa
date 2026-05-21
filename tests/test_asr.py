@@ -238,6 +238,26 @@ class TestParseArgs:
             args = main_module.parse_args()
         assert args.translate is True
 
+    def test_default_no_color_is_false(self):
+        with patch("sys.argv", ["sherox.asr", "--mic"]):
+            args = main_module.parse_args()
+        assert args.no_color is False
+
+    def test_no_color_flag(self):
+        with patch("sys.argv", ["sherox.asr", "--mic", "--no-color"]):
+            args = main_module.parse_args()
+        assert args.no_color is True
+
+    def test_default_json_output_is_false(self):
+        with patch("sys.argv", ["sherox.asr", "--mic"]):
+            args = main_module.parse_args()
+        assert args.json_output is False
+
+    def test_json_flag(self):
+        with patch("sys.argv", ["sherox.asr", "--mic", "--json"]):
+            args = main_module.parse_args()
+        assert args.json_output is True
+
 # ---------------------------------------------------------------------------
 # _validate_vad
 # ---------------------------------------------------------------------------
@@ -970,6 +990,8 @@ class TestMain:
             output_format="txt",
             final_only=False,
             translate=False,
+            no_color=False,
+            json_output=False,
         )
         return args
 

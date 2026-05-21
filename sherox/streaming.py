@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import sys
 from collections import deque
@@ -92,13 +93,18 @@ def _rich_print(
     text: str,
     speaker_id: Optional[int] = None,
     show_speaker_tag: bool = False,
+    console: Optional[Console] = None,
 ) -> None:
     """Print a finalised line, optionally coloured (and tagged) by speaker.
 
     When *speaker_id* is set, the text is coloured with that speaker's colour.
     The ``[Speaker N]`` label prefix is only shown when *show_speaker_tag* is
     ``True`` (default: colour-only, no tag).
+
+    Pass *console* to override the module-level ``_console`` (e.g. pass a
+    ``Console(no_color=True)`` instance for plain-text output).
     """
+    c = console if console is not None else _console
     if speaker_id is not None:
         colour = _speaker_colour(speaker_id)
         t = Text()
@@ -107,9 +113,44 @@ def _rich_print(
             t.append(text, style=colour)
         else:
             t.append(f"{_PREFIX}{text}", style=colour)
-        _console.print(t)
+        c.print(t)
     else:
-        _console.print(f"{_PREFIX}{text}")
+        c.print(f"{_PREFIX}{text}")
+
+
+def _emit_segment(
+    text: str,
+    start_s: float,
+    end_s: float,
+    speaker_id: Optional[int],
+    show_speaker_tag: bool,
+    json_output: bool,
+    console: Console,
+) -> None:
+    """Emit a finalised segment — JSON line or Rich-formatted text.
+
+    JSON mode (``--json``)::
+
+        {"type": "segment", "text": "hello world", "start": 0.0, "end": 1.5}
+        {"type": "segment", "text": "how are you", "start": 1.5, "end": 3.2, "speaker": 0}
+
+    The ``"speaker"`` key is only included when diarization is active.  Times
+    are in seconds, rounded to 3 decimal places.
+
+    Plain mode uses Rich-formatted coloured output per speaker.
+    """
+    if json_output:
+        obj: dict = {
+            "type": "segment",
+            "text": text,
+            "start": round(start_s, 3),
+            "end": round(end_s, 3),
+        }
+        if speaker_id is not None:
+            obj["speaker"] = speaker_id
+        print(json.dumps(obj, ensure_ascii=False), flush=True)
+    else:
+        _rich_print(text, speaker_id, show_speaker_tag=show_speaker_tag, console=console)
 
 
 def _dominant_speaker(result: Any) -> int:
@@ -250,12 +291,15 @@ def run_streaming(
     punctuation: Any = None,
     subtitles: Optional[list[tuple[float, float, str]]] = None,
     final_only: bool = False,
+    json_output: bool = False,
+    no_color: bool = False,
 ) -> None:
     """Feed incremental audio chunks into the recognizer and render output.
 
     Display strategy:
       - Partial hypotheses: overwrite the current terminal line with \\r
-        (near-zero latency feedback, avoids line spam).
+        (near-zero latency feedback, avoids line spam).  Suppressed when
+        *json_output* is ``True`` or *final_only* is ``True``.
       - Finalized segments: printed on a new line when an endpoint is detected.
 
     When *diarization* is provided the accumulated audio for each utterance is
@@ -275,7 +319,20 @@ def run_streaming(
 
     When *final_only* is ``True``, intermediate partial hypotheses are suppressed
     and only finalised segments are printed.
+
+    When *json_output* is ``True``, each finalised segment is emitted as a
+    JSON line (``{"type": "segment", "text": ..., "start": ..., "end": ...}``)
+    suitable for piping to downstream tools.  Partial hypotheses are suppressed
+    in this mode.
+
+    When *no_color* is ``True``, terminal ANSI colour codes are disabled so
+    the output can be redirected to a file or piped to tools that do not
+    interpret colour escapes.
     """
+    # Build the output console once — reuse for every segment in this call.
+    _out_console = (
+        Console(no_color=True, highlight=False, markup=False) if no_color else _console
+    )
     stream = recognizer.create_stream()
     last_partial = ""
     # Buffer raw audio for the current utterance (used for diarization).
@@ -313,8 +370,8 @@ def run_streaming(
                     exc,
                     exc_info=True,
                 )
-        _rich_print(final_text, speaker_id, show_speaker_tag=show_speaker_tag)
-        if word_timestamps:
+        _emit_segment(final_text, pending_start, pending_end, speaker_id, show_speaker_tag, json_output, _out_console)
+        if word_timestamps and not json_output:
             result_obj = recognizer.get_result(stream)
             _print_word_timestamps(
                 list(getattr(result_obj, "tokens", []) or []),
@@ -385,7 +442,7 @@ def run_streaming(
                 audio_buf.clear()
                 last_partial = ""
             elif text != last_partial:
-                if not final_only:
+                if not final_only and not json_output:
                     sys.stdout.write(f"\r{_PREFIX}{text}")
                     sys.stdout.flush()
                     last_partial = text
@@ -397,7 +454,8 @@ def run_streaming(
     except KeyboardInterrupt:
         pass
     finally:
-        _flush_tail(recognizer, stream, sample_rate, last_partial)
+        _flush_tail(recognizer, stream, sample_rate, last_partial,
+                    json_output=json_output, console=_out_console, start_s=elapsed_s)
         # Flush the last pending diarization result.
         _flush_pending(pending, pending_text, pending_start, pending_end)
         if executor is not None:
@@ -418,6 +476,8 @@ def run_offline_vad_streaming(
     punctuation: Any = None,
     subtitles: Optional[list[tuple[float, float, str]]] = None,
     progress_callback: Optional[Callable[[float], None]] = None,
+    json_output: bool = False,
+    no_color: bool = False,
 ) -> None:
     """VAD-segmented offline ASR with optional concurrent speaker diarization.
 
@@ -431,7 +491,13 @@ def run_offline_vad_streaming(
     *punctuation*: an OfflinePunctuation instance for post-processing.
     *subtitles*: if a list, (start_s, end_s, text) tuples are appended.
     *progress_callback*: called with elapsed_seconds after each audio chunk.
+    *json_output*: emit each segment as a JSON line instead of styled text.
+    *no_color*: disable ANSI colour codes in transcript output.
     """
+    # Build the output console once — reuse for every segment in this call.
+    _out_console = (
+        Console(no_color=True, highlight=False, markup=False) if no_color else _console
+    )
     max_workers = 4 if diarization is not None else 2
     executor = ThreadPoolExecutor(max_workers=max_workers)
     pending: Deque[_PendingSegment] = deque()
@@ -462,14 +528,15 @@ def run_offline_vad_streaming(
                 speaker_id = _dominant_speaker(seg.diar_future.result())
             except Exception as exc:
                 logging.debug("Diarization failed: %s", exc, exc_info=True)
-        try:
-            width = shutil.get_terminal_size(fallback=(80, 20)).columns
-        except OSError:
-            width = 80
-        sys.stdout.write("\r" + " " * width + "\r")
-        sys.stdout.flush()
-        _rich_print(text, speaker_id, show_speaker_tag=show_speaker_tag)
-        if word_timestamps:
+        if not json_output:
+            try:
+                width = shutil.get_terminal_size(fallback=(80, 20)).columns
+            except OSError:
+                width = 80
+            sys.stdout.write("\r" + " " * width + "\r")
+            sys.stdout.flush()
+        _emit_segment(text, seg.start_s, seg.end_s, speaker_id, show_speaker_tag, json_output, _out_console)
+        if word_timestamps and not json_output:
             _print_word_timestamps(asr_result.tokens, asr_result.timestamps)
         if subtitles is not None:
             subtitles.append((seg.start_s, seg.end_s, text))
@@ -579,16 +646,30 @@ def _flush_tail(
     stream: Any,
     sample_rate: int,
     last_partial: str,
+    json_output: bool = False,
+    console: Optional[Console] = None,
+    start_s: float = 0.0,
 ) -> None:
-    """Flush any audio left in the recognizer pipeline after the loop ends."""
+    """Flush any audio left in the recognizer pipeline after the loop ends.
+
+    *json_output*: when ``True``, emit the tail segment as a JSON line.
+    *console*: override the default module-level console (e.g. no-colour variant).
+    *start_s*: elapsed time at the end of the main loop; used as the timestamp
+    for the tail segment in JSON output mode.
+    """
     tail = np.zeros(int(sample_rate * 0.5), dtype=np.float32)
     stream.accept_waveform(sample_rate, tail)
     while recognizer.is_ready(stream):
         recognizer.decode_stream(stream)
     text = recognizer.get_result(stream).strip()
     if text:
+        c = console if console is not None else _console
         _clear_line(last_partial)
-        _console.print(f"{_PREFIX}{text}")
+        if json_output:
+            obj = {"type": "segment", "text": text, "start": round(start_s, 3), "end": round(start_s, 3)}
+            print(json.dumps(obj, ensure_ascii=False), flush=True)
+        else:
+            c.print(f"{_PREFIX}{text}")
     sys.stdout.write("\n")
     sys.stdout.flush()
 

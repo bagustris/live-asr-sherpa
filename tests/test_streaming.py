@@ -853,3 +853,165 @@ class TestWriteTxt:
         out = str(tmp_path / "empty.txt")
         write_txt([], out)
         assert open(out).read() == ""
+
+
+# ---------------------------------------------------------------------------
+# _emit_segment
+# ---------------------------------------------------------------------------
+
+import json as _json
+from sherox.streaming import _emit_segment
+from rich.console import Console as _Console
+
+
+class TestEmitSegment:
+    """Tests for _emit_segment() — the unified segment output helper."""
+
+    def _plain_console(self) -> _Console:
+        return _Console(no_color=True, highlight=False, markup=False)
+
+    def test_json_output_no_speaker(self, capsys):
+        _emit_segment("hello world", 0.0, 1.5, None, False, json_output=True, console=self._plain_console())
+        out = capsys.readouterr().out.strip()
+        obj = _json.loads(out)
+        assert obj == {"type": "segment", "text": "hello world", "start": 0.0, "end": 1.5}
+
+    def test_json_output_with_speaker(self, capsys):
+        _emit_segment("hi", 1.0, 2.0, 3, False, json_output=True, console=self._plain_console())
+        obj = _json.loads(capsys.readouterr().out.strip())
+        assert obj["speaker"] == 3
+        assert obj["text"] == "hi"
+
+    def test_json_output_rounds_timestamps(self, capsys):
+        _emit_segment("x", 1.23456789, 2.9876543, None, False, json_output=True, console=self._plain_console())
+        obj = _json.loads(capsys.readouterr().out.strip())
+        assert obj["start"] == 1.235
+        assert obj["end"] == 2.988
+
+    def test_json_speaker_key_absent_when_no_diarization(self, capsys):
+        _emit_segment("text", 0.0, 1.0, None, False, json_output=True, console=self._plain_console())
+        obj = _json.loads(capsys.readouterr().out.strip())
+        assert "speaker" not in obj
+
+    def test_plain_output_contains_text(self, capsys):
+        console = _Console(highlight=False, markup=False)
+        _emit_segment("hello", 0.0, 1.0, None, False, json_output=False, console=console)
+        out = capsys.readouterr().out
+        assert "hello" in out
+
+    def test_json_type_field_is_segment(self, capsys):
+        _emit_segment("test", 0.0, 0.5, None, False, json_output=True, console=self._plain_console())
+        obj = _json.loads(capsys.readouterr().out.strip())
+        assert obj["type"] == "segment"
+
+
+# ---------------------------------------------------------------------------
+# run_streaming json_output / no_color integration
+# ---------------------------------------------------------------------------
+
+class TestRunStreamingJsonOutput:
+    """Integration tests for --json and --no-color in the online streaming loop."""
+
+    def _make_recognizer(self, text: str):
+        """Return a mock recognizer that yields one endpoint with *text*."""
+        recognizer = MagicMock()
+        stream = MagicMock()
+        recognizer.create_stream.return_value = stream
+        recognizer.is_ready.return_value = False
+
+        call_count = [0]
+
+        def is_endpoint(s):
+            call_count[0] += 1
+            return call_count[0] == 1
+
+        recognizer.is_endpoint.side_effect = is_endpoint
+        recognizer.get_result.return_value = MagicMock(strip=MagicMock(return_value=text))
+        return recognizer, stream
+
+    def _audio_gen(self, sr=16000):
+        yield np.zeros(sr, dtype=np.float32)  # one second of silence
+
+    def test_json_output_emits_json_line(self, capsys):
+        recognizer, _ = self._make_recognizer("hello test")
+        run_streaming(recognizer, self._audio_gen(), sample_rate=16000, json_output=True)
+        lines = [l for l in capsys.readouterr().out.split("\n") if l.strip()]
+        json_lines = []
+        for line in lines:
+            try:
+                json_lines.append(_json.loads(line))
+            except _json.JSONDecodeError:
+                pass
+        assert any(obj.get("type") == "segment" and "hello test" in obj.get("text", "") for obj in json_lines)
+
+    def test_json_output_suppresses_partials(self, capsys):
+        """Partial hypothesis writes (\r lines) must not appear in json_output mode."""
+        recognizer = MagicMock()
+        stream = MagicMock()
+        recognizer.create_stream.return_value = stream
+        recognizer.is_ready.return_value = False
+        recognizer.is_endpoint.return_value = False
+        recognizer.get_result.return_value = MagicMock(strip=MagicMock(return_value="partial"))
+
+        audio = (np.zeros(160, dtype=np.float32) for _ in range(2))
+        run_streaming(recognizer, audio, sample_rate=16000, json_output=True)
+        out = capsys.readouterr().out
+        assert "\r" not in out
+
+
+class TestRunOfflineVadStreamingJsonOutput:
+    """Integration tests for json_output in the offline VAD loop."""
+
+    def _make_recognizer_offline(self, text: str):
+        recognizer = MagicMock()
+        result = MagicMock()
+        result.text = text
+        result.tokens = []
+        result.timestamps = []
+        full_result = MagicMock()
+        full_result.text = text
+        full_result.tokens = []
+        full_result.timestamps = []
+        recognizer.create_stream.return_value = MagicMock()
+        recognizer.decode_stream.return_value = None
+        recognizer.create_stream.return_value.result = result
+        return recognizer
+
+    def test_json_output_offline(self, capsys):
+        """Each VAD segment should produce a JSON line."""
+        recognizer = MagicMock()
+        vad = MagicMock()
+        vad.empty.side_effect = [False, True, True]
+        seg = MagicMock()
+        seg.samples = [0.0] * 16000
+        setattr(seg, "start", 0)
+        vad.front = seg
+
+        from concurrent.futures import Future
+        fut = Future()
+        from sherox.streaming import _ASRResult
+        fut.set_result(_ASRResult(text="offline text", tokens=[], timestamps=[]))
+
+        with patch("sherox.streaming.ThreadPoolExecutor") as mock_exec_cls:
+            mock_exec = MagicMock()
+            mock_exec_cls.return_value.__enter__ = MagicMock(return_value=mock_exec)
+            mock_exec_cls.return_value = mock_exec
+            mock_exec.submit.return_value = fut
+            mock_exec.shutdown.return_value = None
+
+            audio = iter([np.zeros(160, dtype=np.float32)])
+            run_offline_vad_streaming(
+                recognizer, vad, audio, sample_rate=16000, json_output=True
+            )
+
+        lines = capsys.readouterr().out.split("\n")
+        json_lines = []
+        for line in lines:
+            line = line.strip()
+            if line:
+                try:
+                    json_lines.append(_json.loads(line))
+                except _json.JSONDecodeError:
+                    pass
+        # Verify at least one segment JSON line was emitted
+        assert any(obj.get("type") == "segment" for obj in json_lines)

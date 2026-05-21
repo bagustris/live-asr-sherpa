@@ -359,6 +359,29 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Suppress intermediate partial transcripts; print only finalised segments",
     )
+    parser.add_argument(
+        "--no-color",
+        action="store_true",
+        dest="no_color",
+        help=(
+            "Disable ANSI colour codes in transcript output. "
+            "Useful when redirecting to a file or piping to tools that "
+            "do not interpret colour escapes."
+        ),
+    )
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        dest="json_output",
+        help=(
+            "Emit each finalised segment as a JSON line to stdout. "
+            "Format: {\"type\": \"segment\", \"text\": \"...\", "
+            "\"start\": 0.0, \"end\": 1.5} "
+            "(\"speaker\" key added when --diarization is active). "
+            "Partial hypotheses are suppressed in this mode. "
+            "Example: sherox.asr --mic --json | jq -r '.text'"
+        ),
+    )
     return parser.parse_args()
 
 
@@ -935,6 +958,8 @@ def main() -> None:
         punctuation=args.punctuation,
         punct_model=args.punct_model,
         translate=args.translate,
+        no_color=args.no_color,
+        json_output=args.json_output,
     )
 
     _validate_model(cfg.model_dir, cfg.model_type)
@@ -1063,6 +1088,8 @@ def main() -> None:
                         punctuation=punctuator,
                         subtitles=subtitles,
                         progress_callback=_progress_cb,
+                        json_output=cfg.json_output,
+                        no_color=cfg.no_color,
                     )
                 else:
                     run_streaming(
@@ -1076,6 +1103,8 @@ def main() -> None:
                         punctuation=punctuator,
                         subtitles=subtitles,
                         final_only=args.final_only,
+                        json_output=cfg.json_output,
+                        no_color=cfg.no_color,
                     )
 
             # Write output file if requested.
@@ -1106,6 +1135,8 @@ def main() -> None:
                 show_speaker_tag=args.speaker_tag,
                 word_timestamps=cfg.word_timestamps,
                 punctuation=punctuator,
+                json_output=cfg.json_output,
+                no_color=cfg.no_color,
             )
         else:
             run_streaming(
@@ -1119,6 +1150,8 @@ def main() -> None:
                 punctuation=punctuator,
                 final_only=args.final_only,
                 subtitles=subtitles,
+                json_output=cfg.json_output,
+                no_color=cfg.no_color,
             )
         if subtitles and args.output:
             _write_subtitles(subtitles, args.output)
@@ -1139,6 +1172,8 @@ def main() -> None:
                 show_speaker_tag=args.speaker_tag,
                 word_timestamps=cfg.word_timestamps,
                 punctuation=punctuator,
+                json_output=cfg.json_output,
+                no_color=cfg.no_color,
             )
         else:
             _info("Listening on microphone — press Ctrl+C to stop.\n")
@@ -1152,6 +1187,8 @@ def main() -> None:
                 word_timestamps=cfg.word_timestamps,
                 punctuation=punctuator,
                 final_only=args.final_only,
+                json_output=cfg.json_output,
+                no_color=cfg.no_color,
             )
 
 

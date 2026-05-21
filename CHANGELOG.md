@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Major.Minor.Patch] - YYYY-MM-DD
 
+## [0.5.0] - 2026-05-21
+
+### Added
+- `sherox list-models`: new subcommand listing all auto-downloadable models
+  across ASR, TTS, SID, KWS, VAD, punctuation and diarization modules.
+  Output is a Rich table with columns: Module, Name, Language, Pipeline, Size,
+  Notes. Supports `--module asr|tts|other|all` filter and `--no-color` for
+  plain-text piping. Also accessible as `sherox.models`.
+- `sherox.asr --no-color`: disable ANSI colour codes in transcript output,
+  useful when redirecting to a file or piping to tools that do not interpret
+  colour escapes (e.g. `sherox.asr --wav speech.wav --no-color > transcript.txt`).
+- `sherox.asr --json`: emit each finalised segment as a newline-delimited JSON
+  object `{"type":"segment","text":"...","start":0.0,"end":1.5}` (speaker key
+  added when `--diarization` is active). Partial hypotheses are suppressed.
+  Works with both online and offline pipelines, mic, WAV, and pipe modes.
+  Example: `sherox.asr --mic --json | jq -r '.text'`
+- `sherox.server` WebSocket endpoint `/ws` already streams both partial
+  (`{"type":"partial"}`) and finalised (`{"type":"segment"}`) hypotheses in
+  real-time (completed in v0.4.0, documented here for completeness).
+
+### Changed
+- `streaming.run_streaming()` and `streaming.run_offline_vad_streaming()` gain
+  `json_output: bool` and `no_color: bool` keyword arguments.
+- `streaming._rich_print()` gains an optional `console` parameter so callers
+  can pass a `Console(no_color=True)` instance.
+- New internal helper `streaming._emit_segment()` routes each finalised segment
+  to either JSON stdout or Rich-formatted terminal output.
+
 ## [0.4.0] - 2026-05-21
 
 ### Added

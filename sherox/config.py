@@ -56,6 +56,10 @@ class Config:
     punct_model: str = ""            # path to OfflinePunctuation model, resolved by asr.py
     translate: bool = False          # request English translation (Whisper multilingual only)
 
+    # Terminal output options (see --no-color / --json in sherox.asr)
+    no_color: bool = False           # disable ANSI colour codes in transcript output
+    json_output: bool = False        # emit each segment as a JSON line instead of styled text
+
 
 # ── Segment ───────────────────────────────────────────────────────────────────
 
