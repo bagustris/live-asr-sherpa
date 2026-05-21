@@ -10,12 +10,19 @@ Usage:
     # Custom model and threshold:
     sherox.sid --mic --speaker-file speakers.txt --threshold 0.75
 
-Speaker file format (one 'name /path/wav' per line):
+    # Enroll a new speaker (append entries to the speaker file):
+    sherox.sid --enroll alice alice1.wav alice2.wav --speaker-file speakers.txt
+
+    # Create a new speaker file from scratch by enrolling:
+    sherox.sid --enroll bob ref.wav --speaker-file new_speakers.txt
+
+Speaker file format (one 'name /absolute/path/wav' per line):
     alice /path/to/alice1.wav
     alice /path/to/alice2.wav
     bob   /path/to/bob1.wav
 
 Multiple entries for the same name are averaged into a single embedding.
+Enroll writes absolute paths so the file works regardless of working directory.
 
 Default model: models/nemo_en_titanet_large.onnx (~96 MB, auto-downloaded).
 """
@@ -107,6 +114,59 @@ def _load_speaker_file(path: str) -> Dict[str, List[str]]:
     if not speakers:
         _error(f"Speaker file {path!r} is empty.")
     return dict(speakers)
+
+
+def enroll_speaker(name: str, wav_paths: List[str], speaker_file: str) -> None:
+    """Append *name* / *wav* entries to *speaker_file*, creating it if needed.
+
+    Each WAV path is stored as an absolute path so the file is portable
+    regardless of the caller's working directory.
+
+    Duplicate ``name + absolute_path`` pairs are skipped with a warning so
+    re-running enroll never double-counts the same recording.
+
+    Example — add two recordings for *alice* to speakers.txt::
+
+        enroll_speaker("alice", ["alice1.wav", "alice2.wav"], "speakers.txt")
+
+    The file will contain::
+
+        alice /abs/path/alice1.wav
+        alice /abs/path/alice2.wav
+    """
+    speaker_path = Path(speaker_file)
+
+    # Read existing entries to detect duplicates.
+    existing: set[tuple[str, str]] = set()
+    if speaker_path.is_file():
+        with open(speaker_path) as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                parts = line.split(None, 1)
+                if len(parts) == 2:
+                    existing.add((parts[0], parts[1]))
+
+    speaker_path.parent.mkdir(parents=True, exist_ok=True)
+    added = 0
+    with open(speaker_path, "a") as f:
+        for wav in wav_paths:
+            abs_wav = str(Path(wav).resolve())
+            if not Path(abs_wav).is_file():
+                _error(f"WAV file not found: {wav}")
+            key = (name, abs_wav)
+            if key in existing:
+                _info(f"Skipping duplicate: {name} {abs_wav}")
+                continue
+            f.write(f"{name} {abs_wav}\n")
+            existing.add(key)
+            added += 1
+
+    _info(
+        f"Enrolled {added} recording(s) for '{name}' in '{speaker_path}'. "
+        f"(Total entries in file: {len(existing)})"
+    )
 
 
 def _load_wav_flat(path: str) -> Tuple[np.ndarray, int]:
@@ -240,6 +300,18 @@ def parse_args() -> argparse.Namespace:
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument("--mic", action="store_true", help="Stream from microphone")
     mode.add_argument("--wav", metavar="PATH", help="Identify speaker in a WAV file")
+    mode.add_argument(
+        "--enroll",
+        nargs="+",
+        metavar=("NAME", "WAV"),
+        help=(
+            "Enroll a new speaker. Provide the speaker name followed by one or more "
+            "WAV files: --enroll alice ref1.wav ref2.wav. "
+            "Entries are appended to --speaker-file (created if absent). "
+            "Absolute paths are stored so the file works from any directory. "
+            "Duplicate name+path pairs are silently skipped."
+        ),
+    )
 
     parser.add_argument(
         "--speaker-file",
@@ -285,6 +357,15 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     project_dir = Path(__file__).resolve().parent.parent
+
+    # --enroll is handled before any model loading — it only writes to the
+    # speaker file and needs no ONNX runtime, VAD, or audio hardware.
+    if args.enroll:
+        if len(args.enroll) < 2:
+            _error("--enroll requires a NAME followed by at least one WAV file.")
+        name, *wavs = args.enroll
+        enroll_speaker(name, wavs, args.speaker_file)
+        return
 
     model_path = _validate_model(args.model, project_dir)
 

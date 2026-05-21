@@ -54,6 +54,7 @@ class Config:
     word_timestamps: bool = False    # display per-token timing after each segment
     punctuation: bool = False        # punctuation restoration post-processing
     punct_model: str = ""            # path to OfflinePunctuation model, resolved by asr.py
+    translate: bool = False          # request English translation (Whisper multilingual only)
 
 
 # ── Segment ───────────────────────────────────────────────────────────────────
@@ -132,7 +133,9 @@ class TtsConfig:
     # Directory where the TTS model lives (auto-resolved from language if empty).
     model_dir: str = ""
 
-    # ISO 639-3 language code. Supported: "ind" (Indonesian), "jpn" (Japanese).
+    # ISO 639-3 language code.
+    # Supported: "eng", "deu", "fra", "spa", "ind", "zho", "jpn", "jpn-sarashina".
+    # Short aliases are also accepted (e.g., "en", "de", "zh", "ja").
     language: str = "ind"
 
     speaker_id: int = 0
@@ -148,3 +151,45 @@ class TtsConfig:
     # Sarashina backend — zero-shot voice cloning parameters.
     audio_prompt: str = ""       # Path to reference WAV file (empty = default voice)
     audio_prompt_text: str = ""  # Transcript of the reference audio
+
+
+# ── KWS ──────────────────────────────────────────────────────────────────────
+
+@dataclass
+class KwsConfig:
+    """Configuration for the keyword spotting module (sherox.kws).
+
+    The default model is the 3.3 M-parameter Zipformer trained on GigaSpeech
+    (English).  Supply ``model_dir`` to use a custom model directory.
+
+    Keywords are specified either as a comma-separated string
+    (``keywords_str``) or as a path to a plain-text file with one keyword per
+    line (``keywords_file``).  ``keywords_str`` takes priority when both are
+    set.
+
+    Example::
+
+        cfg = KwsConfig(keywords_str="hey sherpa, ok google")
+    """
+
+    model_dir: str = ""
+
+    # Comma-separated keywords (e.g. "hey sherpa, ok google").
+    # The string is converted to a temporary file before being passed to
+    # sherpa-onnx which expects a file path.
+    keywords_str: str = ""
+
+    # Path to a plain-text file; one keyword per line.
+    keywords_file: str = ""
+
+    sample_rate: int = 16000
+    chunk_size: float = 0.1     # seconds of audio per decode call
+    num_threads: int = 4
+
+    # Microphone capture rate (may differ from model sample_rate).
+    capture_rate: int = 16000
+
+    max_active_paths: int = 4   # beam width for the keyword spotter
+
+    # WAV input path (empty means microphone mode).
+    wav: str = ""

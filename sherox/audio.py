@@ -161,6 +161,33 @@ def mic_stream(
             yield q.get()
 
 
+def pipe_stream(
+    capture_rate: int = 16000,
+    chunk_size: float = 0.16,
+) -> Generator[np.ndarray, None, None]:
+    """Read raw 16-bit little-endian mono PCM from stdin and yield float32 chunks.
+
+    Stops cleanly when stdin reaches EOF so the ASR loop terminates naturally.
+
+    Typical usage::
+
+        arecord -f S16_LE -r 16000 -c 1 | sherox.asr --pipe
+        ffmpeg -i audio.mp4 -f s16le -ar 16000 -ac 1 - | sherox.asr --pipe
+    """
+    import sys  # noqa: PLC0415
+    chunk_frames = int(capture_rate * chunk_size)
+    bytes_per_chunk = chunk_frames * 2  # int16 = 2 bytes per sample
+    stdin_buf = sys.stdin.buffer
+    while True:
+        data = stdin_buf.read(bytes_per_chunk)
+        if not data:
+            break
+        if len(data) < bytes_per_chunk:
+            # Pad the last incomplete chunk so array shape is consistent.
+            data = data + b"\x00" * (bytes_per_chunk - len(data))
+        yield np.frombuffer(data, dtype=np.int16).astype(np.float32) / 32768.0
+
+
 def denoise_gen(
     audio_gen: Generator[np.ndarray, None, None],
     sample_rate: int,

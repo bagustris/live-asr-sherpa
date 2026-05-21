@@ -1,6 +1,6 @@
 [project]
 name = "sherox"
-version = "0.2.0"
+version = "0.4.0"
 description = "SHErpa OnnX toolkit — streaming ASR, VAD segmentation, and TTS"
 requires-python = ">=3.11"
 dependencies = [
@@ -19,6 +19,7 @@ dependencies = [
 "sherox.lid"     = "sherox.lid:main"
 "sherox.segment" = "sherox.segment:main"
 "sherox.tts"     = "sherox.tts:main"
+"sherox.kws"     = "sherox.kws:main"
 "sherox.server"  = "sherox.server:main"
 
 [project.optional-dependencies]

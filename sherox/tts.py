@@ -4,6 +4,21 @@ Usage:
     # Synthesise from inline text (Indonesian, default):
     sherox.tts --text "Selamat pagi, apa kabar?"
 
+    # Synthesise English:
+    sherox.tts --text "Hello, how are you today?" --lang eng
+
+    # Synthesise Chinese (Mandarin, 8 kHz VITS, plain Chinese text):
+    sherox.tts --text "你好，今天天气不错。" --lang zho
+
+    # Synthesise German:
+    sherox.tts --text "Guten Morgen, wie geht es Ihnen?" --lang deu
+
+    # Synthesise French:
+    sherox.tts --text "Bonjour, comment allez-vous?" --lang fra
+
+    # Synthesise Spanish:
+    sherox.tts --text "Hola, ¿cómo estás hoy?" --lang spa
+
     # Synthesise Japanese with Piper Plus:
     sherox.tts --text "こんにちは、今日は良い天気ですね。" --lang jpn
 
@@ -29,10 +44,30 @@ Usage:
     # Control speech speed:
     sherox.tts --text "Halo" --speed 0.85
 
-Supported languages (ISO 639-3):
-    ind           Indonesian  — vits-piper-id_ID-news_tts-medium  (22050 Hz, 1 speaker)
-    jpn           Japanese    — piper-plus tsukuyomi              (22050 Hz, 1 speaker)
-    jpn-sarashina Japanese    — Sarashina2.2-TTS, zero-shot       (24000 Hz, voice cloning)
+Supported languages (ISO 639-3 code → model):
+    eng           English US   — vits-piper-en_US-amy-medium       (22050 Hz, 1 speaker)
+    deu           German       — vits-piper-de_DE-thorsten-medium   (22050 Hz, 1 speaker)
+    fra           French       — vits-piper-fr_FR-upmc-medium       (22050 Hz, 1 speaker)
+    spa           Spanish      — vits-piper-es_ES-mls_10246-medium  (22050 Hz, 1 speaker)
+    ind           Indonesian   — vits-piper-id_ID-news_tts-medium   (22050 Hz, 1 speaker)
+    zho           Chinese      — vits-icefall-zh-aishell3           (8 kHz, 174 speakers)
+    jpn           Japanese     — piper-plus tsukuyomi               (22050 Hz, 1 speaker)
+    jpn-sarashina Japanese     — Sarashina2.2-TTS, zero-shot        (24000 Hz, voice cloning)
+
+Language aliases (short forms also accepted):
+    en / eng-us                 → eng
+    de / ger                    → deu
+    fr                          → fra
+    es                          → spa
+    id / id-id                  → ind
+    zh / zh-cn / zh-tw / cmn    → zho
+    ja / jp / ja-jp             → jpn
+    sarashina / jpn_sarashina   → jpn-sarashina
+
+Notes:
+    Chinese (zho): input must be plain Simplified Chinese text; numbers and mixed
+    scripts may not normalise well. Use 8 kHz output; quality is acceptable for
+    voice assistants and dev/test use.
 
 Models are auto-downloaded on first use into  models/<model-dir>/  at the project root.
 """
@@ -131,6 +166,36 @@ _TTS_MODELS: dict[str, dict] = {
         "sample_rate": 22050,
         "description": "Indonesian (Piper VITS, medium quality)",
     },
+    "zho": {
+        # Chinese Mandarin — VITS with AiShell3 corpus (174 speakers, 8 kHz).
+        #
+        # Input must be plain Simplified Chinese text. Numbers and mixed-script
+        # text may not normalise correctly; the model does not include a
+        # text-normalisation frontend.
+        #
+        # Unlike the Piper-VITS models, this model uses a lexicon file instead
+        # of espeak-ng data for G2P conversion.
+        #
+        # Model source:
+        #   https://github.com/k2-fsa/sherpa-onnx/releases/tag/tts-models
+        # Direct download:
+        #   vits-icefall-zh-aishell3.tar.bz2
+        "backend": "sherpa_onnx",
+        "url": (
+            "https://github.com/k2-fsa/sherpa-onnx/releases/download/"
+            "tts-models/vits-icefall-zh-aishell3.tar.bz2"
+        ),
+        "archive": "vits-icefall-zh-aishell3.tar.bz2",
+        "extracted": "vits-icefall-zh-aishell3",
+        "model": "model.onnx",
+        "tokens": "tokens.txt",
+        # lexicon.txt provides the pronunciation dictionary for Chinese characters.
+        # data_dir is empty — this model does not use espeak-ng.
+        "lexicon": "lexicon.txt",
+        "data_dir": "",
+        "sample_rate": 8000,
+        "description": "Chinese Mandarin (VITS, AiShell3, 174 speakers, 8 kHz)",
+    },
     "jpn": {
         "backend": "piper_plus",
         "voice_name": "ja_JP-tsukuyomi-chan-medium",
@@ -151,11 +216,35 @@ _SUPPORTED_LANGS = ", ".join(
 )
 
 _LANGUAGE_ALIASES = {
+    # English
+    "en": "eng",
+    "en-us": "eng",
+    "en-gb": "eng",
+    # German
+    "de": "deu",
+    "ger": "deu",
+    "de-de": "deu",
+    # French
+    "fr": "fra",
+    "fre": "fra",
+    "fr-fr": "fra",
+    # Spanish
+    "es": "spa",
+    "es-es": "spa",
+    # Indonesian
     "id": "ind",
     "id-id": "ind",
+    # Chinese
+    "zh": "zho",
+    "zh-cn": "zho",
+    "zh-tw": "zho",
+    "cmn": "zho",
+    "chi": "zho",
+    # Japanese
     "ja": "jpn",
     "jp": "jpn",
     "ja-jp": "jpn",
+    # Japanese Sarashina (zero-shot)
     "sarashina": "jpn-sarashina",
     "jpn_sarashina": "jpn-sarashina",
 }
@@ -432,12 +521,18 @@ def build_tts(cfg: TtsConfig, project_dir: Path):
     model_dir_override = Path(cfg.model_dir) if cfg.model_dir else None
     model_dir = _ensure_model(lang, model_dir_override, project_dir)
 
+    # Build path strings for optional model fields.
+    # Only join model_dir with the field when the field is non-empty — an empty
+    # data_dir or lexicon should pass "" to sherpa-onnx, not str(model_dir / "").
+    lexicon_path = str(model_dir / meta["lexicon"]) if meta.get("lexicon") else ""
+    data_dir_path = str(model_dir / meta["data_dir"]) if meta.get("data_dir") else ""
+
     config = sherpa_onnx.OfflineTtsConfig(
         model=sherpa_onnx.OfflineTtsModelConfig(
             vits=sherpa_onnx.OfflineTtsVitsModelConfig(
                 model=str(model_dir / meta["model"]),
-                lexicon="",
-                data_dir=str(model_dir / meta["data_dir"]),
+                lexicon=lexicon_path,
+                data_dir=data_dir_path,
                 tokens=str(model_dir / meta["tokens"]),
             ),
             num_threads=cfg.num_threads,

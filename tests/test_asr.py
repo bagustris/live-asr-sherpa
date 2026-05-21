@@ -35,6 +35,23 @@ class TestParseArgs:
             with pytest.raises(SystemExit):
                 main_module.parse_args()
 
+    def test_pipe_mode(self):
+        with patch("sys.argv", ["sherox.asr", "--pipe"]):
+            args = main_module.parse_args()
+        assert args.pipe is True
+        assert args.mic is False
+        assert args.wav is None
+
+    def test_pipe_and_mic_are_mutually_exclusive(self):
+        with patch("sys.argv", ["sherox.asr", "--pipe", "--mic"]):
+            with pytest.raises(SystemExit):
+                main_module.parse_args()
+
+    def test_pipe_and_wav_are_mutually_exclusive(self):
+        with patch("sys.argv", ["sherox.asr", "--pipe", "--wav", "audio.wav"]):
+            with pytest.raises(SystemExit):
+                main_module.parse_args()
+
     def test_requires_mic_or_wav(self):
         with patch("sys.argv", ["sherox.asr"]):
             with pytest.raises(SystemExit):
@@ -211,6 +228,16 @@ class TestParseArgs:
             with pytest.raises(SystemExit):
                 main_module.parse_args()
 
+    def test_default_translate_is_false(self):
+        with patch("sys.argv", ["sherox.asr", "--mic"]):
+            args = main_module.parse_args()
+        assert args.translate is False
+
+    def test_translate_flag(self):
+        with patch("sys.argv", ["sherox.asr", "--mic", "--translate"]):
+            args = main_module.parse_args()
+        assert args.translate is True
+
 # ---------------------------------------------------------------------------
 # _validate_vad
 # ---------------------------------------------------------------------------
@@ -367,8 +394,12 @@ class TestValidateRuntimeArgs:
             num_speakers=-1,
             denoise=False,
             wav=None,
+            pipe=False,
             output="",
             output_dir="",
+            translate=False,
+            offline=False,
+            model_type="",
         )
         defaults.update(overrides)
         return argparse.Namespace(**defaults)
@@ -388,6 +419,11 @@ class TestValidateRuntimeArgs:
         with pytest.raises(SystemExit):
             main_module._validate_runtime_args(args)
 
+    def test_denoise_blocked_with_pipe(self):
+        args = self._base_args(denoise=True, pipe=True)
+        with pytest.raises(SystemExit):
+            main_module._validate_runtime_args(args)
+
     def test_output_with_multiple_wav_exits(self):
         args = self._base_args(wav=["a.wav", "b.wav"], output="/out.srt")
         with pytest.raises(SystemExit):
@@ -401,6 +437,35 @@ class TestValidateRuntimeArgs:
         args = self._base_args(wav=None, output_dir="/some/dir")
         with pytest.raises(SystemExit):
             main_module._validate_runtime_args(args)
+
+    def test_output_dir_with_pipe_exits(self):
+        args = self._base_args(pipe=True, output_dir="/some/dir")
+        with pytest.raises(SystemExit):
+            main_module._validate_runtime_args(args)
+
+    def test_translate_requires_offline(self):
+        args = self._base_args(translate=True, offline=False, model_type="whisper")
+        with pytest.raises(SystemExit):
+            main_module._validate_runtime_args(args)
+
+    def test_translate_requires_whisper_model_type(self):
+        args = self._base_args(translate=True, offline=True, model_type="")
+        with pytest.raises(SystemExit):
+            main_module._validate_runtime_args(args)
+
+    def test_translate_with_sense_voice_exits(self):
+        args = self._base_args(translate=True, offline=True, model_type="sense_voice")
+        with pytest.raises(SystemExit):
+            main_module._validate_runtime_args(args)
+
+    def test_translate_with_offline_whisper_ok(self):
+        args = self._base_args(translate=True, offline=True, model_type="whisper")
+        main_module._validate_runtime_args(args)  # must not raise
+
+    def test_translate_false_does_not_validate(self):
+        # When translate=False the model_type check must not be enforced.
+        args = self._base_args(translate=False, offline=False, model_type="")
+        main_module._validate_runtime_args(args)  # must not raise
 
 
 # ---------------------------------------------------------------------------
@@ -878,6 +943,7 @@ class TestMain:
         args = argparse.Namespace(
             mic=wav_list is None,
             wav=wav_list,
+            pipe=False,
             model_dir=model_dir,
             model_type=model_type,
             offline=offline,
@@ -903,6 +969,7 @@ class TestMain:
             output_dir="",
             output_format="txt",
             final_only=False,
+            translate=False,
         )
         return args
 
@@ -919,6 +986,24 @@ class TestMain:
              patch("sherox.asr.mic_stream", return_value=iter([])), \
              patch("sherox.asr.run_streaming"):
             main_module.main()
+
+    def test_pipe_mode_calls_run_streaming(self):
+        args = self._common_patches(None, model_dir="models/zipformer-en-2023")
+        args.mic = False
+        args.pipe = True
+        mock_rec = MagicMock()
+
+        with patch.object(main_module, "parse_args", return_value=args), \
+             patch.object(main_module, "_validate_runtime_args"), \
+             patch.object(main_module, "_validate_model"), \
+             patch.object(main_module, "_validate_vad", return_value=""), \
+             patch("sherox.asr.build_recognizer", return_value=mock_rec), \
+             patch("sherox.asr.pipe_stream", return_value=iter([])) as mock_pipe, \
+             patch("sherox.asr.run_streaming") as mock_run:
+            main_module.main()
+
+        mock_pipe.assert_called_once()
+        mock_run.assert_called_once()
 
     def test_online_wav_mode(self, tmp_path):
         wav = tmp_path / "audio.wav"

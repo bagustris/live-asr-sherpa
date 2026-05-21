@@ -199,7 +199,7 @@ def build_offline_recognizer(cfg: Config):
             decoder=_find(d, "*decoder*.onnx"),
             num_threads=cfg.num_threads,
             language=cfg.language,
-            task="transcribe",
+            task="translate" if cfg.translate else "transcribe",
             provider=cfg.device,
         )
     if mt in _OFFLINE_PARAFORMER:

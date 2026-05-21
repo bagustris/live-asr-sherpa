@@ -881,3 +881,85 @@ class TestMainSarashina:
         assert cfg.audio_prompt == str(prompt_file)
         assert cfg.audio_prompt_text == "プロンプト。"
         assert cfg.language == "jpn-sarashina"
+
+
+# ---------------------------------------------------------------------------
+# Chinese TTS (zho)
+# ---------------------------------------------------------------------------
+
+class TestChineseTts:
+    """Tests for the Chinese (zho) TTS language entry."""
+
+    def test_zho_in_models_registry(self):
+        assert "zho" in tts_module._TTS_MODELS
+
+    def test_zho_model_metadata_has_no_data_dir(self):
+        """Chinese model uses lexicon, not espeak data_dir."""
+        meta = tts_module._TTS_MODELS["zho"]
+        assert meta.get("data_dir") == "" or "data_dir" not in meta
+
+    def test_zho_model_metadata_has_lexicon(self):
+        meta = tts_module._TTS_MODELS["zho"]
+        assert meta.get("lexicon"), "zho model should have a non-empty lexicon entry"
+
+    def test_zh_alias_normalises_to_zho(self):
+        alias = tts_module._LANGUAGE_ALIASES.get("zh")
+        assert alias == "zho"
+
+    def test_zh_cn_alias_normalises_to_zho(self):
+        assert tts_module._LANGUAGE_ALIASES.get("zh-cn") == "zho"
+
+    def test_zh_tw_alias_normalises_to_zho(self):
+        assert tts_module._LANGUAGE_ALIASES.get("zh-tw") == "zho"
+
+    def test_cmn_alias_normalises_to_zho(self):
+        assert tts_module._LANGUAGE_ALIASES.get("cmn") == "zho"
+
+    def test_build_tts_zho_passes_lexicon_not_data_dir(self, tmp_path):
+        """build_tts must pass lexicon= and data_dir='' for the zho model."""
+        meta = tts_module._TTS_MODELS["zho"]
+        model_dir = tmp_path / meta["extracted"]
+        model_dir.mkdir(parents=True)
+        (model_dir / meta["model"]).touch()
+        (model_dir / meta["tokens"]).touch()
+        (model_dir / meta["lexicon"]).touch()
+
+        mock_sherpa = MagicMock()
+        mock_config = MagicMock()
+        mock_config.validate.return_value = True
+        mock_sherpa.OfflineTtsConfig.return_value = mock_config
+        mock_sherpa.OfflineTts.return_value = MagicMock()
+
+        cfg = TtsConfig(language="zho", model_dir=str(model_dir))
+        with patch.dict("sys.modules", {"sherpa_onnx": mock_sherpa}):
+            tts_module.build_tts(cfg, tmp_path)
+
+        vits_call = mock_sherpa.OfflineTtsVitsModelConfig.call_args
+        assert vits_call is not None
+        kwargs = vits_call.kwargs if vits_call.kwargs else dict(zip(
+            ["model", "lexicon", "data_dir", "tokens"], vits_call.args
+        ))
+        assert kwargs.get("data_dir", "NOT_SET") == "", (
+            "data_dir should be '' for zho (lexicon-based model)"
+        )
+        assert kwargs.get("lexicon", "") != "", "lexicon should be non-empty for zho"
+
+    def test_build_tts_zho_via_zh_alias(self, tmp_path):
+        """Passing --lang zh should resolve to the zho model directory."""
+        meta = tts_module._TTS_MODELS["zho"]
+        model_dir = tmp_path / meta["extracted"]
+        model_dir.mkdir(parents=True)
+        (model_dir / meta["model"]).touch()
+        (model_dir / meta["tokens"]).touch()
+        (model_dir / meta["lexicon"]).touch()
+
+        mock_sherpa = MagicMock()
+        mock_config = MagicMock()
+        mock_config.validate.return_value = True
+        mock_sherpa.OfflineTtsConfig.return_value = mock_config
+        mock_sherpa.OfflineTts.return_value = MagicMock()
+
+        cfg = TtsConfig(language="zh", model_dir=str(model_dir))
+        with patch.dict("sys.modules", {"sherpa_onnx": mock_sherpa}):
+            result = tts_module.build_tts(cfg, tmp_path)
+        assert result.backend == "sherpa_onnx"

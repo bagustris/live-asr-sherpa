@@ -102,7 +102,7 @@ from rich.console import Console
 
 from .asr_engine import build_diarization, build_offline_recognizer, build_punctuation, build_recognizer, build_vad
 from .utils import download_file as _download_file
-from .audio import denoise_gen, mic_stream, read_wav, wav_duration
+from .audio import denoise_gen, mic_stream, pipe_stream, read_wav, wav_duration
 from .config import Config
 from .streaming import run_offline_vad_streaming, run_streaming, write_srt, write_vtt, write_txt
 
@@ -151,11 +151,23 @@ def _validate_runtime_args(args: argparse.Namespace) -> None:
     if args.num_speakers == 0 or args.num_speakers < -1:
         _error("--num-speakers must be -1 (auto) or a positive integer")
     if args.denoise and not args.wav:
-        _error("--denoise is only supported with --wav (not --mic)")
+        _error("--denoise is only supported with --wav (not --mic or --pipe)")
     if args.output and args.wav and len(args.wav) > 1:
         _error("--output can only be used with a single --wav file; use --output-dir for batch mode")
     if args.output_dir and not args.wav:
-        _error("--output-dir requires --wav")
+        _error("--output-dir requires --wav (use --output for single-file pipe output)")
+    if args.translate:
+        if not args.offline:
+            _error(
+                "--translate requires --offline "
+                "(Whisper is an offline model; add --offline to enable it)"
+            )
+        if args.model_type.lower() != "whisper":
+            _error(
+                "--translate requires --model-type whisper "
+                "(only multilingual Whisper supports translation; "
+                "English-only *.en Whisper models do not)"
+            )
 
 
 def parse_args() -> argparse.Namespace:
@@ -166,6 +178,15 @@ def parse_args() -> argparse.Namespace:
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument("--mic", action="store_true", help="Stream from microphone")
     mode.add_argument("--wav", nargs="+", metavar="PATH", help="Transcribe WAV file(s)")
+    mode.add_argument(
+        "--pipe",
+        action="store_true",
+        help=(
+            "Read raw 16-bit little-endian mono PCM from stdin. "
+            "Use --capture-rate to match the input stream's sample rate. "
+            "Example: arecord -f S16_LE -r 16000 -c 1 | sherox.asr --pipe"
+        ),
+    )
 
     parser.add_argument(
         "--model-dir",
@@ -287,6 +308,17 @@ def parse_args() -> argparse.Namespace:
         "--denoise",
         action="store_true",
         help="Apply noise reduction to WAV input before transcription (requires pip install sherox[denoise])",
+    )
+    parser.add_argument(
+        "--translate",
+        action="store_true",
+        help=(
+            "Output English translation instead of transcription. "
+            "Requires --offline and --model-type whisper "
+            "(multilingual Whisper only; not supported by English-only *.en models). "
+            "Example: sherox.asr --wav speech.wav --offline --model-type whisper "
+            "--language zh --translate"
+        ),
     )
     parser.add_argument(
         "--word-timestamps",
@@ -902,6 +934,7 @@ def main() -> None:
         word_timestamps=args.word_timestamps,
         punctuation=args.punctuation,
         punct_model=args.punct_model,
+        translate=args.translate,
     )
 
     _validate_model(cfg.model_dir, cfg.model_type)
@@ -936,7 +969,7 @@ def main() -> None:
     if args.wav:
         for wav_path in args.wav:
             _validate_wav(wav_path, cfg.sample_rate)
-    else:
+    elif not args.pipe:
         _validate_mic()
 
     # Download punctuation model if requested.
@@ -1056,6 +1089,40 @@ def main() -> None:
                     out_path = str(output_dir / f"{stem}.{fmt}")
                     _write_subtitles(subtitles, out_path)
                     _info(f"Output written to: {out_path}")
+    elif args.pipe:
+        # Stdin/pipe mode — reads raw 16-bit LE mono PCM from stdin.
+        _info("Reading PCM from stdin — send EOF (Ctrl+D) to stop.\n")
+        subtitles: list[tuple[float, float, str]] | None = [] if args.output else None
+        if cfg.offline:
+            cfg.sample_rate = args.capture_rate
+            vad = build_vad(cfg)
+            run_offline_vad_streaming(
+                recognizer=recognizer,
+                vad=vad,
+                audio_gen=pipe_stream(capture_rate=args.capture_rate, chunk_size=cfg.chunk_size),
+                sample_rate=args.capture_rate,
+                show_mic_level=False,
+                diarization=diarizer,
+                show_speaker_tag=args.speaker_tag,
+                word_timestamps=cfg.word_timestamps,
+                punctuation=punctuator,
+            )
+        else:
+            run_streaming(
+                recognizer,
+                pipe_stream(capture_rate=args.capture_rate, chunk_size=cfg.chunk_size),
+                sample_rate=args.capture_rate,
+                show_mic_level=False,
+                diarization=diarizer,
+                show_speaker_tag=args.speaker_tag,
+                word_timestamps=cfg.word_timestamps,
+                punctuation=punctuator,
+                final_only=args.final_only,
+                subtitles=subtitles,
+            )
+        if subtitles and args.output:
+            _write_subtitles(subtitles, args.output)
+            _info(f"Output written to: {args.output}")
     else:
         # Microphone mode — rebuild VAD with capture_rate so it matches input.
         if cfg.offline:

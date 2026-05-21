@@ -16,6 +16,7 @@ _SUBCOMMANDS = {
     "sid":     "Speaker identification",
     "lid":     "Language identification",
     "segment": "VAD-based audio segmentation",
+    "kws":     "Keyword / wake-word spotting",
     "server":  "HTTP/WebSocket ASR server",
 }
 

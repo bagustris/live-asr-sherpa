@@ -3,7 +3,7 @@ from unittest.mock import MagicMock, patch
 import numpy as np
 import pytest
 
-from sherox.audio import mic_stream, read_wav
+from sherox.audio import mic_stream, pipe_stream, read_wav
 
 
 # ---------------------------------------------------------------------------
@@ -244,3 +244,62 @@ class TestMicStreamStatus:
         with caplog.at_level(logging.WARNING):
             callback_ref["cb"](indata, 1600, None, "input overflow")
         assert "input overflow" in caplog.text
+
+
+# ---------------------------------------------------------------------------
+# pipe_stream
+# ---------------------------------------------------------------------------
+
+class TestPipeStream:
+    def _make_stdin(self, arrays: list) -> MagicMock:
+        """Build a fake sys.stdin.buffer that returns byte sequences then b""."""
+        chunks = [a.tobytes() for a in arrays] + [b""]
+        mock_buf = MagicMock()
+        mock_buf.read.side_effect = chunks
+        return mock_buf
+
+    def test_yields_float32_chunks(self):
+        """Bytes from stdin are converted to float32 in [-1, 1]."""
+        data = np.array([16384, -16384], dtype=np.int16)
+        mock_buf = self._make_stdin([data])
+        with patch("sys.stdin") as mock_stdin:
+            mock_stdin.buffer = mock_buf
+            result = list(pipe_stream(capture_rate=16000, chunk_size=len(data) / 16000))
+        assert len(result) == 1
+        assert result[0].dtype == np.float32
+        np.testing.assert_allclose(result[0], np.array([0.5, -0.5], dtype=np.float32), atol=1e-5)
+
+    def test_stops_on_eof(self):
+        """Empty read from stdin must end the generator."""
+        mock_buf = MagicMock()
+        mock_buf.read.return_value = b""
+        with patch("sys.stdin") as mock_stdin:
+            mock_stdin.buffer = mock_buf
+            result = list(pipe_stream(capture_rate=16000, chunk_size=0.1))
+        assert result == []
+
+    def test_pads_incomplete_last_chunk(self):
+        """If the last chunk is shorter than bytes_per_chunk, it gets zero-padded."""
+        chunk_frames = int(16000 * 0.1)  # 1600
+        short_data = np.ones(800, dtype=np.int16)  # half a chunk
+        mock_buf = self._make_stdin([short_data])
+        with patch("sys.stdin") as mock_stdin:
+            mock_stdin.buffer = mock_buf
+            result = list(pipe_stream(capture_rate=16000, chunk_size=0.1))
+        assert len(result) == 1
+        assert len(result[0]) == chunk_frames
+        # first 800 samples from data, last 800 are zeros
+        np.testing.assert_allclose(result[0][800:], np.zeros(800, dtype=np.float32))
+
+    def test_multiple_chunks(self):
+        """Multiple stdin reads each become a separate yielded chunk."""
+        chunk_frames = int(16000 * 0.1)
+        chunk1 = np.zeros(chunk_frames, dtype=np.int16)
+        chunk2 = np.ones(chunk_frames, dtype=np.int16) * 1000
+        mock_buf = self._make_stdin([chunk1, chunk2])
+        with patch("sys.stdin") as mock_stdin:
+            mock_stdin.buffer = mock_buf
+            result = list(pipe_stream(capture_rate=16000, chunk_size=0.1))
+        assert len(result) == 2
+        assert result[0].dtype == np.float32
+        assert result[1].dtype == np.float32
