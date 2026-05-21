@@ -2,7 +2,7 @@
 
 *Minimal, light, live speech recognition (and others) on Local PC*
 
-A terminal-based toolkit built with [Sherpa-ONNX](https://github.com/k2-fsa/sherpa-onnx). Transcribe speech in real-time from your microphone or offline from WAV files — no GPU required. Also supports speaker diarization, speaker identification, TTS, and speech segmentation.
+A terminal-based toolkit built with [Sherpa-ONNX](https://github.com/k2-fsa/sherpa-onnx). Transcribe speech in real-time from your microphone or offline from WAV files — no GPU required. Also supports speaker diarization, speaker identification, TTS, language identification, and speech segmentation.
 
 Documentation:  [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/bagustris/live-asr-sherpa).
 
