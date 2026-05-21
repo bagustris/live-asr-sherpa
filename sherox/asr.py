@@ -863,6 +863,9 @@ def main() -> None:
     _validate_runtime_args(args)
     # Normalize once so all downstream comparisons are case-insensitive.
     args.model_type = args.model_type.lower()
+    # Canonicalize short Japanese aliases regardless of whether --model-dir was supplied.
+    _JA_ALIASES = {"ja": "reazonspeech-ja", "ja-en": "reazonspeech-ja-en", "ja-en-mls-5k": "reazonspeech-ja-en-mls-5k"}
+    args.model_type = _JA_ALIASES.get(args.model_type, args.model_type)
     args.language = _normalize_language(args.language)
 
     # Resolve paths relative to the project root (one level above src/).

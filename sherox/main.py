@@ -41,7 +41,9 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def main() -> None:
+    import sys
     parser = _build_parser()
-    # With no subcommands registered, print help when called with no args.
+    if len(sys.argv) == 1:
+        parser.print_help()
+        return
     parser.parse_args()
-    parser.print_help()
