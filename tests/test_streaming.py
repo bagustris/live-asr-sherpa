@@ -1092,10 +1092,10 @@ class TestJsonTimestamps:
         lines = [l.strip() for l in capsys.readouterr().out.split("\n") if l.strip()]
         objs = [_json.loads(l) for l in lines if l.startswith("{")]
         segs = [o for o in objs if o.get("type") == "segment"]
-        if len(segs) >= 2:
-            assert segs[1]["start"] >= segs[0]["end"], (
-                f"Overlapping segments: {segs[0]} / {segs[1]}"
-            )
+        assert len(segs) >= 2, f"Expected two segments, got: {segs}"
+        assert segs[1]["start"] >= segs[0]["end"], (
+            f"Overlapping segments: {segs[0]} / {segs[1]}"
+        )
 
     def test_flush_tail_end_is_greater_than_start(self, capsys):
         """_flush_tail with start_s < end_s must emit start < end in JSON."""

@@ -408,6 +408,7 @@ def run_streaming(
                 sys.stdout.flush()
 
             if recognizer.is_endpoint(stream):
+                next_elapsed = elapsed_s + chunk_s
                 if text:
                     if show_mic_level:
                         try:
@@ -420,7 +421,7 @@ def run_streaming(
                     # Flush the previous utterance (diarization may now be done).
                     _flush_pending(pending, pending_text, pending_start, pending_end)
                     seg_start = utt_start_s
-                    seg_end = elapsed_s + chunk_s
+                    seg_end = next_elapsed
                     # Submit diarization for this utterance, but avoid queueing
                     # multiple diarization tasks when using a single worker.
                     if diarization is not None and audio_buf:
@@ -443,7 +444,7 @@ def run_streaming(
                         _flush_pending(None, pending_text, pending_start, pending_end)
                         pending_text = ""
                 recognizer.reset(stream)
-                utt_start_s = elapsed_s + chunk_s  # next utterance starts here
+                utt_start_s = next_elapsed
                 audio_buf.clear()
                 last_partial = ""
             elif text != last_partial:
@@ -675,11 +676,7 @@ def _flush_tail(
     if text:
         c = console if console is not None else _console
         _clear_line(last_partial)
-        if json_output:
-            obj = {"type": "segment", "text": text, "start": round(start_s, 3), "end": round(end_s, 3)}
-            print(json.dumps(obj, ensure_ascii=False), flush=True)
-        else:
-            c.print(f"{_PREFIX}{text}")
+        _emit_segment(text, start_s, end_s, None, False, json_output, c)
     if not json_output:
         sys.stdout.write("\n")
         sys.stdout.flush()
