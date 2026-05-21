@@ -47,9 +47,15 @@ def load() -> dict[str, dict]:
         if not ds_label:
             continue
         model_dir = Path(data.get("model_dir", "?")).name
+        precision = data.get("precision") or ""   # "" / "auto" → no suffix
+        if precision == "auto":
+            precision = ""
+        row_key = f"{model_dir}|{precision}"
+        base_label = MODEL_LABELS.get(model_dir, model_dir)
+        label = f"{base_label} ({precision})" if precision else base_label
         agg = data.get("aggregate", {})
-        entry = rows.setdefault(model_dir, {
-            "label": MODEL_LABELS.get(model_dir, model_dir),
+        entry = rows.setdefault(row_key, {
+            "label": label,
             "datasets": {},
         })
         entry["datasets"][ds_label] = {
