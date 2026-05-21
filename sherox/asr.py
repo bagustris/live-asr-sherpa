@@ -665,12 +665,12 @@ def _resolve_default_model(language: str, model_type: str, offline: bool) -> tup
     """Return (model_type, model_dir_name) for omitted --model-dir."""
     if model_type == "parakeet-ctc-ja":
         return model_type, _PARAKEET_CTC_JA_INT8_TARGET
-    if model_type == "reazonspeech-ja":
-        return model_type, _REAZON_JA_TARGET
-    if model_type == "reazonspeech-ja-en":
-        return model_type, _REAZON_JA_EN_TARGET
-    if model_type == "reazonspeech-ja-en-mls-5k":
-        return model_type, _REAZON_JA_EN_MLS_TARGET
+    if model_type in ("ja", "reazonspeech-ja"):
+        return "reazonspeech-ja", _REAZON_JA_TARGET
+    if model_type in ("ja-en", "reazonspeech-ja-en"):
+        return "reazonspeech-ja-en", _REAZON_JA_EN_TARGET
+    if model_type in ("ja-en-mls-5k", "reazonspeech-ja-en-mls-5k"):
+        return "reazonspeech-ja-en-mls-5k", _REAZON_JA_EN_MLS_TARGET
     if model_type == "cohere_transcribe":
         return model_type, _COHERE_TRANSCRIBE_TARGET
     if model_type == "multilingual_streaming":

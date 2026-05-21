@@ -276,20 +276,20 @@ class TestBuildOfflineRecognizer:
         cfg = Config(model_dir=str(tmp_path), model_type="ctc")
 
         with patch("sherox.asr_engine.sherpa_onnx.OfflineRecognizer") as mock_cls:
-            mock_cls.from_ctc.return_value = MagicMock()
+            mock_cls.from_wenet_ctc.return_value = MagicMock()
             asr_engine.build_offline_recognizer(cfg)
 
-        mock_cls.from_ctc.assert_called_once()
+        mock_cls.from_wenet_ctc.assert_called_once()
 
     def test_nemo_ctc_route(self, tmp_path):
         _touch_files(tmp_path, "tokens.txt", "model.onnx")
         cfg = Config(model_dir=str(tmp_path), model_type="nemo_ctc")
 
         with patch("sherox.asr_engine.sherpa_onnx.OfflineRecognizer") as mock_cls:
-            mock_cls.from_ctc.return_value = MagicMock()
+            mock_cls.from_nemo_ctc.return_value = MagicMock()
             asr_engine.build_offline_recognizer(cfg)
 
-        mock_cls.from_ctc.assert_called_once()
+        mock_cls.from_nemo_ctc.assert_called_once()
 
     def test_sense_voice_route(self, tmp_path):
         _touch_files(tmp_path, "tokens.txt", "model.onnx")

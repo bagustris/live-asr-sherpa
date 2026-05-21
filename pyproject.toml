@@ -13,6 +13,7 @@ dependencies = [
 ]
 
 [project.scripts]
+"sherox"         = "sherox.main:main"
 "sherox.asr"     = "sherox.asr:main"
 "sherox.sid"     = "sherox.sid:main"
 "sherox.lid"     = "sherox.lid:main"

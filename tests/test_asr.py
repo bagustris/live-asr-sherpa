@@ -1161,8 +1161,8 @@ class TestMain:
             main_module.main()
 
         called_dir, called_type = mock_vm.call_args[0]
-        assert Path(called_dir).name == main_module._REAZON_JA_TARGET
-        assert called_type == "ja"
+        assert Path(called_dir).name == main_module._PARAKEET_CTC_JA_INT8_TARGET
+        assert called_type == "parakeet-ctc-ja"
         cfg = mock_build.call_args[0][0]
         assert cfg.language == "ja"
         assert cfg.offline is True

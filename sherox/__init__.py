@@ -1,3 +1,3 @@
-"""sherox — SHErpa OnnX toolkit for ASR, VAD segmentation, and TTS."""
+"""sherox — Speech Inference Toolkit"""
 
 __version__ = "0.2.0"
