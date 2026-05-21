@@ -1015,3 +1015,98 @@ class TestRunOfflineVadStreamingJsonOutput:
                     pass
         # Verify at least one segment JSON line was emitted
         assert any(obj.get("type") == "segment" for obj in json_lines)
+
+
+# ---------------------------------------------------------------------------
+# JSON timestamp correctness
+# ---------------------------------------------------------------------------
+
+class TestJsonTimestamps:
+    """Verify that segment start/end timestamps span the full utterance, not just
+    the final chunk, and are never negative."""
+
+    def _make_recognizer_multi_chunk(self, text: str, endpoint_on: int):
+        """Return a mock recognizer that fires endpoint on the Nth is_endpoint call."""
+        recognizer = MagicMock()
+        stream = MagicMock()
+        recognizer.create_stream.return_value = stream
+        recognizer.is_ready.return_value = False
+        call_count = [0]
+
+        def is_endpoint(s):
+            call_count[0] += 1
+            return call_count[0] == endpoint_on
+
+        recognizer.is_endpoint.side_effect = is_endpoint
+        recognizer.get_result.return_value = MagicMock(strip=MagicMock(return_value=text))
+        return recognizer, stream
+
+    def test_first_segment_start_is_non_negative(self, capsys):
+        """First segment must have start >= 0."""
+        recognizer, _ = self._make_recognizer_multi_chunk("hello", endpoint_on=1)
+        # One chunk of 1 second
+        audio = iter([np.zeros(16000, dtype=np.float32)])
+        with patch("sherox.streaming._flush_tail"):
+            run_streaming(recognizer, audio, sample_rate=16000, json_output=True)
+        lines = [l.strip() for l in capsys.readouterr().out.split("\n") if l.strip()]
+        objs = [_json.loads(l) for l in lines if l.startswith("{")]
+        segs = [o for o in objs if o.get("type") == "segment"]
+        assert segs, "No segment emitted"
+        assert segs[0]["start"] >= 0.0, f"start is negative: {segs[0]['start']}"
+
+    def test_multi_chunk_segment_spans_full_utterance(self, capsys):
+        """Utterance spanning 3 chunks of 0.5s each: end should be ~1.5s."""
+        chunk_size = 8000   # 0.5 s @ 16 kHz
+        recognizer, _ = self._make_recognizer_multi_chunk("three chunks", endpoint_on=3)
+        audio = iter([np.zeros(chunk_size, dtype=np.float32)] * 3)
+        with patch("sherox.streaming._flush_tail"):
+            run_streaming(recognizer, audio, sample_rate=16000, json_output=True)
+        lines = [l.strip() for l in capsys.readouterr().out.split("\n") if l.strip()]
+        objs = [_json.loads(l) for l in lines if l.startswith("{")]
+        segs = [o for o in objs if o.get("type") == "segment"]
+        assert segs, "No segment emitted"
+        seg = segs[0]
+        assert seg["start"] == 0.0, f"expected start=0.0, got {seg['start']}"
+        assert abs(seg["end"] - 1.5) < 0.01, f"expected end≈1.5, got {seg['end']}"
+
+    def test_second_segment_start_is_after_first_end(self, capsys):
+        """Second utterance start must be >= first utterance end (no overlap)."""
+        recognizer = MagicMock()
+        stream = MagicMock()
+        recognizer.create_stream.return_value = stream
+        recognizer.is_ready.return_value = False
+        endpoint_calls = [0]
+
+        def is_endpoint(s):
+            endpoint_calls[0] += 1
+            # fire endpoint on chunk 2 and chunk 4
+            return endpoint_calls[0] in (2, 4)
+
+        recognizer.is_endpoint.side_effect = is_endpoint
+        recognizer.get_result.return_value = MagicMock(strip=MagicMock(return_value="word"))
+
+        chunk_size = 8000  # 0.5s
+        audio = iter([np.zeros(chunk_size, dtype=np.float32)] * 4)
+        with patch("sherox.streaming._flush_tail"):
+            run_streaming(recognizer, audio, sample_rate=16000, json_output=True)
+        lines = [l.strip() for l in capsys.readouterr().out.split("\n") if l.strip()]
+        objs = [_json.loads(l) for l in lines if l.startswith("{")]
+        segs = [o for o in objs if o.get("type") == "segment"]
+        if len(segs) >= 2:
+            assert segs[1]["start"] >= segs[0]["end"], (
+                f"Overlapping segments: {segs[0]} / {segs[1]}"
+            )
+
+    def test_flush_tail_end_is_greater_than_start(self, capsys):
+        """_flush_tail with start_s < end_s must emit start < end in JSON."""
+        recognizer = MagicMock()
+        stream = MagicMock()
+        recognizer.is_ready.return_value = False
+        recognizer.get_result.return_value = MagicMock(strip=MagicMock(return_value="tail"))
+        _flush_tail(recognizer, stream, 16000, "", json_output=True,
+                    start_s=1.5, end_s=2.5)
+        obj = _json.loads(capsys.readouterr().out.strip())
+        assert obj["start"] == 1.5
+        assert obj["end"] == 2.5
+        assert obj["end"] > obj["start"]
+

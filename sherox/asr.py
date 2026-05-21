@@ -110,10 +110,14 @@ sf = SimpleNamespace(SoundFile=None)
 
 _console = Console()
 _err_console = Console(stderr=True)
+# When --json is active, info messages are redirected to stderr so that
+# stdout carries only clean JSON lines.
+_json_mode: bool = False
 
 
 def _info(msg: str) -> None:
-    _console.print(f"[bold green]\\[info][/bold green] {msg}")
+    dest = _err_console if _json_mode else _console
+    dest.print(f"[bold green]\\[info][/bold green] {msg}")
 
 
 def _error(msg: str) -> None:
@@ -961,6 +965,9 @@ def main() -> None:
         no_color=args.no_color,
         json_output=args.json_output,
     )
+
+    global _json_mode
+    _json_mode = cfg.json_output
 
     _validate_model(cfg.model_dir, cfg.model_type)
 

@@ -338,6 +338,10 @@ def run_streaming(
     # Buffer raw audio for the current utterance (used for diarization).
     audio_buf: list[np.ndarray] = []
     elapsed_s = 0.0
+    utt_start_s = 0.0  # start of the current (in-progress) utterance
+    # In JSON mode the mic-level bar would corrupt the JSON stream; disable it.
+    if json_output:
+        show_mic_level = False
     executor: Optional[ThreadPoolExecutor] = (
         ThreadPoolExecutor(max_workers=1) if diarization is not None else None
     )
@@ -415,8 +419,8 @@ def run_streaming(
                     _clear_line(last_partial)
                     # Flush the previous utterance (diarization may now be done).
                     _flush_pending(pending, pending_text, pending_start, pending_end)
-                    seg_start = elapsed_s - chunk_s
-                    seg_end = elapsed_s
+                    seg_start = utt_start_s
+                    seg_end = elapsed_s + chunk_s
                     # Submit diarization for this utterance, but avoid queueing
                     # multiple diarization tasks when using a single worker.
                     if diarization is not None and audio_buf:
@@ -439,6 +443,7 @@ def run_streaming(
                         _flush_pending(None, pending_text, pending_start, pending_end)
                         pending_text = ""
                 recognizer.reset(stream)
+                utt_start_s = elapsed_s + chunk_s  # next utterance starts here
                 audio_buf.clear()
                 last_partial = ""
             elif text != last_partial:
@@ -455,7 +460,8 @@ def run_streaming(
         pass
     finally:
         _flush_tail(recognizer, stream, sample_rate, last_partial,
-                    json_output=json_output, console=_out_console, start_s=elapsed_s)
+                    json_output=json_output, console=_out_console,
+                    start_s=utt_start_s, end_s=elapsed_s)
         # Flush the last pending diarization result.
         _flush_pending(pending, pending_text, pending_start, pending_end)
         if executor is not None:
@@ -498,6 +504,9 @@ def run_offline_vad_streaming(
     _out_console = (
         Console(no_color=True, highlight=False, markup=False) if no_color else _console
     )
+    # In JSON mode the mic-level bar would corrupt the JSON stream; disable it.
+    if json_output:
+        show_mic_level = False
     max_workers = 4 if diarization is not None else 2
     executor = ThreadPoolExecutor(max_workers=max_workers)
     pending: Deque[_PendingSegment] = deque()
@@ -649,13 +658,14 @@ def _flush_tail(
     json_output: bool = False,
     console: Optional[Console] = None,
     start_s: float = 0.0,
+    end_s: float = 0.0,
 ) -> None:
     """Flush any audio left in the recognizer pipeline after the loop ends.
 
     *json_output*: when ``True``, emit the tail segment as a JSON line.
     *console*: override the default module-level console (e.g. no-colour variant).
-    *start_s*: elapsed time at the end of the main loop; used as the timestamp
-    for the tail segment in JSON output mode.
+    *start_s*: utterance start time in seconds (set to ``utt_start_s``).
+    *end_s*: elapsed time at loop exit in seconds (used as the segment end).
     """
     tail = np.zeros(int(sample_rate * 0.5), dtype=np.float32)
     stream.accept_waveform(sample_rate, tail)
@@ -666,10 +676,11 @@ def _flush_tail(
         c = console if console is not None else _console
         _clear_line(last_partial)
         if json_output:
-            obj = {"type": "segment", "text": text, "start": round(start_s, 3), "end": round(start_s, 3)}
+            obj = {"type": "segment", "text": text, "start": round(start_s, 3), "end": round(end_s, 3)}
             print(json.dumps(obj, ensure_ascii=False), flush=True)
         else:
             c.print(f"{_PREFIX}{text}")
-    sys.stdout.write("\n")
-    sys.stdout.flush()
+    if not json_output:
+        sys.stdout.write("\n")
+        sys.stdout.flush()
 
