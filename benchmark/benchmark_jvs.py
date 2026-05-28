@@ -112,7 +112,8 @@ _MODEL_TYPE_ALIASES = {
 def _load_transcripts(transcript_path: Path) -> Dict[str, str]:
     """Parse JVS transcripts_utf8.txt → {utterance_id: transcript}.
 
-    Each line: ``VOICEACTRESS100_001 text goes here``
+    Supports both colon-delimited (``VOICEACTRESS100_001:text``) and
+    whitespace-delimited (``VOICEACTRESS100_001 text goes here``) formats.
     """
     trans: Dict[str, str] = {}
     if not transcript_path.exists():
@@ -122,6 +123,15 @@ def _load_transcripts(transcript_path: Path) -> Dict[str, str]:
             line = line.strip()
             if not line:
                 continue
+            # Try colon-delimited first (official JVS format)
+            if ":" in line:
+                utt_id, _, text = line.partition(":")
+                utt_id = utt_id.strip()
+                text = text.strip()
+                if utt_id and text:
+                    trans[utt_id] = text
+                    continue
+            # Fallback to whitespace-delimited
             parts = line.split(None, 1)
             if len(parts) == 2:
                 utt_id, text = parts

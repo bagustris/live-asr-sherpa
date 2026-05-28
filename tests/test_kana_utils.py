@@ -1,6 +1,7 @@
 """Tests for benchmark/kana_utils.py."""
 
 import pytest
+import kana_utils
 from kana_utils import (
     _compute_ker,
     _katakana_to_hiragana,
@@ -47,9 +48,17 @@ def test_katakana_to_hiragana_empty():
 
 
 # ---------------------------------------------------------------------------
-# _text_to_kana  (without pyopenjtalk — fallback path only)
+# _text_to_kana  (fallback path — force pyopenjtalk unavailable)
 # ---------------------------------------------------------------------------
 
+@pytest.fixture()
+def _force_fallback(monkeypatch):
+    """Force _text_to_kana to use the fallback (no pyopenjtalk) path."""
+    monkeypatch.setattr(kana_utils, "_pyopenjtalk", None)
+    monkeypatch.setattr(kana_utils, "_pyopenjtalk_tried", True)
+
+
+@pytest.mark.usefixtures("_force_fallback")
 def test_text_to_kana_hiragana_passthrough():
     """Pure hiragana input is returned as-is (no kanji to convert)."""
     text = "あいうえお"
@@ -57,12 +66,14 @@ def test_text_to_kana_hiragana_passthrough():
     assert result == text
 
 
+@pytest.mark.usefixtures("_force_fallback")
 def test_text_to_kana_katakana_converted():
     """Katakana is converted to hiragana."""
     result = _text_to_kana("アイウエオ")
     assert result == "あいうえお"
 
 
+@pytest.mark.usefixtures("_force_fallback")
 def test_text_to_kana_strips_ascii():
     """ASCII characters are stripped (fallback path drops non-kana)."""
     result = _text_to_kana("hello world")
@@ -70,6 +81,7 @@ def test_text_to_kana_strips_ascii():
     assert all(ord(c) >= 0x3041 for c in result if c != "ー")
 
 
+@pytest.mark.usefixtures("_force_fallback")
 def test_text_to_kana_strips_punctuation():
     """Japanese punctuation is not hiragana and should be dropped."""
     result = _text_to_kana("こんにちは。今日は晴れです！")
@@ -78,14 +90,39 @@ def test_text_to_kana_strips_punctuation():
         assert "\u3041" <= ch <= "\u3096" or ch == "ー", f"Unexpected char: {ch!r}"
 
 
+@pytest.mark.usefixtures("_force_fallback")
 def test_text_to_kana_long_vowel_preserved_in_katakana():
     """ー should be preserved when present in katakana input."""
     result = _text_to_kana("ラーメン")
     assert "ー" in result
 
 
+@pytest.mark.usefixtures("_force_fallback")
 def test_text_to_kana_empty():
     assert _text_to_kana("") == ""
+
+
+# ---------------------------------------------------------------------------
+# _text_to_kana  (G2P path — stub pyopenjtalk)
+# ---------------------------------------------------------------------------
+
+@pytest.fixture()
+def _force_g2p(monkeypatch):
+    """Stub pyopenjtalk with a minimal g2p that returns katakana."""
+    class _StubPyopenjtalk:
+        @staticmethod
+        def g2p(text, kana=False):
+            # Simple stub: return the text as-is (simulate no-op G2P)
+            return text
+    monkeypatch.setattr(kana_utils, "_pyopenjtalk", _StubPyopenjtalk())
+    monkeypatch.setattr(kana_utils, "_pyopenjtalk_tried", True)
+
+
+@pytest.mark.usefixtures("_force_g2p")
+def test_text_to_kana_g2p_path_katakana():
+    """G2P path: katakana output is converted to hiragana."""
+    result = _text_to_kana("アイウエオ")
+    assert result == "あいうえお"
 
 
 # ---------------------------------------------------------------------------

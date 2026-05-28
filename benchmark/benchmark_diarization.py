@@ -460,7 +460,7 @@ def compute_cpcer(
 def compute_cpker(
     ref_by_spk: Dict[str, str],
     hyp_by_spk: Dict[int, str],
-) -> float:
+) -> Tuple[float, int, int]:
     """Concatenated minimum-permutation KER (cpKER).
 
     Like compute_cpcer but uses kana-converted text for all comparisons.
@@ -472,12 +472,15 @@ def compute_cpker(
       4. Punctuation/whitespace is stripped by _text_to_kana consistently.
       5. Build the speaker cost matrix using kana edit distance.
       6. Pick the minimum speaker permutation (Hungarian algorithm).
-      7. Return total_kana_edit_distance / total_reference_kana_chars.
+      7. Return (cpker_rate, total_edit, total_ref_kana).
 
     ref_by_spk: {speaker_label: concatenated_reference_text}
     hyp_by_spk: {speaker_id_int: concatenated_hypothesis_text}
+
+    Returns:
+        Tuple of (cpker_rate, total_kana_edit_distance, total_ref_kana_chars).
     """
-    from kana_utils import _compute_ker as _ker, _text_to_kana  # noqa: PLC0415
+    from kana_utils import _text_to_kana, _levenshtein  # noqa: PLC0415
 
     ref_labels = sorted(ref_by_spk.keys())
     hyp_ids = sorted(hyp_by_spk.keys())
@@ -485,48 +488,54 @@ def compute_cpker(
     n_hyp = len(hyp_ids)
 
     if n_ref == 0 or n_hyp == 0:
-        return 1.0
+        return (1.0, 0, 0)
 
-    # Build KER cost matrix [ref × hyp]
-    cost = np.zeros((n_ref, n_hyp), dtype=np.float64)
+    # Precompute kana conversions to avoid repeated G2P calls
+    ref_kana = [_text_to_kana(ref_by_spk[rl]) for rl in ref_labels]
+    hyp_kana = [_text_to_kana(hyp_by_spk[hid]) for hid in hyp_ids]
+
+    # Build edit distance cost matrix [ref × hyp] using precomputed kana
     edit_dist = np.zeros((n_ref, n_hyp), dtype=np.int64)
-    for i, rl in enumerate(ref_labels):
-        for j, hid in enumerate(hyp_ids):
-            _, ed, _ = _ker(ref_by_spk[rl], hyp_by_spk[hid])
-            edit_dist[i, j] = ed
-            cost[i, j] = ed
+    for i, rk in enumerate(ref_kana):
+        for j, hk in enumerate(hyp_kana):
+            edit_dist[i, j] = _levenshtein(list(rk), list(hk))
 
     # Find optimal assignment
     try:
         from scipy.optimize import linear_sum_assignment  # noqa: PLC0415
-        row_ind, col_ind = linear_sum_assignment(cost)
-        total_edit = edit_dist[row_ind, col_ind].sum()
+        row_ind, col_ind = linear_sum_assignment(edit_dist)
+        total_edit = int(edit_dist[row_ind, col_ind].sum())
     except ImportError:
         if n_ref <= 8 and n_hyp <= 8:
             n_min = min(n_ref, n_hyp)
             best_edit = None
+            best_perm = tuple(range(n_min))
             for perm in permutations(range(n_hyp), n_min):
-                ed = sum(edit_dist[i, perm[i]] for i in range(n_min))
+                ed = sum(int(edit_dist[i, perm[i]]) for i in range(n_min))
                 if best_edit is None or ed < best_edit:
                     best_edit = ed
+                    best_perm = perm
             total_edit = best_edit if best_edit is not None else 0
+            row_ind = list(range(n_min))
+            col_ind = list(best_perm)
         else:
             row_ind = list(range(min(n_ref, n_hyp)))
             col_ind = list(range(min(n_ref, n_hyp)))
-            total_edit = edit_dist[row_ind, col_ind].sum()
+            total_edit = int(edit_dist[row_ind, col_ind].sum())
 
     # Unmatched reference speakers contribute their full kana ref length as errors
-    matched_ref = set(row_ind) if n_ref <= n_hyp else set(row_ind)
+    matched_ref = set(row_ind)
     total_ref_kana = 0
-    for i, rl in enumerate(ref_labels):
-        _, _, kana_len = _ker(ref_by_spk[rl], "")
+    for i, rk in enumerate(ref_kana):
+        kana_len = len(rk)
         total_ref_kana += kana_len
         if i not in matched_ref:
             total_edit += kana_len
 
     if total_ref_kana == 0:
-        return 0.0
-    return min(total_edit / total_ref_kana, 1.0)
+        return (0.0, 0, 0)
+    cpker_rate = min(total_edit / total_ref_kana, 1.0)
+    return (cpker_rate, total_edit, total_ref_kana)
 
 
 # ---------------------------------------------------------------------------
@@ -610,7 +619,7 @@ def run_benchmark(
         hyp_by_spk_str = {k: " ".join(v) for k, v in hyp_by_spk.items()}
 
         cpcer = compute_cpcer(ref_by_spk_str, hyp_by_spk_str)
-        cpker = compute_cpker(ref_by_spk_str, hyp_by_spk_str)
+        cpker, cpker_edit, cpker_ref = compute_cpker(ref_by_spk_str, hyp_by_spk_str)
 
         # Aggregate tracking
         total_edit_dist += edit_dist
@@ -628,13 +637,9 @@ def run_benchmark(
             _compute_cer(rt, "", [])[2] for rt in ref_by_spk_str.values()
         ))
 
-        # cpKER aggregation
-        for rt in ref_by_spk_str.values():
-            _, _, kana_len = _compute_ker(rt, "")
-            total_cpker_ref += kana_len
-        total_cpker_edit += int(cpker * sum(
-            _compute_ker(rt, "")[2] for rt in ref_by_spk_str.values()
-        ))
+        # cpKER aggregation (use raw counts from compute_cpker)
+        total_cpker_edit += cpker_edit
+        total_cpker_ref += cpker_ref
 
         ref_dur = sum(s["end_s"] - s["start_s"] for s in ref_diar_segs)
         total_der_num += der * ref_dur

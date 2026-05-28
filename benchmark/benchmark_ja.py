@@ -330,7 +330,7 @@ def run_benchmark(
         overall_term_acc = total_correct_terms / total_terms if total_terms > 0 else 1.0
         exact_term_acc = total_exact_correct / total_exact if total_exact > 0 else 1.0
         flex_term_acc = total_flex_correct / total_flex if total_flex > 0 else 1.0
-        adlib_composite = 0.4 * (1 - micro_ker) + 0.6 * overall_term_acc
+        adlib_composite = 0.4 * (1 - micro_cer) + 0.6 * overall_term_acc
         term_ci = _bootstrap_ci(term_pairs)
         agg.update({
             "term_accuracy": overall_term_acc,

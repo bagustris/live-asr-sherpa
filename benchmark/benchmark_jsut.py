@@ -49,7 +49,6 @@ from benchmark_utils import (  # noqa: E402
     _bootstrap_ci,
     _compute_cer,
     _compute_ker,
-    print_group_breakdown,
     transcribe_offline,
     transcribe_online,
 )
