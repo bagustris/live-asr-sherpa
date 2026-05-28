@@ -62,6 +62,7 @@ from benchmark_utils import (  # noqa: E402
     _adlib_normalize,
     _bootstrap_ci,
     _compute_cer,
+    _compute_ker,
     _compute_term_accuracy,
     _content_normalize,
     _replace_flexible_terms,
@@ -206,6 +207,8 @@ def run_benchmark(
 
     total_edit_dist = 0
     total_ref_chars = 0
+    total_ker_edit = 0
+    total_ker_ref = 0
     total_correct_terms = 0
     total_terms = 0
     total_exact_correct = 0
@@ -216,6 +219,7 @@ def run_benchmark(
     total_proc = 0.0
 
     cer_pairs: List[Tuple[int, int]] = []
+    ker_pairs: List[Tuple[int, int]] = []
     term_pairs: List[Tuple[int, int]] = []
 
     for i, s in enumerate(samples, 1):
@@ -240,12 +244,16 @@ def run_benchmark(
         rtf = proc_time / duration if duration > 0 else float("inf")
 
         cer, edit_dist, ref_len = _compute_cer(reference, hypothesis, terms)
+        ker, ker_edit_dist, ker_ref_len = _compute_ker(reference, hypothesis)
 
         total_edit_dist += edit_dist
         total_ref_chars += ref_len
+        total_ker_edit += ker_edit_dist
+        total_ker_ref += ker_ref_len
         total_audio += duration
         total_proc += proc_time
         cer_pairs.append((edit_dist, ref_len))
+        ker_pairs.append((ker_edit_dist, ker_ref_len))
 
         result = {
             "id": utt_id,
@@ -260,6 +268,9 @@ def run_benchmark(
             "char_edit_distance": edit_dist,
             "ref_chars": ref_len,
             "cer": cer,
+            "ker_edit_distance": ker_edit_dist,
+            "ker_ref_chars": ker_ref_len,
+            "ker": ker,
         }
 
         if term_acc:
@@ -280,10 +291,10 @@ def run_benchmark(
 
         results.append(result)
 
-        marker = "✓" if cer == 0.0 else "✗"
+        marker = "✓" if ker == 0.0 else "✗"
         line = (
             f"  [{i:4d}/{len(samples)}] {marker}  RTF={rtf:.3f}  "
-            f"CER={cer * 100:5.1f}%"
+            f"CER={cer * 100:5.1f}%  KER={ker * 100:5.1f}%"
         )
         if term_acc:
             line += f"  TermAcc={result['term_accuracy'] * 100:5.1f}%"
@@ -295,15 +306,19 @@ def run_benchmark(
             print(f"    HYP: {hypothesis[:100]}")
 
     micro_cer = min(total_edit_dist / total_ref_chars, 1.0) if total_ref_chars > 0 else 0.0
+    micro_ker = min(total_ker_edit / total_ker_ref, 1.0) if total_ker_ref > 0 else 0.0
     mean_rtf = total_proc / total_audio if total_audio > 0 else float("inf")
     mean_lat = total_proc / len(results) * 1000.0 if results else float("inf")
-    composite = (micro_cer + mean_rtf) / 2.0
+    composite = (micro_ker + mean_rtf) / 2.0
     cer_ci = _bootstrap_ci(cer_pairs)
+    ker_ci = _bootstrap_ci(ker_pairs)
 
     agg: Dict = {
         "n_utterances": len(results),
         "cer": micro_cer,
         "cer_ci_95": list(cer_ci),
+        "ker": micro_ker,
+        "ker_ci_95": list(ker_ci),
         "composite_score": composite,
         "mean_rtf": mean_rtf,
         "mean_latency_ms": mean_lat,
@@ -315,7 +330,7 @@ def run_benchmark(
         overall_term_acc = total_correct_terms / total_terms if total_terms > 0 else 1.0
         exact_term_acc = total_exact_correct / total_exact if total_exact > 0 else 1.0
         flex_term_acc = total_flex_correct / total_flex if total_flex > 0 else 1.0
-        adlib_composite = 0.4 * (1 - micro_cer) + 0.6 * overall_term_acc
+        adlib_composite = 0.4 * (1 - micro_ker) + 0.6 * overall_term_acc
         term_ci = _bootstrap_ci(term_pairs)
         agg.update({
             "term_accuracy": overall_term_acc,
@@ -330,6 +345,8 @@ def run_benchmark(
     print(f"  Utterances      : {len(results)}")
     print(f"  CER             : {micro_cer * 100:.2f}%"
           f"  (95% CI: {cer_ci[0] * 100:.1f}% – {cer_ci[1] * 100:.1f}%)")
+    print(f"  KER             : {micro_ker * 100:.2f}%"
+          f"  (95% CI: {ker_ci[0] * 100:.1f}% – {ker_ci[1] * 100:.1f}%)")
     if term_acc:
         print(f"  Term Accuracy   : {agg['term_accuracy'] * 100:.2f}%"
               f"  (95% CI: {agg['term_accuracy_ci_95'][0] * 100:.1f}% – {agg['term_accuracy_ci_95'][1] * 100:.1f}%)")
@@ -337,10 +354,10 @@ def run_benchmark(
         print(f"    Flexible      : {agg['flexible_term_accuracy'] * 100:.2f}%")
     print(f"  Mean RTF        : {mean_rtf:.4f}")
     print(f"  Mean Latency    : {mean_lat:.1f} ms")
-    print(f"  Composite Score : {composite:.4f}  (CER + mean_RTF) / 2  (lower is better)")
+    print(f"  Composite Score : {composite:.4f}  (KER + mean_RTF) / 2  (lower is better)")
     if term_acc:
         print(f"  Adlib Score     : {agg['adlib_composite_score']:.4f}"
-              f"  0.4×(1−CER) + 0.6×TermAcc  (higher is better)")
+              f"  0.4×(1−KER) + 0.6×TermAcc  (higher is better)")
     print(f"  Audio total     : {total_audio:.1f}s")
     print(f"  Proc total      : {total_proc:.1f}s")
 
@@ -361,6 +378,8 @@ def print_summary(model_name: str, results: List[Dict], agg: Dict) -> None:
     print(f"  Utterances       : {agg['n_utterances']}")
     print(f"  CER              : {agg['cer'] * 100:.2f}%"
           f"  (95% CI: {agg['cer_ci_95'][0] * 100:.1f}% – {agg['cer_ci_95'][1] * 100:.1f}%)")
+    print(f"  KER              : {agg['ker'] * 100:.2f}%"
+          f"  (95% CI: {agg['ker_ci_95'][0] * 100:.1f}% – {agg['ker_ci_95'][1] * 100:.1f}%)")
     if has_terms:
         print(f"  Term Accuracy    : {agg['term_accuracy'] * 100:.2f}%"
               f"  (95% CI: {agg['term_accuracy_ci_95'][0] * 100:.1f}% – {agg['term_accuracy_ci_95'][1] * 100:.1f}%)")
@@ -368,14 +387,15 @@ def print_summary(model_name: str, results: List[Dict], agg: Dict) -> None:
         print(f"    Flexible       : {agg['flexible_term_accuracy'] * 100:.2f}%")
     print(f"  Mean RTF         : {agg['mean_rtf']:.4f}")
     print(f"  Mean Latency(ms) : {agg['mean_latency_ms']:.1f}")
-    print(f"  Composite Score  : {agg['composite_score']:.4f}  (CER + mean_RTF) / 2  (lower is better)")
+    print(f"  Composite Score  : {agg['composite_score']:.4f}  (KER + mean_RTF) / 2  (lower is better)")
     if has_terms:
-        print(f"  Adlib Score      : {agg['adlib_composite_score']:.4f}  0.4×(1−CER) + 0.6×TermAcc  (higher is better)")
+        print(f"  Adlib Score      : {agg['adlib_composite_score']:.4f}  0.4×(1−KER) + 0.6×TermAcc  (higher is better)")
     print("=" * 68)
-    breakdown_title = "CER & TermAcc by Category" if has_terms else "CER by Category"
+    breakdown_title = "CER/KER & TermAcc by Category" if has_terms else "CER/KER by Category"
     print_group_breakdown(results, "category", breakdown_title)
-    breakdown_title = "CER & TermAcc by Speaker" if has_terms else "CER by Speaker"
+    breakdown_title = "CER/KER & TermAcc by Speaker" if has_terms else "CER/KER by Speaker"
     print_group_breakdown(results, "speaker_id", breakdown_title)
+
 
 
 # ---------------------------------------------------------------------------
