@@ -1,39 +1,59 @@
 #!/usr/bin/env python3
 """
-Japanese ASR benchmark on the JVNV corpus (local dataset).
+Japanese ASR benchmark on the JVS corpus (local dataset).
 
-JVNV is a 4-speaker, 6-emotion emotional speech corpus with nonverbal
-vocalizations (laughter, sobbing, etc.) embedded in each utterance.
-  - 1,615 utterances, ~3.94 hours
-  - Speakers: F1, F2, M1, M2
-  - Emotions: anger, disgust, fear, happy, sad, surprise
-  - Sessions: regular (designated NV phrase), free (speaker-chosen NV phrase)
-  - Audio: 48 kHz mono WAV → resampled to 16 kHz for ASR
+JVS (Japanese Versatile Speech) is a large-scale text-reading corpus with
+100 speakers (50 male, 50 female) × 100 utterances (JSUT-style sentences),
+plus whispered speech (100 utts) and falsetto speech (10 utts) per speaker.
+  - Total: ~30 hours of audio
+  - Sample rate: 24 kHz mono WAV → resampled to 16 kHz for ASR
+  - Corpus page: https://sites.google.com/site/shinnosuketakamichi/research-topics/jvs_corpus
 
-CER is computed at content level (same pipeline as benchmark_ja.py):
-  NFKC + lowercase + strip JP punctuation + strip whitespace
+Directory structure assumed:
+    <jvs-dir>/
+      jvs001/
+        parallel100/
+          wav24kHz16bit/
+            VOICEACTRESS100_001.wav
+            ...
+          transcripts_utf8.txt   (space-delimited: id  transcript)
+        nonpara30/
+          wav24kHz16bit/
+            ...
+          transcripts_utf8.txt
+        whisper10/
+          wav24kHz16bit/
+            ...
+          transcripts_utf8.txt
+        falsetto10/
+          ...
+      jvs002/
+        ...
 
-Composite Score = (CER + mean_RTF) / 2  (lower is better)
+Primary metric: KER (Kana Error Rate) — phonetically robust, handles kanji vs
+kana equivalence.  CER is also reported for comparison.
 
-Dataset: https://ss-takashi.sakura.ne.jp/corpus/jvnv/
-Reference implementation: https://github.com/ouktlab/asr-ja_evalkit
+Composite Score = (KER + mean_RTF) / 2  (lower is better)
 
 Usage examples:
     # Full benchmark with default model
-    python benchmark_jvnv.py --jvnv-dir /data/jvnv_v1 --offline
+    python benchmark_jvs.py --jvs-dir /data/jvs_ver1 --offline
 
     # Smoke test: first 20 utterances, verbose
-    python benchmark_jvnv.py --jvnv-dir /data/jvnv_v1 --offline --max-utts 20 --verbose
+    python benchmark_jvs.py --jvs-dir /data/jvs_ver1 --offline --max-utts 20 --verbose
 
-    # Filter by emotion or speaker
-    python benchmark_jvnv.py --jvnv-dir /data/jvnv_v1 --offline --emotion happy
-    python benchmark_jvnv.py --jvnv-dir /data/jvnv_v1 --offline --speaker F1
+    # Filter by speaker or subset
+    python benchmark_jvs.py --jvs-dir /data/jvs_ver1 --offline --speaker jvs001
+    python benchmark_jvs.py --jvs-dir /data/jvs_ver1 --offline --subset parallel100
+
+    # Only female or male speakers
+    python benchmark_jvs.py --jvs-dir /data/jvs_ver1 --offline --gender female
 
     # Save full results to JSON
-    python benchmark_jvnv.py --jvnv-dir /data/jvnv_v1 --offline --output results_jvnv.json
+    python benchmark_jvs.py --jvs-dir /data/jvs_ver1 --offline --output results_jvs.json
 
     # Different model
-    python benchmark_jvnv.py --jvnv-dir /data/jvnv_v1 --offline --model-type reazonspeech-ja
+    python benchmark_jvs.py --jvs-dir /data/jvs_ver1 --offline --model-type reazonspeech-ja
 """
 
 from __future__ import annotations
@@ -64,14 +84,18 @@ from benchmark_utils import (  # noqa: E402
     transcribe_online,
 )
 
-DEFAULT_JVNV_DIR = "/data/jvnv_v1"
+DEFAULT_JVS_DIR = "/data/jvs_ver1"
 DEFAULT_OFFLINE_MODEL_DIR = str(_PROJECT_DIR / "models" / "parakeet-ctc-ja-int8")
 DEFAULT_OFFLINE_MODEL_TYPE = "parakeet-ctc-ja"
 DEFAULT_ONLINE_MODEL_DIR = str(_PROJECT_DIR / "models" / "zipformer-ja")
 
-SPEAKERS = ["F1", "F2", "M1", "M2"]
-EMOTIONS = ["anger", "disgust", "fear", "happy", "sad", "surprise"]
-SESSIONS = ["regular", "free"]
+# Subsets shipped with JVS
+JVS_SUBSETS = ["parallel100", "nonpara30", "whisper10", "falsetto10"]
+
+# Speakers jvs001 … jvs100; jvs001–050 = female, jvs051–100 = male
+# (see https://sites.google.com/site/shinnosuketakamichi/research-topics/jvs_corpus)
+_FEMALE_SPEAKERS = {f"jvs{i:03d}" for i in range(1, 51)}
+_MALE_SPEAKERS = {f"jvs{i:03d}" for i in range(51, 101)}
 
 _MODEL_TYPE_ALIASES = {
     "parakeet-ctc-ja": "nemo_ctc",
@@ -82,101 +106,126 @@ _MODEL_TYPE_ALIASES = {
 
 
 # ---------------------------------------------------------------------------
-# JVNV data loading
+# JVS data loading
 # ---------------------------------------------------------------------------
 
-def load_transcriptions(jvnv_dir: Path) -> Dict[str, str]:
-    """Parse transcription.csv → {emotion_session_id: full_transcription}.
+def _load_transcripts(transcript_path: Path) -> Dict[str, str]:
+    """Parse JVS transcripts_utf8.txt → {utterance_id: transcript}.
 
-    CSV format (pipe-delimited, no header):
-        {emotion}_{session}_{id}|{nv_phrase}|{full_transcription}
+    Supports both colon-delimited (``VOICEACTRESS100_001:text``) and
+    whitespace-delimited (``VOICEACTRESS100_001 text goes here``) formats.
     """
     trans: Dict[str, str] = {}
-    csv_path = jvnv_dir / "transcription.csv"
-    with open(csv_path, encoding="utf-8") as f:
+    if not transcript_path.exists():
+        return trans
+    with open(transcript_path, encoding="utf-8") as f:
         for line in f:
             line = line.strip()
             if not line:
                 continue
-            parts = line.split("|")
-            if len(parts) >= 3:
-                trans[parts[0]] = parts[2]
+            # Try colon-delimited first (official JVS format)
+            if ":" in line:
+                utt_id, _, text = line.partition(":")
+                utt_id = utt_id.strip()
+                text = text.strip()
+                if utt_id and text:
+                    trans[utt_id] = text
+                    continue
+            # Fallback to whitespace-delimited
+            parts = line.split(None, 1)
+            if len(parts) == 2:
+                utt_id, text = parts
+                trans[utt_id] = text
     return trans
 
 
-def load_jvnv_samples(
-    jvnv_dir: Path,
+def load_jvs_samples(
+    jvs_dir: Path,
     speakers: Optional[List[str]] = None,
-    emotions: Optional[List[str]] = None,
-    sessions: Optional[List[str]] = None,
+    subsets: Optional[List[str]] = None,
+    gender: Optional[str] = None,   # "male" | "female" | None
     max_utts: Optional[int] = None,
     target_sr: int = 16000,
 ) -> List[Dict]:
-    """Load JVNV WAV files and their transcriptions from the local dataset.
+    """Load JVS WAV files and transcriptions from the local corpus.
 
-    Audio is 48 kHz mono; resampled to target_sr (16 kHz) for ASR.
-    Returns list of dicts with keys: id, audio, audio_duration, reference,
-    speaker, emotion, session.
+    Returns a list of dicts with keys:
+      id, audio, audio_duration, reference, speaker, subset, gender.
     """
     try:
         import soundfile as sf  # noqa: PLC0415
     except ImportError as exc:
         raise RuntimeError("pip install soundfile") from exc
 
-    trans = load_transcriptions(jvnv_dir)
-    missing: List[str] = []
+    jvs_dir = Path(jvs_dir)
+    subsets_to_use = subsets or ["parallel100"]  # default to main read-speech subset
 
-    speakers_to_use = speakers or SPEAKERS
-    emotions_to_use = emotions or EMOTIONS
-    sessions_to_use = sessions or SESSIONS
+    # Determine speaker list
+    if speakers:
+        spk_dirs = [jvs_dir / spk for spk in speakers]
+    else:
+        spk_dirs = sorted(jvs_dir.glob("jvs*"))
+
+    # Apply gender filter
+    if gender == "female":
+        spk_dirs = [d for d in spk_dirs if d.name in _FEMALE_SPEAKERS]
+    elif gender == "male":
+        spk_dirs = [d for d in spk_dirs if d.name in _MALE_SPEAKERS]
 
     samples: List[Dict] = []
-    for speaker in speakers_to_use:
-        for emotion in emotions_to_use:
-            for session in sessions_to_use:
-                wav_dir = jvnv_dir / speaker / emotion / session
-                if not wav_dir.exists():
-                    continue
-                for wav_path in sorted(wav_dir.glob("*.wav")):
-                    stem = wav_path.stem  # e.g. F1_anger_regular_01
-                    # transcription key: emotion_session_id (drop speaker prefix)
-                    parts = stem.split("_")
-                    trans_key = "_".join(parts[1:])  # anger_regular_01
-                    reference = trans.get(trans_key, "")
-                    if not reference:
-                        missing.append(stem)
+    missing: List[str] = []
 
-                    audio, sr = sf.read(str(wav_path), dtype="float32", always_2d=False)
-                    if audio.ndim == 2:
-                        audio = audio.mean(axis=1)
+    for spk_dir in spk_dirs:
+        if not spk_dir.is_dir():
+            continue
+        spk_name = spk_dir.name
+        spk_gender = "female" if spk_name in _FEMALE_SPEAKERS else "male"
 
-                    if sr != target_sr:
-                        try:
-                            import soxr  # noqa: PLC0415
-                            audio = soxr.resample(audio, sr, target_sr, quality="HQ").astype(np.float32)
-                        except ImportError:
-                            from math import gcd  # noqa: PLC0415
-                            from scipy.signal import resample_poly  # noqa: PLC0415
-                            g = gcd(target_sr, sr)
-                            audio = resample_poly(
-                                audio, target_sr // g, sr // g,
-                                window=("kaiser", 14.0), padtype="line",
-                            ).astype(np.float32)
+        for subset in subsets_to_use:
+            subset_dir = spk_dir / subset
+            wav_dir = subset_dir / "wav24kHz16bit"
+            transcript_path = subset_dir / "transcripts_utf8.txt"
+            if not wav_dir.exists():
+                continue
+            trans = _load_transcripts(transcript_path)
 
-                    samples.append({
-                        "id": stem,
-                        "audio": audio,
-                        "audio_duration": len(audio) / target_sr,
-                        "reference": reference,
-                        "speaker": speaker,
-                        "emotion": emotion,
-                        "session": session,
-                    })
+            for wav_path in sorted(wav_dir.glob("*.wav")):
+                utt_id = wav_path.stem
+                reference = trans.get(utt_id, "")
+                if not reference:
+                    missing.append(f"{spk_name}/{subset}/{utt_id}")
 
-                    if max_utts and len(samples) >= max_utts:
-                        if missing:
-                            print(f"  Warning: {len(missing)} utterances had no transcription", flush=True)
-                        return samples
+                audio, sr = sf.read(str(wav_path), dtype="float32", always_2d=False)
+                if audio.ndim == 2:
+                    audio = audio.mean(axis=1)
+
+                if sr != target_sr:
+                    try:
+                        import soxr  # noqa: PLC0415
+                        audio = soxr.resample(audio, sr, target_sr, quality="HQ").astype(np.float32)
+                    except ImportError:
+                        from math import gcd  # noqa: PLC0415
+                        from scipy.signal import resample_poly  # noqa: PLC0415
+                        g = gcd(target_sr, sr)
+                        audio = resample_poly(
+                            audio, target_sr // g, sr // g,
+                            window=("kaiser", 14.0), padtype="line",
+                        ).astype(np.float32)
+
+                samples.append({
+                    "id": f"{spk_name}_{subset}_{utt_id}",
+                    "audio": audio,
+                    "audio_duration": len(audio) / target_sr,
+                    "reference": reference,
+                    "speaker": spk_name,
+                    "subset": subset,
+                    "gender": spk_gender,
+                })
+
+                if max_utts and len(samples) >= max_utts:
+                    if missing:
+                        print(f"  Warning: {len(missing)} utterances had no transcription", flush=True)
+                    return samples
 
     if missing:
         print(f"  Warning: {len(missing)} utterances had no transcription", flush=True)
@@ -225,7 +274,6 @@ def run_benchmark(
         duration = s["audio_duration"]
         rtf = proc_time / duration if duration > 0 else float("inf")
 
-        # No term annotations in JVNV — pass empty terms list
         cer, edit_dist, ref_len = _compute_cer(reference, hypothesis, [])
         ker, ker_edit_dist, ker_ref_len = _compute_ker(reference, hypothesis)
 
@@ -241,8 +289,8 @@ def run_benchmark(
         result = {
             "id": utt_id,
             "speaker": s["speaker"],
-            "emotion": s["emotion"],
-            "session": s["session"],
+            "subset": s["subset"],
+            "gender": s["gender"],
             "reference": reference,
             "hypothesis": hypothesis,
             "audio_duration_s": duration,
@@ -262,10 +310,8 @@ def run_benchmark(
         line = (
             f"  [{i:4d}/{len(samples)}] {marker}  RTF={rtf:.3f}  "
             f"CER={cer * 100:5.1f}%  KER={ker * 100:5.1f}%  Lat={proc_time * 1000:.0f}ms"
-            f"  [{s['emotion']}  {s['speaker']}  {s['session']}]"
         )
-        if verbose:
-            line = line.rstrip("]") + "]"
+        line += f"  [{s['speaker']}  {s['subset']}]" if verbose else f"  [{s['speaker']}]"
         print(line, flush=True)
         if verbose:
             print(f"    REF: {reference[:100]}")
@@ -311,12 +357,11 @@ def run_benchmark(
 # Summary
 # ---------------------------------------------------------------------------
 
-def print_summary(model_name: str, jvnv_dir: str, results: List[Dict], agg: Dict) -> None:
+def print_summary(model_name: str, results: List[Dict], agg: Dict) -> None:
     print("\n" + "=" * 68)
-    print("  SUMMARY — Japanese ASR Benchmark (JVNV)")
+    print("  SUMMARY — Japanese ASR Benchmark (JVS)")
     print("=" * 68)
     print(f"  Model            : {model_name}")
-    print(f"  Dataset          : JVNV v1  ({jvnv_dir})")
     print(f"  Utterances       : {agg['n_utterances']}")
     print(f"  CER              : {agg['cer'] * 100:.2f}%"
           f"  (95% CI: {agg['cer_ci_95'][0] * 100:.1f}% – {agg['cer_ci_95'][1] * 100:.1f}%)")
@@ -326,9 +371,8 @@ def print_summary(model_name: str, jvnv_dir: str, results: List[Dict], agg: Dict
     print(f"  Mean Latency(ms) : {agg['mean_latency_ms']:.1f}")
     print(f"  Composite Score  : {agg['composite_score']:.4f}  (KER + mean_RTF) / 2  (lower is better)")
     print("=" * 68)
-    print_group_breakdown(results, "speaker", "CER/KER by Speaker")
-    print_group_breakdown(results, "emotion", "CER/KER by Emotion")
-    print_group_breakdown(results, "session", "CER/KER by Session")
+    print_group_breakdown(results, "gender", "CER/KER by Gender")
+    print_group_breakdown(results, "subset", "CER/KER by Subset")
 
 
 # ---------------------------------------------------------------------------
@@ -338,27 +382,22 @@ def print_summary(model_name: str, jvnv_dir: str, results: List[Dict], agg: Dict
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         description=(
-            "Benchmark Japanese ASR on the JVNV emotional speech corpus. "
-            "Evaluates CER across 4 speakers, 6 emotions, and 2 sessions."
+            "Benchmark Japanese ASR on the JVS corpus (local dataset). "
+            "Reports CER and KER (Kana Error Rate)."
         ),
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
+    p.add_argument("--jvs-dir", default=DEFAULT_JVS_DIR, metavar="PATH",
+                   help="Path to the JVS corpus root directory (contains jvs001…jvs100).")
     p.add_argument(
-        "--jvnv-dir", default=DEFAULT_JVNV_DIR, metavar="PATH",
-        help="Root directory of the JVNV corpus (contains transcription.csv)",
+        "--subset", default=None, nargs="+", metavar="SUBSET",
+        choices=JVS_SUBSETS,
+        help=f"Which JVS subsets to evaluate. Default: parallel100. Choices: {JVS_SUBSETS}",
     )
-    p.add_argument(
-        "--speaker", default=None, metavar="SPK", choices=SPEAKERS,
-        help="Filter to a single speaker",
-    )
-    p.add_argument(
-        "--emotion", default=None, metavar="EMO", choices=EMOTIONS,
-        help="Filter to a single emotion",
-    )
-    p.add_argument(
-        "--session", default=None, metavar="SES", choices=SESSIONS,
-        help="Filter to a single session (regular or free)",
-    )
+    p.add_argument("--speaker", default=None, nargs="+", metavar="SPK",
+                   help="Restrict evaluation to specific speaker IDs (e.g. jvs001 jvs002).")
+    p.add_argument("--gender", default=None, choices=["male", "female"],
+                   help="Restrict to male (jvs051-100) or female (jvs001-050) speakers.")
     p.add_argument("--model-dir", default=None, metavar="PATH")
     p.add_argument("--model-type", default=DEFAULT_OFFLINE_MODEL_TYPE, metavar="TYPE")
     p.add_argument("--offline", action="store_true")
@@ -382,12 +421,9 @@ def _validate_args(args: argparse.Namespace) -> None:
     if args.max_utts is not None and args.max_utts <= 0:
         print("Error: --max-utts must be > 0", file=sys.stderr)
         sys.exit(1)
-    jvnv_dir = Path(args.jvnv_dir)
-    if not jvnv_dir.exists():
-        print(f"Error: JVNV directory not found: {jvnv_dir}", file=sys.stderr)
-        sys.exit(1)
-    if not (jvnv_dir / "transcription.csv").exists():
-        print(f"Error: transcription.csv not found in {jvnv_dir}", file=sys.stderr)
+    jvs_dir = Path(args.jvs_dir)
+    if not jvs_dir.exists():
+        print(f"Error: JVS directory not found: {jvs_dir}", file=sys.stderr)
         sys.exit(1)
 
 
@@ -423,26 +459,17 @@ def main() -> None:
     recognizer = build_offline_recognizer(cfg) if args.offline else build_recognizer(cfg)
     print(f"  Loaded in {time.monotonic() - t0:.1f}s\n")
 
-    jvnv_dir = Path(args.jvnv_dir)
-    print(f"Loading JVNV from {jvnv_dir} …")
-    speakers = [args.speaker] if args.speaker else None
-    emotions = [args.emotion] if args.emotion else None
-    sessions = [args.session] if args.session else None
-    samples = load_jvnv_samples(
-        jvnv_dir=jvnv_dir,
-        speakers=speakers,
-        emotions=emotions,
-        sessions=sessions,
+    jvs_dir = Path(args.jvs_dir)
+    subsets = args.subset or ["parallel100"]
+    samples = load_jvs_samples(
+        jvs_dir=jvs_dir,
+        speakers=args.speaker,
+        subsets=subsets,
+        gender=args.gender,
         max_utts=args.max_utts,
         target_sr=args.sample_rate,
     )
-    spk_set = sorted({s["speaker"] for s in samples})
-    emo_set = sorted({s["emotion"] for s in samples})
-    ses_set = sorted({s["session"] for s in samples})
-    print(
-        f"  {len(samples)} utterances  "
-        f"({len(spk_set)} speakers, {len(emo_set)} emotions, {len(ses_set)} sessions)\n"
-    )
+    print(f"Loaded {len(samples)} utterances from {jvs_dir.name}\n")
 
     results, agg = run_benchmark(
         recognizer, samples,
@@ -452,22 +479,18 @@ def main() -> None:
         verbose=args.verbose,
     )
 
-    print_summary(Path(model_dir).name, str(jvnv_dir), results, agg)
+    print_summary(Path(model_dir).name, results, agg)
 
     if args.output:
         output_data = {
-            "dataset": "JVNV",
-            "jvnv_dir": str(jvnv_dir),
+            "dataset": "JVS",
+            "jvs_dir": str(jvs_dir),
+            "subsets": subsets,
             "model_dir": model_dir,
             "model_type": args.model_type,
             "offline": args.offline,
             "language": args.language,
             "threads": cfg.num_threads,
-            "filters": {
-                "speaker": args.speaker,
-                "emotion": args.emotion,
-                "session": args.session,
-            },
             "aggregate": agg,
             "utterances": results,
         }

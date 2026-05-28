@@ -18,8 +18,10 @@ OUTPUT = BENCHMARK_DIR / "ASR_LEADERBOARD_JP.md"
 DATASETS = {
     "holotherapper/adlib-devterm": "ADLIB-DEVTERM",
     "JVNV": "JVNV",
+    "japanese-asr/ja_asr.jsut_basic5000": "JSUT5000",
+    "JVS": "JVS",
 }
-DATASET_ORDER = ["ADLIB-DEVTERM", "JVNV"]
+DATASET_ORDER = ["ADLIB-DEVTERM", "JVNV", "JSUT5000", "JVS"]
 
 MODEL_LABELS = {
     "parakeet-ctc-ja-int8": "Parakeet CTC JA (int8)",
@@ -60,6 +62,7 @@ def load() -> dict[str, dict]:
         })
         entry["datasets"][ds_label] = {
             "cer": agg.get("cer"),
+            "ker": agg.get("ker"),
             "rtf": agg.get("mean_rtf"),
             "composite": agg.get("composite_score"),
             "source": path.relative_to(REPO_ROOT).as_posix(),
@@ -88,17 +91,19 @@ def render(rows: dict[str, dict]) -> str:
     summary = []
     for entry in rows.values():
         per_ds = entry["datasets"]
+        kers = [per_ds[d]["ker"] for d in DATASET_ORDER if d in per_ds and per_ds[d].get("ker") is not None]
         cers = [per_ds[d]["cer"] for d in DATASET_ORDER if d in per_ds]
         rtfs = [per_ds[d]["rtf"] for d in DATASET_ORDER if d in per_ds]
         scores = [per_ds[d]["composite"] for d in DATASET_ORDER if d in per_ds]
         summary.append({
             "label": entry["label"],
+            "avg_ker": avg(kers),
             "avg_cer": avg(cers),
             "avg_rtf": avg(rtfs),
             "avg_score": avg(scores),
             "per_ds": per_ds,
         })
-    summary.sort(key=lambda r: (r["avg_cer"] is None, r["avg_cer"] or 0))
+    summary.sort(key=lambda r: (r["avg_ker"] is None, r["avg_ker"] or 0))
 
     sources = sorted({
         d["source"]
@@ -111,32 +116,46 @@ def render(rows: dict[str, dict]) -> str:
     out.append("")
     out.append(
         "HF Open ASR Leaderboard–style ranking of Japanese ASR models on "
-        "[adlib-devterm](https://huggingface.co/datasets/holotherapper/adlib-devterm) and "
-        "[JVNV v1](https://ss-takashi.sakura.ne.jp/corpus/jvnv/). "
+        "[adlib-devterm](https://huggingface.co/datasets/holotherapper/adlib-devterm), "
+        "[JVNV v1](https://ss-takashi.sakura.ne.jp/corpus/jvnv/), "
+        "[JSUT Basic5000](https://huggingface.co/datasets/japanese-asr/ja_asr.jsut_basic5000), and "
+        "[JVS](https://sites.google.com/site/shinnosuketakamichi/research-topics/jvs_corpus). "
         "Lower is better for every column."
     )
     out.append("")
     out.append(
-        "Numbers come from `benchmark/benchmark_ja.py` and `benchmark/benchmark_jvnv.py` "
+        "Numbers come from `benchmark/benchmark_ja.py`, `benchmark/benchmark_jvnv.py`, "
+        "`benchmark/benchmark_jsut.py`, and `benchmark/benchmark_jvs.py` "
         "(offline pipeline, 4 threads, `--language ja`). Regenerate this file with "
         "`python benchmark/update_asr_leaderboard_jp.py`."
     )
     out.append("")
-    out.append("| Model | Avg CER | Avg RTF | Avg Composite | ADLIB-DEVTERM CER | JVNV CER |")
-    out.append("|-------|--------:|--------:|--------------:|------------------:|---------:|")
+    # Build header with all dataset columns
+    ds_ker_headers = " | ".join(f"{d} KER" for d in DATASET_ORDER)
+    out.append(f"| Model | Avg KER | Avg CER | Avg RTF | Avg Composite | {ds_ker_headers} |")
+    separator = "|-------|--------:|--------:|--------:|--------------:|" + \
+                "".join("----------:|" for _ in DATASET_ORDER)
+    out.append(separator)
     for r in summary:
-        cer_a = r["per_ds"].get("ADLIB-DEVTERM", {}).get("cer")
-        cer_j = r["per_ds"].get("JVNV", {}).get("cer")
+        ds_ker_cols = " | ".join(
+            fmt_pct(r["per_ds"].get(d, {}).get("ker")) for d in DATASET_ORDER
+        )
         out.append(
-            f"| {r['label']} | {fmt_pct(r['avg_cer'])} | {fmt_rtf(r['avg_rtf'])} | "
-            f"{fmt_score(r['avg_score'])} | {fmt_pct(cer_a)} | {fmt_pct(cer_j)} |"
+            f"| {r['label']} | {fmt_pct(r['avg_ker'])} | {fmt_pct(r['avg_cer'])} "
+            f"| {fmt_rtf(r['avg_rtf'])} | "
+            f"{fmt_score(r['avg_score'])} | {ds_ker_cols} |"
         )
     out.append("")
     out.append("## Metric definitions")
     out.append("")
+    out.append("- **KER** — Kana Error Rate (text converted to hiragana/kana before edit distance)")
     out.append("- **CER** — character error rate (NFKC + lowercase + punctuation-stripped)")
     out.append("- **RTF** — real-time factor (processing time / audio duration)")
-    out.append("- **Composite** — `(CER + RTF) / 2`")
+    out.append("- **Composite** — `(KER + RTF) / 2`")
+    out.append("")
+    out.append("KER is the primary metric: it handles kanji/kana equivalence "
+               "(e.g., 東京 ≡ とうきょう) by converting text to hiragana via pyopenjtalk G2P "
+               "before comparison, making it a more phonetically accurate measure of ASR quality.")
     out.append("")
     out.append("Full details in [`benchmark/README.md`](README.md).")
     out.append("")
@@ -150,6 +169,12 @@ def render(rows: dict[str, dict]) -> str:
     out.append("")
     out.append("python benchmark/benchmark_jvnv.py --offline --jvnv-dir /data/jvnv_v1 \\")
     out.append("  --model-type \"$MODEL\" --output \"benchmark/results_${MODEL}_jvnv.json\"")
+    out.append("")
+    out.append("python benchmark/benchmark_jsut.py --offline --model-type \"$MODEL\" \\")
+    out.append("  --output \"benchmark/results_${MODEL}_jsut.json\"")
+    out.append("")
+    out.append("python benchmark/benchmark_jvs.py --offline --jvs-dir /data/jvs_ver1 \\")
+    out.append("  --model-type \"$MODEL\" --output \"benchmark/results_${MODEL}_jvs.json\"")
     out.append("")
     out.append("python benchmark/update_asr_leaderboard_jp.py")
     out.append("```")

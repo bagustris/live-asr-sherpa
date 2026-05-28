@@ -3,3 +3,4 @@ soundfile>=0.12.0
 datasets>=2.20.0
 numpy>=1.24.0
 soxr>=0.3.7        # optional fast resampler; falls back to scipy
+pyopenjtalk        # optional; required for accurate KER (kana error rate) via G2P

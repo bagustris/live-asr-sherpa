@@ -53,6 +53,7 @@ if str(_PROJECT_DIR) not in sys.path:
 from benchmark_utils import (  # noqa: E402
     _bootstrap_ci,
     _compute_cer,
+    _compute_ker,
     transcribe_offline,
 )
 
@@ -456,6 +457,87 @@ def compute_cpcer(
     return min(total_edit / total_ref_chars, 1.0)
 
 
+def compute_cpker(
+    ref_by_spk: Dict[str, str],
+    hyp_by_spk: Dict[int, str],
+) -> Tuple[float, int, int]:
+    """Concatenated minimum-permutation KER (cpKER).
+
+    Like compute_cpcer but uses kana-converted text for all comparisons.
+
+    Algorithm (per the issue specification):
+      1. Each speaker's text has already been concatenated by the caller.
+      2. Convert each speaker's concatenated reference text to kana/hiragana.
+      3. Convert each speaker's concatenated hypothesis text to kana/hiragana.
+      4. Punctuation/whitespace is stripped by _text_to_kana consistently.
+      5. Build the speaker cost matrix using kana edit distance.
+      6. Pick the minimum speaker permutation (Hungarian algorithm).
+      7. Return (cpker_rate, total_edit, total_ref_kana).
+
+    ref_by_spk: {speaker_label: concatenated_reference_text}
+    hyp_by_spk: {speaker_id_int: concatenated_hypothesis_text}
+
+    Returns:
+        Tuple of (cpker_rate, total_kana_edit_distance, total_ref_kana_chars).
+    """
+    from kana_utils import _text_to_kana, _levenshtein  # noqa: PLC0415
+
+    ref_labels = sorted(ref_by_spk.keys())
+    hyp_ids = sorted(hyp_by_spk.keys())
+    n_ref = len(ref_labels)
+    n_hyp = len(hyp_ids)
+
+    if n_ref == 0 or n_hyp == 0:
+        return (1.0, 0, 0)
+
+    # Precompute kana conversions to avoid repeated G2P calls
+    ref_kana = [_text_to_kana(ref_by_spk[rl]) for rl in ref_labels]
+    hyp_kana = [_text_to_kana(hyp_by_spk[hid]) for hid in hyp_ids]
+
+    # Build edit distance cost matrix [ref × hyp] using precomputed kana
+    edit_dist = np.zeros((n_ref, n_hyp), dtype=np.int64)
+    for i, rk in enumerate(ref_kana):
+        for j, hk in enumerate(hyp_kana):
+            edit_dist[i, j] = _levenshtein(list(rk), list(hk))
+
+    # Find optimal assignment
+    try:
+        from scipy.optimize import linear_sum_assignment  # noqa: PLC0415
+        row_ind, col_ind = linear_sum_assignment(edit_dist)
+        total_edit = int(edit_dist[row_ind, col_ind].sum())
+    except ImportError:
+        if n_ref <= 8 and n_hyp <= 8:
+            n_min = min(n_ref, n_hyp)
+            best_edit = None
+            best_perm = tuple(range(n_min))
+            for perm in permutations(range(n_hyp), n_min):
+                ed = sum(int(edit_dist[i, perm[i]]) for i in range(n_min))
+                if best_edit is None or ed < best_edit:
+                    best_edit = ed
+                    best_perm = perm
+            total_edit = best_edit if best_edit is not None else 0
+            row_ind = list(range(n_min))
+            col_ind = list(best_perm)
+        else:
+            row_ind = list(range(min(n_ref, n_hyp)))
+            col_ind = list(range(min(n_ref, n_hyp)))
+            total_edit = int(edit_dist[row_ind, col_ind].sum())
+
+    # Unmatched reference speakers contribute their full kana ref length as errors
+    matched_ref = set(row_ind)
+    total_ref_kana = 0
+    for i, rk in enumerate(ref_kana):
+        kana_len = len(rk)
+        total_ref_kana += kana_len
+        if i not in matched_ref:
+            total_edit += kana_len
+
+    if total_ref_kana == 0:
+        return (0.0, 0, 0)
+    cpker_rate = min(total_edit / total_ref_kana, 1.0)
+    return (cpker_rate, total_edit, total_ref_kana)
+
+
 # ---------------------------------------------------------------------------
 # Benchmark runner
 # ---------------------------------------------------------------------------
@@ -467,18 +549,23 @@ def run_benchmark(
     sample_rate: int = 16000,
     verbose: bool = False,
 ) -> Tuple[List[Dict], Dict]:
-    """Run diarization+ASR on each conversation and compute DER/CER/cpCER."""
+    """Run diarization+ASR on each conversation and compute DER/CER/cpCER/KER/cpKER."""
     results: List[Dict] = []
 
     total_edit_dist = 0
     total_ref_chars = 0
     total_cp_edit_dist = 0
     total_cp_ref_chars = 0
+    total_ker_edit = 0
+    total_ker_ref = 0
+    total_cpker_edit = 0
+    total_cpker_ref = 0
     total_der_num = 0.0
     total_der_den = 0
     total_audio = 0.0
     total_proc = 0.0
     cer_pairs: List[Tuple[int, int]] = []
+    ker_pairs: List[Tuple[int, int]] = []
 
     for i, sample in enumerate(samples, 1):
         conv_id = sample["id"]
@@ -519,6 +606,10 @@ def run_benchmark(
         _, edit_dist, ref_len = _compute_cer(ref_text_chron, hyp_text_chron, [])
         cer = min(edit_dist / ref_len, 1.0) if ref_len > 0 else 0.0
 
+        # KER: chronological concat, kana-converted
+        _, ker_edit_dist, ker_ref_len = _compute_ker(ref_text_chron, hyp_text_chron)
+        ker = min(ker_edit_dist / ker_ref_len, 1.0) if ker_ref_len > 0 else 0.0
+
         # cpCER: per-speaker concat
         ref_by_spk_str = {k: " ".join(v) for k, v in ref_text_by_spk.items()}
         hyp_by_spk: Dict[int, List[str]] = {}
@@ -528,11 +619,15 @@ def run_benchmark(
         hyp_by_spk_str = {k: " ".join(v) for k, v in hyp_by_spk.items()}
 
         cpcer = compute_cpcer(ref_by_spk_str, hyp_by_spk_str)
+        cpker, cpker_edit, cpker_ref = compute_cpker(ref_by_spk_str, hyp_by_spk_str)
 
         # Aggregate tracking
         total_edit_dist += edit_dist
         total_ref_chars += ref_len
+        total_ker_edit += ker_edit_dist
+        total_ker_ref += ker_ref_len
         cer_pairs.append((edit_dist, ref_len))
+        ker_pairs.append((ker_edit_dist, ker_ref_len))
 
         # cpCER aggregation
         for rt in ref_by_spk_str.values():
@@ -541,6 +636,10 @@ def run_benchmark(
         total_cp_edit_dist += int(cpcer * sum(
             _compute_cer(rt, "", [])[2] for rt in ref_by_spk_str.values()
         ))
+
+        # cpKER aggregation (use raw counts from compute_cpker)
+        total_cpker_edit += cpker_edit
+        total_cpker_ref += cpker_ref
 
         ref_dur = sum(s["end_s"] - s["start_s"] for s in ref_diar_segs)
         total_der_num += der * ref_dur
@@ -559,6 +658,8 @@ def run_benchmark(
             "der": der,
             "cer": cer,
             "cpcer": cpcer,
+            "ker": ker,
+            "cpker": cpker,
             "ref_diar_segs": ref_diar_segs,
             "hypothesis_segments": [
                 {"start_s": s[0], "end_s": s[1], "speaker": s[2], "text": s[3]}
@@ -571,6 +672,7 @@ def run_benchmark(
         print(
             f"    {marker}  RTF={rtf:.3f}  DER={der * 100:.1f}%"
             f"  CER={cer * 100:.1f}%  cpCER={cpcer * 100:.1f}%"
+            f"  KER={ker * 100:.1f}%  cpKER={cpker * 100:.1f}%"
             f"  Lat={proc_time * 1000:.0f}ms",
             flush=True,
         )
@@ -580,11 +682,14 @@ def run_benchmark(
 
     n = len(results)
     micro_cer = min(total_edit_dist / total_ref_chars, 1.0) if total_ref_chars > 0 else 0.0
+    micro_ker = min(total_ker_edit / total_ker_ref, 1.0) if total_ker_ref > 0 else 0.0
     micro_cpcer = min(total_cp_edit_dist / total_cp_ref_chars, 1.0) if total_cp_ref_chars > 0 else 0.0
+    micro_cpker = min(total_cpker_edit / total_cpker_ref, 1.0) if total_cpker_ref > 0 else 0.0
     macro_der = total_der_num / total_der_den if total_der_den > 0 else 0.0
     mean_rtf = total_proc / total_audio if total_audio > 0 else float("inf")
     mean_lat = total_proc / n * 1000.0 if n > 0 else float("inf")
     cer_ci = _bootstrap_ci(cer_pairs)
+    ker_ci = _bootstrap_ci(ker_pairs)
 
     print(f"\n  ── Aggregate ──")
     print(f"  Conversations    : {n}")
@@ -592,6 +697,9 @@ def run_benchmark(
     print(f"  CER              : {micro_cer * 100:.2f}%"
           f"  (95% CI: {cer_ci[0] * 100:.1f}% – {cer_ci[1] * 100:.1f}%)")
     print(f"  cpCER            : {micro_cpcer * 100:.2f}%")
+    print(f"  KER              : {micro_ker * 100:.2f}%"
+          f"  (95% CI: {ker_ci[0] * 100:.1f}% – {ker_ci[1] * 100:.1f}%)")
+    print(f"  cpKER            : {micro_cpker * 100:.2f}%")
     print(f"  Mean RTF         : {mean_rtf:.4f}")
     print(f"  Mean Latency     : {mean_lat:.1f} ms")
     print(f"  Audio total      : {total_audio:.1f}s")
@@ -603,6 +711,9 @@ def run_benchmark(
         "cer": micro_cer,
         "cer_ci_95": list(cer_ci),
         "cpcer": micro_cpcer,
+        "ker": micro_ker,
+        "ker_ci_95": list(ker_ci),
+        "cpker": micro_cpker,
         "mean_rtf": mean_rtf,
         "mean_latency_ms": mean_lat,
         "total_audio_s": total_audio,
@@ -627,6 +738,9 @@ def print_summary(model_name: str, results: List[Dict], agg: Dict) -> None:
     print(f"  CER               : {agg['cer'] * 100:.2f}%"
           f"  (95% CI: {agg['cer_ci_95'][0] * 100:.1f}% – {agg['cer_ci_95'][1] * 100:.1f}%)")
     print(f"  cpCER             : {agg['cpcer'] * 100:.2f}%")
+    print(f"  KER               : {agg['ker'] * 100:.2f}%"
+          f"  (95% CI: {agg['ker_ci_95'][0] * 100:.1f}% – {agg['ker_ci_95'][1] * 100:.1f}%)")
+    print(f"  cpKER             : {agg['cpker'] * 100:.2f}%")
     print(f"  Mean RTF          : {agg['mean_rtf']:.4f}")
     print(f"  Mean Latency (ms) : {agg['mean_latency_ms']:.1f}")
     print("=" * 72)
@@ -639,10 +753,14 @@ def print_summary(model_name: str, results: List[Dict], agg: Dict) -> None:
         avg_der = sum(r["der"] for r in ds_results) / len(ds_results)
         avg_cer = sum(r["cer"] for r in ds_results) / len(ds_results)
         avg_cpcer = sum(r["cpcer"] for r in ds_results) / len(ds_results)
+        avg_ker = sum(r["ker"] for r in ds_results) / len(ds_results)
+        avg_cpker = sum(r["cpker"] for r in ds_results) / len(ds_results)
         print(f"\n  {ds}  ({len(ds_results)} conversations)")
         print(f"    DER   : {avg_der * 100:.2f}%")
         print(f"    CER   : {avg_cer * 100:.2f}%")
         print(f"    cpCER : {avg_cpcer * 100:.2f}%")
+        print(f"    KER   : {avg_ker * 100:.2f}%")
+        print(f"    cpKER : {avg_cpker * 100:.2f}%")
 
 
 # ---------------------------------------------------------------------------

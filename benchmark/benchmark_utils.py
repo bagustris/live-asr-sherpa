@@ -1,7 +1,8 @@
 """Shared utilities for Japanese ASR benchmarks.
 
-Normalization, CER, bootstrap CI, and transcription helpers used by
-benchmark_ja.py (adlib-devterm) and benchmark_jvnv.py (JVNV).
+Normalization, CER, KER, bootstrap CI, and transcription helpers used by
+benchmark_ja.py (adlib-devterm), benchmark_jvnv.py (JVNV), and other Japanese
+benchmark scripts.
 """
 from __future__ import annotations
 
@@ -11,6 +12,8 @@ from collections import defaultdict
 from typing import Dict, List, Optional, Tuple
 
 import numpy as np
+
+from kana_utils import _compute_ker, _katakana_to_hiragana, _text_to_kana  # noqa: F401
 
 
 # ---------------------------------------------------------------------------
@@ -311,15 +314,20 @@ def transcribe_online(
 # ---------------------------------------------------------------------------
 
 def print_group_breakdown(results: List[Dict], group_key: str, title: str) -> None:
-    """Print a CER (and optionally TermAcc) breakdown table by group_key."""
+    """Print a CER/KER (and optionally TermAcc) breakdown table by group_key."""
     has_terms = results and "correct_terms" in results[0]
+    has_ker = results and "ker_edit_distance" in results[0]
     groups: Dict[str, Dict] = defaultdict(
-        lambda: {"edit_dist": 0, "ref_chars": 0, "correct": 0, "total": 0, "n": 0}
+        lambda: {"edit_dist": 0, "ref_chars": 0, "ker_edit": 0, "ker_ref": 0,
+                 "correct": 0, "total": 0, "n": 0}
     )
     for r in results:
         g = groups[r[group_key]]
         g["edit_dist"] += r["char_edit_distance"]
         g["ref_chars"] += r["ref_chars"]
+        if has_ker:
+            g["ker_edit"] += r["ker_edit_distance"]
+            g["ker_ref"] += r["ker_ref_chars"]
         if has_terms:
             g["correct"] += r["correct_terms"]
             g["total"] += r["total_terms"]
@@ -327,6 +335,8 @@ def print_group_breakdown(results: List[Dict], group_key: str, title: str) -> No
 
     print(f"\n  ── {title} ──")
     header = f"  {'Group':<22}  {'N':>4}  {'CER':>8}"
+    if has_ker:
+        header += f"  {'KER':>8}"
     if has_terms:
         header += f"  {'TermAcc':>9}"
     print(header)
@@ -335,6 +345,9 @@ def print_group_breakdown(results: List[Dict], group_key: str, title: str) -> No
         g = groups[name]
         cer = min(g["edit_dist"] / g["ref_chars"], 1.0) if g["ref_chars"] > 0 else 0.0
         row = f"  {name:<22}  {g['n']:>4}  {cer * 100:>7.2f}%"
+        if has_ker:
+            ker = min(g["ker_edit"] / g["ker_ref"], 1.0) if g["ker_ref"] > 0 else 0.0
+            row += f"  {ker * 100:>7.2f}%"
         if has_terms:
             term_acc = g["correct"] / g["total"] if g["total"] > 0 else 1.0
             row += f"  {term_acc * 100:>8.2f}%"
