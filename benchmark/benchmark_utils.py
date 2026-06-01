@@ -15,6 +15,10 @@ import numpy as np
 
 from kana_utils import _compute_ker, _katakana_to_hiragana, _text_to_kana  # noqa: F401
 
+# sherpa-onnx Whisper warns and truncates well before a nominal 30s clip in
+# practice, so keep benchmark chunks comfortably below that runtime ceiling.
+_WHISPER_MAX_OFFLINE_SECONDS = 20.0
+
 
 # ---------------------------------------------------------------------------
 # Adlib-compatible normalization & term matching
@@ -277,11 +281,35 @@ def _bootstrap_ci(
 # Transcription helpers
 # ---------------------------------------------------------------------------
 
-def transcribe_offline(recognizer, audio: np.ndarray, sample_rate: int) -> str:
+def _decode_offline_once(recognizer, audio: np.ndarray, sample_rate: int) -> str:
     stream = recognizer.create_stream()
     stream.accept_waveform(sample_rate, audio)
     recognizer.decode_stream(stream)
     return stream.result.text.strip()
+
+
+def transcribe_offline(
+    recognizer,
+    audio: np.ndarray,
+    sample_rate: int,
+    model_type: str | None = None,
+) -> str:
+    if model_type != "whisper":
+        return _decode_offline_once(recognizer, audio, sample_rate)
+
+    max_samples = max(1, int(sample_rate * _WHISPER_MAX_OFFLINE_SECONDS))
+    if len(audio) <= max_samples:
+        return _decode_offline_once(recognizer, audio, sample_rate)
+
+    parts: list[str] = []
+    for start in range(0, len(audio), max_samples):
+        chunk = audio[start:start + max_samples]
+        if len(chunk) == 0:
+            continue
+        text = _decode_offline_once(recognizer, chunk, sample_rate)
+        if text:
+            parts.append(text)
+    return " ".join(parts).strip()
 
 
 def transcribe_online(

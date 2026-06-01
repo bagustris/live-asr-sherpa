@@ -192,6 +192,9 @@ python benchmark/benchmark_ja.py --offline --output benchmark/results_ja.json
 | `reazonspeech-ja` | transducer | Auto-downloaded |
 | `reazonspeech-ja-en` | transducer | Bilingual; auto-downloaded |
 | `reazonspeech-ja-en-mls-5k` | transducer | Bilingual + MLS; auto-downloaded |
+| `whisper` | `whisper` | Pick a Whisper directory with `--model-dir` (Large-V3, Turbo, Distil Large-V3.5, etc.) |
+| `sense_voice` | `sense_voice` | Multilingual; auto-downloaded |
+| `cohere_transcribe` | `cohere_transcribe` | Multilingual; auto-downloaded |
 
 ### Extra metrics (`--term-acc`)
 
@@ -456,7 +459,7 @@ The leaderboard ranks models by **average KER** across all available datasets. C
    aggregate metrics land in a JSON file:
 
     ```bash
-    MODEL=parakeet-ctc-ja   # or whisper, sense_voice, reazonspeech-ja, ...
+MODEL=parakeet-ctc-ja   # or whisper, sense_voice, reazonspeech-ja, ...
 
     python benchmark/benchmark_ja.py --offline --model-type "$MODEL" \
       --output "benchmark/results_${MODEL}_adlib.json"
@@ -476,8 +479,15 @@ The leaderboard ranks models by **average KER** across all available datasets. C
 2. Regenerate the leaderboard:
 
     ```bash
-    python benchmark/update_asr_leaderboard_jp.py
-    ```
+python benchmark/update_asr_leaderboard_jp.py
+```
+
+To run the curated Japanese sweep, use `benchmark/run_ja_benchmark.sh`. By default it runs
+the curated pair (`adlib` + `jvnv`); add repeated `--dataset` flags such as
+`--dataset jsut --dataset jvs` or use `--dataset all` to include every supported dataset.
+Its `--model` keys include `whisper-large-v3`, `whisper-turbo`, and
+`whisper-distil-large-v3.5`; those map to `--model-type whisper` with the correct canonical
+`models/` directory automatically.
 
 The script scans `benchmark/*.json` and `results*.json` in the repo root, groups results
 by `model_dir`, computes per-model averages across all datasets, and rewrites

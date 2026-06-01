@@ -52,6 +52,12 @@ class TestModelRegistry:
         langs = [e[1] for e in _ASR_MODELS]
         assert any("ja" in l for l in langs)
 
+    def test_whisper_variants_in_asr(self):
+        names = {e[0] for e in _ASR_MODELS}
+        assert "sherpa-onnx-whisper-large-v3" in names
+        assert "sherpa-onnx-whisper-turbo" in names
+        assert "sherpa-onnx-whisper-distil-large-v3.5" in names
+
     def test_tts_includes_eng(self):
         langs = [e[1] for e in _TTS_MODELS]
         assert "en" in langs

@@ -11,6 +11,9 @@ import json
 from pathlib import Path
 from statistics import mean
 
+from benchmark_utils import _bootstrap_ci
+from kana_utils import _compute_ker
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 BENCHMARK_DIR = REPO_ROOT / "benchmark"
 OUTPUT = BENCHMARK_DIR / "ASR_LEADERBOARD_JP.md"
@@ -26,6 +29,8 @@ DATASET_ORDER = ["ADLIB-DEVTERM", "JVNV", "JSUT5000", "JVS"]
 MODEL_LABELS = {
     "parakeet-ctc-ja-int8": "Parakeet CTC JA (int8)",
     "sherpa-onnx-whisper-large-v3": "Whisper Large-V3",
+    "sherpa-onnx-whisper-turbo": "Whisper Turbo",
+    "sherpa-onnx-whisper-distil-large-v3.5": "Whisper Distil Large-V3.5",
     "sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17": "SenseVoice",
     "reazonspeech-ja": "ReazonSpeech JA",
     "reazonspeech-ja-en": "ReazonSpeech JA-EN",
@@ -37,7 +42,38 @@ MODEL_LABELS = {
 def discover() -> list[Path]:
     files = list(BENCHMARK_DIR.glob("results*.json"))
     files.extend(REPO_ROOT.glob("results*.json"))
-    return files
+    return sorted(files)
+
+
+def _backfill_aggregate_metrics(data: dict) -> dict:
+    agg = dict(data.get("aggregate", {}))
+    if agg.get("ker") is not None:
+        return agg
+
+    utterances = data.get("utterances") or []
+    if not utterances:
+        return agg
+
+    total_ker_edit = 0
+    total_ker_ref = 0
+    ker_pairs: list[tuple[int, int]] = []
+    for utterance in utterances:
+        ker_edit = utterance.get("ker_edit_distance")
+        ker_ref = utterance.get("ker_ref_chars")
+        if ker_edit is None or ker_ref is None:
+            _, ker_edit, ker_ref = _compute_ker(
+                utterance.get("reference", ""),
+                utterance.get("hypothesis", ""),
+            )
+        total_ker_edit += ker_edit
+        total_ker_ref += ker_ref
+        ker_pairs.append((ker_edit, ker_ref))
+
+    agg["ker"] = min(total_ker_edit / total_ker_ref, 1.0) if total_ker_ref > 0 else 0.0
+    agg["ker_ci_95"] = list(_bootstrap_ci(ker_pairs))
+    if agg.get("mean_rtf") is not None:
+        agg["composite_score"] = (agg["ker"] + agg["mean_rtf"]) / 2.0
+    return agg
 
 
 def load() -> dict[str, dict]:
@@ -55,18 +91,28 @@ def load() -> dict[str, dict]:
         row_key = f"{model_dir}|{precision}"
         base_label = MODEL_LABELS.get(model_dir, model_dir)
         label = f"{base_label} ({precision})" if precision else base_label
-        agg = data.get("aggregate", {})
+        agg = _backfill_aggregate_metrics(data)
         entry = rows.setdefault(row_key, {
             "label": label,
             "datasets": {},
         })
-        entry["datasets"][ds_label] = {
+        dataset_entry = {
             "cer": agg.get("cer"),
             "ker": agg.get("ker"),
             "rtf": agg.get("mean_rtf"),
             "composite": agg.get("composite_score"),
             "source": path.relative_to(REPO_ROOT).as_posix(),
+            "mtime_ns": path.stat().st_mtime_ns,
         }
+        existing = entry["datasets"].get(ds_label)
+        if existing is None:
+            entry["datasets"][ds_label] = dataset_entry
+            continue
+
+        new_has_ker = dataset_entry["ker"] is not None
+        existing_has_ker = existing.get("ker") is not None
+        if (new_has_ker and not existing_has_ker) or dataset_entry["mtime_ns"] >= existing.get("mtime_ns", 0):
+            entry["datasets"][ds_label] = dataset_entry
     return rows
 
 

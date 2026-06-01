@@ -473,6 +473,22 @@ _WHISPER_LARGE_V3_ARCHIVE = "sherpa-onnx-whisper-large-v3.tar.bz2"
 _WHISPER_LARGE_V3_EXTRACTED = "sherpa-onnx-whisper-large-v3"
 _WHISPER_LARGE_V3_TARGET = "sherpa-onnx-whisper-large-v3"
 
+_WHISPER_TURBO_URL = (
+    "https://github.com/k2-fsa/sherpa-onnx/releases/download/"
+    "asr-models/sherpa-onnx-whisper-turbo.tar.bz2"
+)
+_WHISPER_TURBO_ARCHIVE = "sherpa-onnx-whisper-turbo.tar.bz2"
+_WHISPER_TURBO_EXTRACTED = "sherpa-onnx-whisper-turbo"
+_WHISPER_TURBO_TARGET = "sherpa-onnx-whisper-turbo"
+
+_WHISPER_DISTIL_LARGE_V35_URL = (
+    "https://github.com/k2-fsa/sherpa-onnx/releases/download/"
+    "asr-models/sherpa-onnx-whisper-distil-large-v3.5.tar.bz2"
+)
+_WHISPER_DISTIL_LARGE_V35_ARCHIVE = "sherpa-onnx-whisper-distil-large-v3.5.tar.bz2"
+_WHISPER_DISTIL_LARGE_V35_EXTRACTED = "sherpa-onnx-whisper-distil-large-v3.5"
+_WHISPER_DISTIL_LARGE_V35_TARGET = "sherpa-onnx-whisper-distil-large-v3.5"
+
 # ── SenseVoice model URLs ─────────────────────────────────────────────────────
 # Multilingual model: zh / en / ja / ko / yue
 _SENSE_VOICE_URL = (
@@ -639,6 +655,14 @@ def _download_model(model_dir: str, model_type: str) -> None:
         url = _WHISPER_LARGE_V3_URL
         archive_name = _WHISPER_LARGE_V3_ARCHIVE
         extracted_name = _WHISPER_LARGE_V3_EXTRACTED
+    elif model_dir.name == _WHISPER_TURBO_TARGET:
+        url = _WHISPER_TURBO_URL
+        archive_name = _WHISPER_TURBO_ARCHIVE
+        extracted_name = _WHISPER_TURBO_EXTRACTED
+    elif model_dir.name == _WHISPER_DISTIL_LARGE_V35_TARGET:
+        url = _WHISPER_DISTIL_LARGE_V35_URL
+        archive_name = _WHISPER_DISTIL_LARGE_V35_ARCHIVE
+        extracted_name = _WHISPER_DISTIL_LARGE_V35_EXTRACTED
     # SenseVoice multilingual model
     elif model_type == "sense_voice" or model_dir.name == _SENSE_VOICE_TARGET:
         url = _SENSE_VOICE_URL

@@ -10,3 +10,5 @@ build/
 venv/
 *.onnx
 models/
+.spectory
+.*

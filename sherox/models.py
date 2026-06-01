@@ -107,6 +107,20 @@ _ASR_MODELS: list[tuple[str, str, str, str, str]] = [
         "Whisper Large-V3 multilingual",
     ),
     (
+        "sherpa-onnx-whisper-turbo",
+        "multilingual (99 langs)",
+        "offline",
+        "~540 MB",
+        "Whisper Turbo multilingual",
+    ),
+    (
+        "sherpa-onnx-whisper-distil-large-v3.5",
+        "multilingual (99 langs)",
+        "offline",
+        "~505 MB",
+        "Whisper Distil Large-V3.5 multilingual",
+    ),
+    (
         "sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17",
         "zh, en, ja, ko, yue",
         "offline",

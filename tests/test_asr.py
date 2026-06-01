@@ -526,6 +526,12 @@ def _extracted_name_for(model_dir_name: str, model_type: str) -> str:
         return main_module._PARAKEET_CTC_JA_INT8_EXTRACTED
     if model_type == "cohere_transcribe" or model_dir_name == main_module._COHERE_TRANSCRIBE_TARGET:
         return main_module._COHERE_TRANSCRIBE_EXTRACTED
+    if model_dir_name == main_module._WHISPER_LARGE_V3_TARGET:
+        return main_module._WHISPER_LARGE_V3_EXTRACTED
+    if model_dir_name == main_module._WHISPER_TURBO_TARGET:
+        return main_module._WHISPER_TURBO_EXTRACTED
+    if model_dir_name == main_module._WHISPER_DISTIL_LARGE_V35_TARGET:
+        return main_module._WHISPER_DISTIL_LARGE_V35_EXTRACTED
     if model_type == "multilingual_streaming" or model_dir_name == main_module._MULTILINGUAL_STREAMING_TARGET:
         return main_module._MULTILINGUAL_STREAMING_EXTRACTED
     if model_type == "nemo_transducer" or model_dir_name in (
@@ -604,6 +610,18 @@ class TestDownloadModel:
     def test_uses_cohere_transcribe_url_for_cohere_transcribe_dir_name(self, tmp_path):
         url = _run_download_model(tmp_path, main_module._COHERE_TRANSCRIBE_TARGET, "")
         assert "cohere" in url
+
+    def test_uses_whisper_large_v3_url_for_whisper_large_v3_dir_name(self, tmp_path):
+        url = _run_download_model(tmp_path, main_module._WHISPER_LARGE_V3_TARGET, "")
+        assert "whisper-large-v3" in url
+
+    def test_uses_whisper_turbo_url_for_whisper_turbo_dir_name(self, tmp_path):
+        url = _run_download_model(tmp_path, main_module._WHISPER_TURBO_TARGET, "whisper")
+        assert "whisper-turbo" in url
+
+    def test_uses_whisper_distil_url_for_whisper_distil_dir_name(self, tmp_path):
+        url = _run_download_model(tmp_path, main_module._WHISPER_DISTIL_LARGE_V35_TARGET, "whisper")
+        assert "whisper-distil-large-v3.5" in url
 
     def test_uses_multilingual_streaming_url_for_multilingual_streaming_model_type(self, tmp_path):
         url = _run_download_model(tmp_path, main_module._MULTILINGUAL_STREAMING_TARGET, "multilingual_streaming")

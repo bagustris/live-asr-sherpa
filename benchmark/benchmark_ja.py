@@ -197,6 +197,7 @@ def run_benchmark(
     recognizer,
     samples: List[Dict],
     adlib_cases: Dict[str, Dict],
+    model_type: str,
     offline: bool = True,
     sample_rate: int = 16000,
     chunk_size: float = 0.1,
@@ -232,7 +233,12 @@ def run_benchmark(
         t_start = time.monotonic()
         try:
             if offline:
-                hypothesis = transcribe_offline(recognizer, audio, sample_rate)
+                hypothesis = transcribe_offline(
+                    recognizer,
+                    audio,
+                    sample_rate,
+                    model_type=model_type,
+                )
             else:
                 hypothesis = transcribe_online(recognizer, audio, sample_rate, chunk_size)
         except Exception as exc:
@@ -500,6 +506,7 @@ def main() -> None:
 
     results, agg = run_benchmark(
         recognizer, samples, adlib_cases,
+        model_type=args.model_type,
         offline=args.offline,
         sample_rate=args.sample_rate,
         chunk_size=args.chunk_size,
