@@ -10,6 +10,7 @@ import numpy as np
 import pytest
 
 import sherox.tts as tts_module
+from sherox import AudioError, ConfigError, SherpaError
 from sherox.config import TtsConfig
 
 
@@ -102,19 +103,19 @@ class TestValidateRuntimeArgs:
         tts_module._validate_runtime_args(self._args())
 
     def test_negative_speaker_id_exits(self):
-        with pytest.raises(SystemExit):
+        with pytest.raises(ConfigError):
             tts_module._validate_runtime_args(self._args(speaker_id=-1))
 
     def test_zero_speed_exits(self):
-        with pytest.raises(SystemExit):
+        with pytest.raises(ConfigError):
             tts_module._validate_runtime_args(self._args(speed=0.0))
 
     def test_negative_speed_exits(self):
-        with pytest.raises(SystemExit):
+        with pytest.raises(ConfigError):
             tts_module._validate_runtime_args(self._args(speed=-0.5))
 
     def test_zero_threads_exits(self):
-        with pytest.raises(SystemExit):
+        with pytest.raises(ConfigError):
             tts_module._validate_runtime_args(self._args(threads=0))
 
 
@@ -139,7 +140,7 @@ class TestDownloadFile:
     def test_failure_exits(self, tmp_path):
         dest = tmp_path / "model.tar.bz2"
         with patch("sherox.utils.urllib.request.urlopen", side_effect=Exception("net error")):
-            with pytest.raises(SystemExit):
+            with pytest.raises(SherpaError):
                 tts_module._download_file("http://example.com/model.tar.bz2", dest)
 
     def test_progress_with_positive_total(self, tmp_path):
@@ -234,11 +235,11 @@ class TestEnsureModel:
         assert result == custom
 
     def test_exits_on_unsupported_lang(self, tmp_path):
-        with pytest.raises(SystemExit):
+        with pytest.raises(ConfigError):
             tts_module._ensure_model("xyz", None, tmp_path)
 
     def test_exits_when_custom_dir_not_found(self, tmp_path):
-        with pytest.raises(SystemExit):
+        with pytest.raises(ConfigError):
             tts_module._ensure_model("ind", tmp_path / "no_such_dir", tmp_path)
 
     def test_downloads_and_extracts_when_missing(self, tmp_path):
@@ -278,7 +279,7 @@ class TestEnsureModel:
 
         with patch.object(tts_module, "_download_file", side_effect=fake_download), \
              patch("tarfile.open", side_effect=fake_tar_open), \
-             pytest.raises(SystemExit):
+             pytest.raises(ConfigError):
             tts_module._ensure_model("ind", None, tmp_path)
 
     def test_exits_when_extraction_raises(self, tmp_path):
@@ -287,12 +288,12 @@ class TestEnsureModel:
 
         with patch.object(tts_module, "_download_file", side_effect=fake_download), \
              patch("tarfile.open", side_effect=Exception("corrupt archive")), \
-             pytest.raises(SystemExit):
+             pytest.raises(ConfigError):
             tts_module._ensure_model("ind", None, tmp_path)
 
     def test_exits_for_non_sherpa_onnx_backend_with_auto_resolution(self, tmp_path):
         # Japanese uses piper_plus backend, which doesn't support auto-resolution
-        with pytest.raises(SystemExit):
+        with pytest.raises(ConfigError):
             tts_module._ensure_model("jpn", None, tmp_path)
 
 
@@ -346,7 +347,7 @@ class TestBuildTts:
         cfg = TtsConfig(language="xyz")
         mock_sherpa = MagicMock()
         with patch.dict("sys.modules", {"sherpa_onnx": mock_sherpa}), \
-             pytest.raises(SystemExit):
+             pytest.raises(ConfigError):
             tts_module.build_tts(cfg, tmp_path)
 
     def test_exits_on_invalid_config(self, tmp_path):
@@ -364,14 +365,14 @@ class TestBuildTts:
 
         cfg = TtsConfig(language="ind", model_dir=str(model_dir))
         with patch.dict("sys.modules", {"sherpa_onnx": mock_sherpa}), \
-             pytest.raises(SystemExit):
+             pytest.raises(ConfigError):
             tts_module.build_tts(cfg, tmp_path)
 
     def test_piper_plus_exits_when_model_dir_given(self, tmp_path):
         model_dir = tmp_path / "custom"
         model_dir.mkdir()
         cfg = TtsConfig(language="jpn", model_dir=str(model_dir))
-        with pytest.raises(SystemExit):
+        with pytest.raises(ConfigError):
             tts_module.build_tts(cfg, tmp_path)
 
     def test_require_piper_plus_returns_cached_runtime(self):
@@ -473,7 +474,7 @@ class TestSynthesiseToFile:
     def test_exits_for_unsupported_backend(self):
         tts = SimpleNamespace(backend="unsupported_backend")
         cfg = TtsConfig(output="out.wav")
-        with pytest.raises(SystemExit):
+        with pytest.raises(ConfigError):
             tts_module.synthesise_to_file(tts, "Hello", cfg)
 
     def test_raises_assertion_error_for_unsupported_backend_when_error_mocked(self):
@@ -501,7 +502,7 @@ class TestPlay:
     def test_exits_when_sounddevice_missing(self):
         samples = np.zeros(1000, dtype=np.float32)
         with patch.dict("sys.modules", {"sounddevice": None}):
-            with pytest.raises(SystemExit):
+            with pytest.raises(ConfigError):
                 tts_module._play(samples, 22050)
 
 
@@ -742,7 +743,7 @@ class TestBuildTtsSarashina:
         assert result.backend == "sarashina"
 
     def test_ensure_model_exits_for_sarashina_backend(self, tmp_path):
-        with pytest.raises(SystemExit):
+        with pytest.raises(ConfigError):
             tts_module._ensure_model("jpn-sarashina", None, tmp_path)
 
 

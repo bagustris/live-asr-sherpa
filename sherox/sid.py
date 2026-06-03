@@ -37,8 +37,10 @@ from typing import Dict, List, Tuple
 import numpy as np
 from rich.console import Console
 
+from . import ConfigError
 from .asr_engine import _require_sherpa_onnx, build_vad
 from .utils import download_file as _download_file
+from .utils import run_cli as _run_cli
 from .audio import mic_stream
 from .config import Config as _AsrConfig, SidConfig
 
@@ -71,7 +73,7 @@ def _info(msg: str) -> None:
 
 def _error(msg: str) -> None:
     _err_console.print(f"[bold red]\\[error][/bold red] {msg}")
-    sys.exit(1)
+    raise ConfigError(msg)
 
 
 def _validate_model(model_path: str, project_dir: Path) -> str:
@@ -355,6 +357,10 @@ def parse_args() -> argparse.Namespace:
 
 
 def main() -> None:
+    _run_cli(_main_impl)
+
+
+def _main_impl() -> None:
     args = parse_args()
     project_dir = Path(__file__).resolve().parent.parent
 

@@ -37,12 +37,14 @@ from __future__ import annotations
 
 import argparse
 import sys
+import tarfile
 import tempfile
 import time
 from pathlib import Path
 
+from . import ConfigError
 from .config import KwsConfig
-from .utils import _error, _info, download_file
+from .utils import _error, _info, download_file, run_cli as _run_cli, safe_tar_members as _safe_tar_members
 
 # ── Model constants ───────────────────────────────────────────────────────────
 
@@ -60,7 +62,7 @@ def _require_sherpa_onnx():
         import sherpa_onnx  # noqa: PLC0415
         return sherpa_onnx
     except ImportError:
-        _error(
+        raise ConfigError(
             "sherpa-onnx is not installed. Run: pip install sherpa-onnx"
         )
 
@@ -70,7 +72,7 @@ def _require_sounddevice():
         import sounddevice as sd  # noqa: PLC0415
         return sd
     except ImportError:
-        _error(
+        raise ConfigError(
             "sounddevice is not installed. Run: pip install sounddevice"
         )
 
@@ -91,12 +93,19 @@ def _validate_model(model_dir_override: str, project_dir: Path) -> Path:
 
     archive = project_dir / "models" / f"{_MODEL_NAME}.tar.bz2"
     _info(f"Downloading KWS model → {archive}")
-    download_file(_MODEL_URL, str(archive))
+    download_file(_MODEL_URL, archive)
 
-    import tarfile  # noqa: PLC0415
     _info("Extracting…")
-    with tarfile.open(archive) as tar:
-        tar.extractall(project_dir / "models")
+    models_dir = project_dir / "models"
+    models_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        with tarfile.open(archive, "r:bz2") as tf:
+            if sys.version_info >= (3, 12):
+                tf.extractall(models_dir, filter="data")
+            else:
+                tf.extractall(models_dir, members=_safe_tar_members(tf, models_dir))
+    except Exception as exc:  # noqa: BLE001
+        _error(f"Extraction failed: {exc}")
     archive.unlink(missing_ok=True)
 
     if not model_dir.is_dir():
@@ -332,6 +341,10 @@ def parse_args() -> argparse.Namespace:
 
 
 def main() -> None:
+    _run_cli(_main_impl)
+
+
+def _main_impl() -> None:
     args = parse_args()
     project_dir = Path(__file__).resolve().parent.parent
 

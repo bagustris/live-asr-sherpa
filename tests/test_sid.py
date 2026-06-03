@@ -8,6 +8,7 @@ import pytest
 import soundfile as sf
 
 import sherox.sid as sid_module
+from sherox import ConfigError, SherpaError
 from sherox.config import SidConfig
 
 
@@ -154,7 +155,7 @@ class TestDownloadFile:
     def test_failure_exits(self, tmp_path):
         dest = tmp_path / "model.onnx"
         with patch("sherox.utils.urllib.request.urlopen", side_effect=Exception("fail")):
-            with pytest.raises(SystemExit):
+            with pytest.raises(SherpaError):
                 sid_module._download_file("http://example.com/model.onnx", dest)
 
     def test_progress_with_positive_total(self, tmp_path):
@@ -197,25 +198,25 @@ class TestLoadSpeakerFile:
         assert str(wav) in result["alice"]
 
     def test_exits_when_file_not_found(self, tmp_path):
-        with pytest.raises(SystemExit):
+        with pytest.raises(ConfigError):
             sid_module._load_speaker_file(str(tmp_path / "missing.txt"))
 
     def test_exits_on_bad_format(self, tmp_path):
         spk_file = tmp_path / "speakers.txt"
         spk_file.write_text("alice\n")  # no wav path
-        with pytest.raises(SystemExit):
+        with pytest.raises(ConfigError):
             sid_module._load_speaker_file(str(spk_file))
 
     def test_exits_when_wav_not_found(self, tmp_path):
         spk_file = tmp_path / "speakers.txt"
         spk_file.write_text("alice /no/such/file.wav\n")
-        with pytest.raises(SystemExit):
+        with pytest.raises(ConfigError):
             sid_module._load_speaker_file(str(spk_file))
 
     def test_exits_on_empty_file(self, tmp_path):
         spk_file = tmp_path / "speakers.txt"
         spk_file.write_text("")
-        with pytest.raises(SystemExit):
+        with pytest.raises(ConfigError):
             sid_module._load_speaker_file(str(spk_file))
 
     def test_skips_comments_and_blank_lines(self, tmp_path):
@@ -279,7 +280,7 @@ class TestBuildExtractor:
         mock_sherpa.SpeakerEmbeddingExtractorConfig.return_value = mock_cfg
         cfg = SidConfig(model=str(model))
         with patch.object(sid_module, "_require_sherpa_onnx", return_value=mock_sherpa), \
-             pytest.raises(SystemExit):
+             pytest.raises(ConfigError):
             sid_module._build_extractor(cfg)
 
 
@@ -332,7 +333,7 @@ class TestBuildManager:
         manager.add.return_value = False
         mock_sherpa.SpeakerEmbeddingManager.return_value = manager
         with patch.object(sid_module, "_require_sherpa_onnx", return_value=mock_sherpa), \
-             pytest.raises(SystemExit):
+             pytest.raises(ConfigError):
             sid_module._build_manager(ext, {"alice": [str(wav)]})
 
 
@@ -655,7 +656,7 @@ class TestEnrollSpeaker:
 
     def test_exits_when_wav_not_found(self, tmp_path):
         spk_file = tmp_path / "speakers.txt"
-        with pytest.raises(SystemExit):
+        with pytest.raises(ConfigError):
             sid_module.enroll_speaker("alice", ["/no/such/file.wav"], str(spk_file))
 
     def test_multiple_wavs_written(self, tmp_path):
@@ -691,9 +692,8 @@ class TestEnrollSpeaker:
         # Manually simulate main() logic: 1 element means no WAV supplied
         args.enroll = ["alice"]  # only name, no WAV
         with patch.object(sid_module, "enroll_speaker") as mock_enroll:
-            # main() should call _error -> SystemExit
-            with pytest.raises(SystemExit):
+            # main() should call _error -> ConfigError
+            with pytest.raises(ConfigError):
                 # Replicate the check in main():
                 if len(args.enroll) < 2:
-                    import sys
-                    sys.exit(1)
+                    sid_module._error("--enroll requires a NAME followed by at least one WAV file.")

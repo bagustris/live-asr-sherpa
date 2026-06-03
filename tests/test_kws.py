@@ -8,6 +8,7 @@ from unittest.mock import MagicMock, patch, mock_open
 import pytest
 
 import sherox.kws as kws_module
+from sherox import ConfigError, SherpaError
 from sherox.config import KwsConfig
 
 
@@ -115,7 +116,7 @@ class TestValidateModel:
         assert result == custom
 
     def test_exits_when_custom_dir_not_found(self, tmp_path):
-        with pytest.raises(SystemExit):
+        with pytest.raises(SherpaError):
             kws_module._validate_model(str(tmp_path / "no_such_dir"), tmp_path)
 
     def test_downloads_and_extracts_when_missing(self, tmp_path):
@@ -163,12 +164,12 @@ class TestResolveKeywords:
 
     def test_exits_when_keywords_file_not_found(self, tmp_path):
         cfg = KwsConfig(keywords_file=str(tmp_path / "no_file.txt"))
-        with pytest.raises(SystemExit):
+        with pytest.raises(SherpaError):
             kws_module._resolve_keywords(cfg)
 
     def test_exits_when_no_keywords_given(self):
         cfg = KwsConfig()  # both keywords_str and keywords_file empty
-        with pytest.raises(SystemExit):
+        with pytest.raises(SherpaError):
             kws_module._resolve_keywords(cfg)
 
     def test_keywords_str_takes_priority_over_file(self, tmp_path):
@@ -184,7 +185,7 @@ class TestResolveKeywords:
 
     def test_empty_keywords_str_exits(self):
         cfg = KwsConfig(keywords_str="  ,  , ")  # only whitespace/commas
-        with pytest.raises(SystemExit):
+        with pytest.raises(SherpaError):
             kws_module._resolve_keywords(cfg)
 
 

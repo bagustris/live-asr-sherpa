@@ -6,6 +6,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 import sherox.asr as main_module
+from sherox import ConfigError, SherpaError
 
 
 # ---------------------------------------------------------------------------
@@ -327,11 +328,11 @@ class TestValidateVad:
         assert "int8" not in full_url
 
     def test_unknown_vad_type_exits(self, tmp_path):
-        with pytest.raises(SystemExit):
+        with pytest.raises(ConfigError):
             main_module._validate_vad("unknown-vad", "ten-vad.int8.onnx", True, tmp_path)
 
     def test_unknown_ten_vad_model_exits(self, tmp_path):
-        with pytest.raises(SystemExit):
+        with pytest.raises(ConfigError):
             main_module._validate_vad("ten-vad", "unknown-model.onnx", True, tmp_path)
 
 
@@ -350,14 +351,14 @@ def _mock_sf(channels: int, samplerate: int):
 
 class TestValidateWav:
     def test_exits_when_file_not_found(self, tmp_path):
-        with pytest.raises(SystemExit):
+        with pytest.raises(ConfigError):
             main_module._validate_wav(str(tmp_path / "missing.wav"), 16000)
 
     def test_exits_on_multichannel_audio(self, tmp_path):
         wav = tmp_path / "audio.wav"
         wav.touch()
         with patch("sherox.asr.sf.SoundFile", return_value=_mock_sf(2, 16000)):
-            with pytest.raises(SystemExit):
+            with pytest.raises(ConfigError):
                 main_module._validate_wav(str(wav), 16000)
 
     def test_warns_on_wrong_sample_rate(self, tmp_path, capsys):
@@ -377,7 +378,7 @@ class TestValidateWav:
         wav = tmp_path / "audio.wav"
         wav.touch()
         with patch("sherox.asr.sf.SoundFile", side_effect=Exception("corrupt")):
-            with pytest.raises(SystemExit):
+            with pytest.raises(ConfigError):
                 main_module._validate_wav(str(wav), 16000)
 
 
@@ -426,27 +427,27 @@ class TestValidateRuntimeArgs:
 
     def test_speaker_tag_requires_diarization(self):
         args = self._base_args(speaker_tag=True, diarization=False)
-        with pytest.raises(SystemExit):
+        with pytest.raises(ConfigError):
             main_module._validate_runtime_args(args)
 
     def test_num_speakers_zero_is_rejected(self):
         args = self._base_args(diarization=True, num_speakers=0)
-        with pytest.raises(SystemExit):
+        with pytest.raises(ConfigError):
             main_module._validate_runtime_args(args)
 
     def test_denoise_requires_wav(self):
         args = self._base_args(denoise=True, wav=None)
-        with pytest.raises(SystemExit):
+        with pytest.raises(ConfigError):
             main_module._validate_runtime_args(args)
 
     def test_denoise_blocked_with_pipe(self):
         args = self._base_args(denoise=True, pipe=True)
-        with pytest.raises(SystemExit):
+        with pytest.raises(ConfigError):
             main_module._validate_runtime_args(args)
 
     def test_output_with_multiple_wav_exits(self):
         args = self._base_args(wav=["a.wav", "b.wav"], output="/out.srt")
-        with pytest.raises(SystemExit):
+        with pytest.raises(ConfigError):
             main_module._validate_runtime_args(args)
 
     def test_output_with_single_wav_ok(self):
@@ -455,27 +456,27 @@ class TestValidateRuntimeArgs:
 
     def test_output_dir_without_wav_exits(self):
         args = self._base_args(wav=None, output_dir="/some/dir")
-        with pytest.raises(SystemExit):
+        with pytest.raises(ConfigError):
             main_module._validate_runtime_args(args)
 
     def test_output_dir_with_pipe_exits(self):
         args = self._base_args(pipe=True, output_dir="/some/dir")
-        with pytest.raises(SystemExit):
+        with pytest.raises(ConfigError):
             main_module._validate_runtime_args(args)
 
     def test_translate_requires_offline(self):
         args = self._base_args(translate=True, offline=False, model_type="whisper")
-        with pytest.raises(SystemExit):
+        with pytest.raises(ConfigError):
             main_module._validate_runtime_args(args)
 
     def test_translate_requires_whisper_model_type(self):
         args = self._base_args(translate=True, offline=True, model_type="")
-        with pytest.raises(SystemExit):
+        with pytest.raises(ConfigError):
             main_module._validate_runtime_args(args)
 
     def test_translate_with_sense_voice_exits(self):
         args = self._base_args(translate=True, offline=True, model_type="sense_voice")
-        with pytest.raises(SystemExit):
+        with pytest.raises(ConfigError):
             main_module._validate_runtime_args(args)
 
     def test_translate_with_offline_whisper_ok(self):
@@ -578,7 +579,7 @@ class TestDownloadModel:
 
         with patch.object(main_module, "_download_file"), \
              patch("tarfile.open") as mock_tar, \
-             pytest.raises(SystemExit):
+             pytest.raises(ConfigError):
             mock_tar.return_value.__enter__ = MagicMock(return_value=MagicMock())
             mock_tar.return_value.__exit__ = MagicMock(return_value=False)
             main_module._download_model(str(model_dir), "")
@@ -692,23 +693,23 @@ class TestValidateRuntimeArgsNumeric:
         return args
 
     def test_zero_sample_rate_exits(self):
-        with pytest.raises(SystemExit):
+        with pytest.raises(ConfigError):
             main_module._validate_runtime_args(self._base_args(sample_rate=0))
 
     def test_negative_sample_rate_exits(self):
-        with pytest.raises(SystemExit):
+        with pytest.raises(ConfigError):
             main_module._validate_runtime_args(self._base_args(sample_rate=-1))
 
     def test_zero_capture_rate_exits(self):
-        with pytest.raises(SystemExit):
+        with pytest.raises(ConfigError):
             main_module._validate_runtime_args(self._base_args(capture_rate=0))
 
     def test_zero_chunk_size_exits(self):
-        with pytest.raises(SystemExit):
+        with pytest.raises(ConfigError):
             main_module._validate_runtime_args(self._base_args(chunk_size=0))
 
     def test_zero_threads_exits(self):
-        with pytest.raises(SystemExit):
+        with pytest.raises(ConfigError):
             main_module._validate_runtime_args(self._base_args(threads=0))
 
 
@@ -736,7 +737,7 @@ class TestDownloadFile:
     def test_exits_when_download_fails(self, tmp_path):
         dest = tmp_path / "file.tar.bz2"
         with patch("sherox.utils.urllib.request.urlopen", side_effect=Exception("network error")):
-            with pytest.raises(SystemExit):
+            with pytest.raises(SherpaError):
                 main_module._download_file("http://example.com/file.tar.bz2", dest)
 
     def test_progress_writes_percentage(self, tmp_path, capsys):
@@ -876,7 +877,7 @@ class TestValidateDiarizationModels:
         assert result_emb == str(emb)
 
     def test_exits_when_custom_seg_missing(self, tmp_path):
-        with pytest.raises(SystemExit):
+        with pytest.raises(ConfigError):
             main_module._validate_diarization_models(
                 str(tmp_path / "missing.onnx"), "", tmp_path
             )
@@ -884,7 +885,7 @@ class TestValidateDiarizationModels:
     def test_exits_when_custom_emb_missing(self, tmp_path):
         seg = tmp_path / "seg.onnx"
         seg.touch()
-        with pytest.raises(SystemExit):
+        with pytest.raises(ConfigError):
             main_module._validate_diarization_models(
                 str(seg), str(tmp_path / "missing_emb.onnx"), tmp_path
             )
@@ -958,12 +959,12 @@ class TestValidateMic:
             {"max_input_channels": 0, "name": "Speaker"}
         ]
         with patch.dict("sys.modules", {"sounddevice": mock_sd}):
-            with pytest.raises(SystemExit):
+            with pytest.raises(ConfigError):
                 main_module._validate_mic()
 
     def test_exits_on_exception(self):
         with patch.dict("sys.modules", {"sounddevice": None}):
-            with pytest.raises(SystemExit):
+            with pytest.raises(ConfigError):
                 main_module._validate_mic()
 
 
@@ -1412,7 +1413,7 @@ class TestDownloadModelExtractionFailure:
 
         with patch.object(main_module, "_download_file"), \
              patch("tarfile.open", side_effect=Exception("corrupt tar")), \
-             pytest.raises(SystemExit):
+             pytest.raises(ConfigError):
             main_module._download_model(str(model_dir), "")
 
 
@@ -1428,7 +1429,7 @@ class TestValidateDiarizationModelsErrors:
 
         with patch.object(main_module, "_download_file"), \
              patch("tarfile.open", side_effect=Exception("corrupt")), \
-             pytest.raises(SystemExit):
+             pytest.raises(ConfigError):
             main_module._validate_diarization_models("", str(emb), tmp_path)
 
     def test_exits_when_seg_file_missing_after_extraction(self, tmp_path):
@@ -1446,5 +1447,5 @@ class TestValidateDiarizationModelsErrors:
         with patch.object(main_module, "_download_file"), \
              patch("tarfile.open", side_effect=fake_tar_open), \
              patch.object(main_module, "_safe_extract_tar"), \
-             pytest.raises(SystemExit):
+             pytest.raises(ConfigError):
             main_module._validate_diarization_models("", str(emb), tmp_path)

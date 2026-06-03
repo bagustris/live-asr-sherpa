@@ -100,8 +100,11 @@ from types import SimpleNamespace
 
 from rich.console import Console
 
+from . import AudioError, ConfigError
 from .asr_engine import build_diarization, build_offline_recognizer, build_punctuation, build_recognizer, build_vad
 from .utils import download_file as _download_file
+from .utils import run_cli as _run_cli
+from .utils import safe_tar_members as _safe_tar_members
 from .audio import denoise_gen, mic_stream, pipe_stream, read_wav, wav_duration
 from .config import Config
 from .streaming import run_offline_vad_streaming, run_streaming, write_srt, write_vtt, write_txt
@@ -122,7 +125,7 @@ def _info(msg: str) -> None:
 
 def _error(msg: str) -> None:
     _err_console.print(f"[bold red]\\[error][/bold red] {msg}")
-    sys.exit(1)
+    raise ConfigError(msg)
 
 
 def _require_soundfile():
@@ -132,11 +135,10 @@ def _require_soundfile():
     try:
         import soundfile as _soundfile  # noqa: PLC0415
     except ImportError as exc:  # pragma: no cover - depends on environment
-        _error(
+        raise AudioError(
             "soundfile is required for reading audio files. "
             "Install it with: pip install soundfile"
-        )
-        raise AssertionError("unreachable") from exc
+        ) from exc
     sf = _soundfile
     return sf
 
@@ -146,6 +148,11 @@ def _validate_runtime_args(args: argparse.Namespace) -> None:
         _error(f"--sample-rate must be > 0, got {args.sample_rate}")
     if args.capture_rate <= 0:
         _error(f"--capture-rate must be > 0, got {args.capture_rate}")
+    if args.capture_rate < args.sample_rate:
+        _error(
+            f"--capture-rate ({args.capture_rate}) must be >= --sample-rate ({args.sample_rate}). "
+            "Use --capture-rate 48000 for better device compatibility."
+        )
     if args.chunk_size <= 0:
         _error(f"--chunk-size must be > 0, got {args.chunk_size}")
     if args.threads <= 0:
@@ -601,29 +608,6 @@ _PUNCT_EXTRACTED = "sherpa-onnx-punct-ct-transformer-zh-en-vocab272727-2024-04-1
 _PUNCT_TARGET = "punct-ct-transformer-zh-en"
 
 
-def _safe_tar_members(tf: tarfile.TarFile, dest_dir: Path):
-    """Yield only safe members for extraction into dest_dir.
-
-    This emulates the safety guarantees of `filter="data"` on Python < 3.12:
-    - prevent path traversal (no entries may escape dest_dir)
-    - skip device files
-    """
-    dest_dir_resolved = dest_dir.resolve()
-    for member in tf.getmembers():
-        # Skip device files and other special devices
-        if member.isdev():
-            continue
-
-        member_path = (dest_dir / member.name).resolve()
-        try:
-            member_path.relative_to(dest_dir_resolved)
-        except ValueError:
-            # This member would escape dest_dir (e.g., via .. or absolute path)
-            continue
-
-        yield member
-
-
 def _download_model(model_dir: str, model_type: str) -> None:
     """Download and extract the default model for the given model_type."""
     model_dir = Path(model_dir)
@@ -942,6 +926,10 @@ def _validate_mic() -> None:
 
 
 def main() -> None:
+    _run_cli(_main_impl)
+
+
+def _main_impl() -> None:
     args = parse_args()
     _validate_runtime_args(args)
     # Normalize once so all downstream comparisons are case-insensitive.

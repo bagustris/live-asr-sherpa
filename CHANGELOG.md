@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Major.Minor.Patch] - YYYY-MM-DD
 
+## [0.6.0] - 2026-06-03
+
+### Added
+- `python -m sherox`: the top-level CLI can now be invoked as a module via the
+  new `sherox/__main__.py` entry point.
+- Exception hierarchy in `sherox/__init__.py`: `SherpaError` (base) with
+  `ModelNotFoundError`, `AudioError`, and `ConfigError`. Library code now raises
+  these instead of calling `sys.exit()`, so callers (tests, embedding apps) can
+  handle failures gracefully.
+- `sherox.asr` / `sherox.segment`: validate that `--capture-rate` is
+  `>= --sample-rate`, with a hint to use `--capture-rate 48000` for device
+  compatibility.
+
+### Changed
+- CLI entry points (`asr`, `kws`, `lid`, `segment`, `server`, `sid`, `tts`) now
+  delegate to a shared `utils.run_cli()` helper that maps `SherpaError` to exit
+  code 1 and `KeyboardInterrupt` to 130.
+- Consolidated the per-module `_safe_tar_members` implementations into a single
+  `utils.safe_tar_members()` used by `asr`, `kws`, `lid`, and `tts`.
+
+### Fixed
+- `sherox.server` `/ws` online handler: network sends are no longer performed
+  while holding `online_lock`, so a slow WebSocket client can no longer stall
+  decoding for other connections. The decode/endpoint/reset sequence remains
+  atomic under the lock.
+- `utils.safe_tar_members()` now also rejects symlink/hardlink members whose
+  target resolves outside the extraction directory (path-traversal hardening on
+  Python < 3.12, where `tarfile` `filter="data"` is unavailable).
+- `audio.mic_stream`: the input stream is now stopped and closed via
+  `try/finally` so device resources are released when the generator is closed.
+
 ## [0.5.0] - 2026-05-21
 
 ### Added
