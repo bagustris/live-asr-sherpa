@@ -48,10 +48,10 @@ class TestParseArgs:
             with pytest.raises(SystemExit):
                 sid_module.parse_args()
 
-    def test_requires_speaker_file(self):
+    def test_default_speaker_file(self):
         with patch("sys.argv", ["sherox.sid", "--mic"]):
-            with pytest.raises(SystemExit):
-                sid_module.parse_args()
+            args = sid_module.parse_args()
+        assert args.speaker_file == "speakers.txt"
 
     def test_defaults(self):
         with patch("sys.argv", ["sherox.sid", "--mic", "--speaker-file", "s.txt"]):
@@ -61,7 +61,13 @@ class TestParseArgs:
         assert args.capture_rate == 16000
         assert args.chunk_size == 0.1
         assert args.threads == 4
-        assert args.listening is False
+        assert args.no_mic_level is False
+
+    def test_no_mic_level_flag(self):
+        with patch("sys.argv", ["sherox.sid", "--mic", "--speaker-file", "s.txt",
+                                 "--no-mic-level"]):
+            args = sid_module.parse_args()
+        assert args.no_mic_level is True
 
     def test_custom_threshold(self):
         with patch("sys.argv", ["sherox.sid", "--mic", "--speaker-file", "s.txt",
@@ -75,11 +81,6 @@ class TestParseArgs:
             args = sid_module.parse_args()
         assert args.model == "models/custom.onnx"
 
-    def test_listening_flag(self):
-        with patch("sys.argv", ["sherox.sid", "--mic", "--speaker-file", "s.txt",
-                                 "--listening"]):
-            args = sid_module.parse_args()
-        assert args.listening is True
 
 
 # ---------------------------------------------------------------------------
@@ -200,6 +201,20 @@ class TestLoadSpeakerFile:
     def test_exits_when_file_not_found(self, tmp_path):
         with pytest.raises(ConfigError):
             sid_module._load_speaker_file(str(tmp_path / "missing.txt"))
+
+    def test_default_hint_shown_for_dotslash_speakers_txt(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        try:
+            sid_module._load_speaker_file("./speakers.txt")
+        except ConfigError as exc:
+            assert "--enroll-mic" in str(exc)
+
+    def test_default_hint_shown_for_bare_speakers_txt(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        try:
+            sid_module._load_speaker_file("speakers.txt")
+        except ConfigError as exc:
+            assert "--enroll-mic" in str(exc)
 
     def test_exits_on_bad_format(self, tmp_path):
         spk_file = tmp_path / "speakers.txt"
@@ -588,10 +603,10 @@ class TestParseArgsEnroll:
             args = sid_module.parse_args()
         assert args.enroll == ["bob", "a.wav", "b.wav"]
 
-    def test_enroll_requires_speaker_file(self):
+    def test_enroll_default_speaker_file(self):
         with patch("sys.argv", ["sherox.sid", "--enroll", "alice", "ref.wav"]):
-            with pytest.raises(SystemExit):
-                sid_module.parse_args()
+            args = sid_module.parse_args()
+        assert args.speaker_file == "speakers.txt"
 
     def test_enroll_mutually_exclusive_with_mic(self, tmp_path):
         spk_file = tmp_path / "speakers.txt"
@@ -697,3 +712,248 @@ class TestEnrollSpeaker:
                 # Replicate the check in main():
                 if len(args.enroll) < 2:
                     sid_module._error("--enroll requires a NAME followed by at least one WAV file.")
+
+
+# ---------------------------------------------------------------------------
+# --enroll-mic: parse_args and enroll_speaker_mic
+# ---------------------------------------------------------------------------
+
+class TestParseArgsEnrollMic:
+    def test_enroll_mic_mode_accepted(self, tmp_path):
+        spk_file = tmp_path / "speakers.txt"
+        with patch("sys.argv", [
+            "sherox.sid", "--enroll-mic", "alice",
+            "--speaker-file", str(spk_file),
+        ]):
+            args = sid_module.parse_args()
+        assert args.enroll_mic == "alice"
+
+    def test_enroll_mic_default_speaker_file(self):
+        with patch("sys.argv", ["sherox.sid", "--enroll-mic", "alice"]):
+            args = sid_module.parse_args()
+        assert args.speaker_file == "speakers.txt"
+
+    def test_enroll_mic_mutually_exclusive_with_mic(self, tmp_path):
+        spk_file = tmp_path / "speakers.txt"
+        with patch("sys.argv", [
+            "sherox.sid", "--mic", "--enroll-mic", "alice",
+            "--speaker-file", str(spk_file),
+        ]):
+            with pytest.raises(SystemExit):
+                sid_module.parse_args()
+
+    def test_enroll_mic_mutually_exclusive_with_wav(self, tmp_path):
+        spk_file = tmp_path / "speakers.txt"
+        with patch("sys.argv", [
+            "sherox.sid", "--wav", "audio.wav", "--enroll-mic", "alice",
+            "--speaker-file", str(spk_file),
+        ]):
+            with pytest.raises(SystemExit):
+                sid_module.parse_args()
+
+    def test_enroll_mic_mutually_exclusive_with_enroll(self, tmp_path):
+        spk_file = tmp_path / "speakers.txt"
+        with patch("sys.argv", [
+            "sherox.sid", "--enroll", "alice", "ref.wav",
+            "--enroll-mic", "alice",
+            "--speaker-file", str(spk_file),
+        ]):
+            with pytest.raises(SystemExit):
+                sid_module.parse_args()
+
+    def test_main_enroll_mic_calls_enroll_speaker_mic(self, tmp_path):
+        spk_file = tmp_path / "speakers.txt"
+        model = tmp_path / "model.onnx"
+        model.touch()
+        with patch("sys.argv", [
+            "sherox.sid", "--enroll-mic", "alice",
+            "--speaker-file", str(spk_file),
+            "--model", str(model),
+        ]), \
+        patch.object(sid_module, "_validate_vad", return_value="silero_vad.onnx"), \
+        patch.object(sid_module, "enroll_speaker_mic") as mock_enroll_mic:
+            sid_module.main()
+        mock_enroll_mic.assert_called_once_with(
+            "alice", str(spk_file),
+            vad_model="silero_vad.onnx",
+            capture_rate=16000,
+            chunk_size=0.1,
+            show_mic_level=True,
+            vad_threshold=0.3,
+            vad_min_silence_duration=1.0,
+            vad_min_speech_duration=1.0,
+        )
+
+
+class TestEnrollSpeakerMic:
+    def test_captures_and_saves(self, tmp_path):
+        vad_path = tmp_path / "silero_vad.onnx"
+        vad_path.touch()
+        spk_file = tmp_path / "speakers.txt"
+        name = "alice"
+        mock_segment = np.ones(8000, dtype=np.float32)
+
+        vad = MagicMock()
+        seg = MagicMock()
+        seg.samples = mock_segment.tolist()
+        vad.front = seg
+        # For-loop: empty() False→enter while, True→exit while.
+        # Finally: empty() True→no flush loop.
+        vad.empty.side_effect = [False, True, True]
+
+        with patch("sherox.sid.build_vad", return_value=vad), \
+             patch("sherox.sid.mic_stream",
+                   return_value=iter([np.zeros(1600, dtype=np.float32)])), \
+             patch.object(sid_module, "enroll_speaker") as mock_enroll:
+            sid_module.enroll_speaker_mic(
+                name, str(spk_file), vad_model=str(vad_path),
+            )
+
+        # Should have created a WAV file and called enroll_speaker
+        wav_files = list(tmp_path.glob(f"{name}_mic_enroll_*.wav"))
+        assert len(wav_files) == 1
+        assert wav_files[0].stat().st_size > 0
+
+        mock_enroll.assert_called_once()
+        call_name, call_wavs, call_spk = mock_enroll.call_args[0]
+        assert call_name == name
+        assert len(call_wavs) == 1
+        assert Path(call_wavs[0]).name == wav_files[0].name
+        assert call_spk == str(spk_file)
+
+    def test_keyboard_interrupt_flushes_and_saves(self, tmp_path):
+        vad_path = tmp_path / "silero_vad.onnx"
+        vad_path.touch()
+        spk_file = tmp_path / "speakers.txt"
+        mock_segment = np.ones(8000, dtype=np.float32)
+
+        vad = MagicMock()
+        seg = MagicMock()
+        seg.samples = mock_segment.tolist()
+        vad.front = seg
+        # For-loop: empty() → 2x False (enter inner while), True (exit).
+        # Finally flush: empty() → 2x False (flush segments), True (exit).
+        vad.empty.side_effect = [False, False, True, False, False, True]
+
+        def interrupt_gen():
+            yield np.zeros(1600, dtype=np.float32)
+            raise KeyboardInterrupt
+
+        with patch("sherox.sid.build_vad", return_value=vad), \
+             patch("sherox.sid.mic_stream", return_value=interrupt_gen()), \
+             patch.object(sid_module, "enroll_speaker") as mock_enroll:
+            sid_module.enroll_speaker_mic(
+                "bob", str(spk_file), vad_model=str(vad_path),
+            )
+
+        wav_files = list(tmp_path.glob("bob_mic_enroll_*.wav"))
+        # 2 from for-loop + 2 flushed in finally = 4
+        assert len(wav_files) == 4
+        mock_enroll.assert_called_once()
+        assert len(mock_enroll.call_args[0][1]) == 4
+
+    def test_no_speech_raises_error(self, tmp_path):
+        vad_path = tmp_path / "silero_vad.onnx"
+        vad_path.touch()
+        spk_file = tmp_path / "speakers.txt"
+
+        vad = MagicMock()
+        vad.empty.return_value = True  # no segments
+
+        with patch("sherox.sid.build_vad", return_value=vad), \
+             patch("sherox.sid.mic_stream",
+                   return_value=iter([np.zeros(1600, dtype=np.float32)])), \
+             pytest.raises(ConfigError):
+            sid_module.enroll_speaker_mic(
+                "alice", str(spk_file), vad_model=str(vad_path),
+            )
+
+    def test_increments_wav_name_on_collision(self, tmp_path):
+        vad_path = tmp_path / "silero_vad.onnx"
+        vad_path.touch()
+        spk_file = tmp_path / "speakers.txt"
+        name = "alice"
+        mock_segment = np.ones(8000, dtype=np.float32)
+
+        # Pre-create the first WAV name to force collision
+        pre_existing = tmp_path / f"{name}_mic_enroll_001.wav"
+        pre_existing.touch()
+
+        vad = MagicMock()
+        seg = MagicMock()
+        seg.samples = mock_segment.tolist()
+
+        # Yield 2 segments
+        def segment_seq():
+            for _ in range(2):
+                seg.samples = mock_segment.tolist()
+                yield seg
+
+        seg_iter = segment_seq()
+
+        class SeqVad:
+            def accept_waveform(self, chunk): ...
+            def empty(self):
+                try:
+                    next(seg_iter)
+                    return False
+                except StopIteration:
+                    return True
+            @property
+            def front(self):
+                return seg
+            def pop(self): ...
+            def flush(self): ...
+
+        with patch("sherox.sid.build_vad", return_value=SeqVad()), \
+             patch("sherox.sid.mic_stream",
+                   return_value=iter([np.zeros(1600, dtype=np.float32)])), \
+             patch.object(sid_module, "enroll_speaker"):
+            sid_module.enroll_speaker_mic(
+                name, str(spk_file), vad_model=str(vad_path),
+            )
+
+        # Should skip 001 and create 002 (+ 003), keeping 001 intact
+        assert pre_existing.exists(), "original 001 should not be overwritten"
+        wav_files = sorted(tmp_path.glob(f"{name}_mic_enroll_*.wav"))
+        assert len(wav_files) == 3  # 001 (pre-existing) + 002 + 003
+        assert wav_files[0].name == f"{name}_mic_enroll_001.wav"
+        assert wav_files[1].name == f"{name}_mic_enroll_002.wav"
+        assert wav_files[2].name == f"{name}_mic_enroll_003.wav"
+
+    def test_wav_write_failure_cleans_up_orphans(self, tmp_path):
+        vad_path = tmp_path / "silero_vad.onnx"
+        vad_path.touch()
+        spk_file = tmp_path / "speakers.txt"
+        mock_segment = np.ones(8000, dtype=np.float32)
+
+        vad = MagicMock()
+        seg = MagicMock()
+        seg.samples = mock_segment.tolist()
+        vad.front = seg
+        # Two segments in the for-loop, none in finally flush.
+        vad.empty.side_effect = [False, False, True, True]
+
+        write_calls = [0]
+        def fake_write(path, data, samplerate):
+            write_calls[0] += 1
+            if write_calls[0] == 1:
+                Path(path).write_bytes(b"fake")  # simulate successful first write
+            else:
+                raise OSError("disk full")
+
+        mock_sf = MagicMock()
+        mock_sf.write.side_effect = fake_write
+
+        with patch("sherox.sid.build_vad", return_value=vad), \
+             patch("sherox.sid.mic_stream",
+                   return_value=iter([np.zeros(1600, dtype=np.float32)])), \
+             patch.object(sid_module, "_require_soundfile", return_value=mock_sf):
+            with pytest.raises(OSError, match="disk full"):
+                sid_module.enroll_speaker_mic(
+                    "alice", str(spk_file), vad_model=str(vad_path),
+                )
+
+        # First WAV was created but must be cleaned up on failure
+        wav_files = list(tmp_path.glob("alice_mic_enroll_*.wav"))
+        assert wav_files == [], "orphaned WAVs must be removed on write failure"

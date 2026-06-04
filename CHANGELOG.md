@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Major.Minor.Patch] - YYYY-MM-DD
 
+## [0.7.0] - 2026-06-04
+
+### Added
+- `sherox.sid --enroll-mic NAME`: enroll a new speaker by recording from the
+  microphone. Uses Silero VAD to segment speech, saves each segment as a WAV
+  file alongside `--speaker-file`, then appends entries. Press Ctrl+C when
+  done speaking.
+- `SidConfig` now exposes `vad_threshold`, `vad_min_silence_duration`, and
+  `vad_min_speech_duration` fields, allowing callers to tune VAD segmentation
+  for speaker identification without touching ASR defaults.
+
+### Changed
+- `--speaker-file` is no longer required; it defaults to `speakers.txt` in the
+  current directory. If the default file is missing during `--mic`/`--wav`,
+  the error message now suggests enrolling a speaker or specifying a custom
+  path with `--speaker-file`.
+- VAD parameters in `run_mic()` and `enroll_speaker_mic()` are now tuned for
+  speaker identification (threshold=0.3, min_speech=1.0s, min_silence=1.0s)
+  instead of the ASR defaults (threshold=0.1, min_speech=0.25s,
+  min_silence=0.5s). This prevents tiny fragments from breath pauses and
+  non-speech noise, producing 2-6 second segments that yield stable Titanet
+  embeddings.
+- Mic level bar (`show_mic_level`) is now enabled by default for both
+  `--mic` and `--enroll-mic` modes, so users can see live RMS energy and
+  verify the microphone is working.
+- `_load_speaker_file` error message now includes actionable hints when the
+  default `speakers.txt` is missing.
+
 ## [0.6.0] - 2026-06-03
 
 ### Added
