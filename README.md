@@ -243,6 +243,86 @@ sherox.tts --text "こんにちは、今日は良い天気ですね。" --lang j
 
 See [TTS_MODEL.md](TTS_MODEL.md) for the supported built-in TTS languages, backends, and model details.
 
+### `sherox.kws`
+
+```
+--mic                    Stream from microphone
+--wav PATH               Spot keywords in a WAV file
+--keywords LIST          Comma-separated keyword phrases (required, or --keywords-file)
+--keywords-file PATH     Plain-text file with one keyword per line (required, or --keywords)
+--model-dir PATH         Custom KWS model directory
+                           (default: auto-download zipformer-gigaspeech-3.3M)
+--sample-rate INT        Model input sample rate (default: 16000)
+--capture-rate HZ        Microphone capture rate (default: 16000)
+--chunk-size FLOAT       Audio chunk duration per decode (default: 0.1)
+--threads INT            CPU thread count for ONNX runtime (default: 4)
+--max-active-paths INT   Beam width for keyword search (default: 4)
+```
+
+### `sherox.lid`
+
+```
+--mic                    Stream from microphone
+--wav PATH               Identify language in a WAV file
+--size {tiny,base,small,medium}
+                         Whisper variant (default: tiny)
+--encoder PATH           Custom Whisper encoder .onnx (overrides --size)
+--decoder PATH           Custom Whisper decoder .onnx (overrides --size)
+--sample-rate INT        Expected WAV sample rate (default: 16000)
+--capture-rate HZ        Microphone capture rate (default: 16000)
+--chunk-size FLOAT       Mic audio chunk size in seconds (default: 0.1)
+--threads INT            CPU thread count for ONNX runtime (default: 4)
+--provider {cpu,cuda,coreml}
+                         ONNX Runtime execution provider (default: cpu)
+--listening              Show RMS energy bar for mic level calibration
+```
+
+### `sherox.segment`
+
+```
+--mic                    Segment microphone input
+--wav PATH               Segment a WAV file
+--vad-model {silero,ten-vad}
+                         VAD model (default: silero)
+--ten-vad-model {ten-vad.onnx,ten-vad.int8.onnx}
+                         Ten-VAD model variant (default: ten-vad.int8.onnx)
+--threshold F            VAD speech probability threshold 0.0–1.0 (default: 0.5)
+--min-silence SEC        Silence to end a segment in seconds (default: 0.5)
+--min-speech SEC         Speech to start a segment in seconds (default: 0.25)
+--sample-rate HZ         Audio sample rate for VAD model (default: 16000)
+--capture-rate HZ        Microphone capture rate (default: 16000)
+--threads INT            CPU thread count for ONNX runtime (default: 4)
+--output-dir DIR         Save segments as WAV files into this directory
+--listening              Show RMS energy bar for mic level calibration
+```
+
+### `sherox.server`
+
+```
+--model-dir PATH         Path to model directory (auto-selected if omitted)
+--model-type TYPE        Model architecture hint (blank = auto-detect)
+--offline                Use VAD-segmented offline pipeline
+--sample-rate HZ         Expected audio sample rate (default: 16000)
+--threads INT            CPU thread count for ONNX runtime (default: 4)
+--language LANG          Language code for Whisper/SenseVoice/Cohere (default: en)
+--vad-model {silero,ten-vad}
+                         VAD type for offline segmentation (default: silero)
+--ten-vad-model {ten-vad.onnx,ten-vad.int8.onnx}
+                         Ten-VAD model variant (default: ten-vad.int8.onnx)
+--host HOST              Host address to listen on (default: 0.0.0.0)
+--port PORT              Port to listen on (default: 8000)
+--log-level {debug,info,warning,error}
+                         Uvicorn log level (default: info)
+```
+
+### `sherox list-models`
+
+```
+--module {asr,tts,other,all}
+                         Filter by module (default: all)
+--no-color               Disable colour output
+```
+
 See [SEGMENT_MODEL.md](SEGMENT_MODEL.md) for the VAD models used by `sherox.segment`.
 
 ## Architecture
