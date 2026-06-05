@@ -7,6 +7,65 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Major.Minor.Patch] - YYYY-MM-DD
 
+## [0.7.0] - 2026-06-04
+
+### Added
+- `sherox.sid --enroll-mic NAME`: enroll a new speaker by recording from the
+  microphone. Uses Silero VAD to segment speech, saves each segment as a WAV
+  file alongside `--speaker-file`, then appends entries. Press Ctrl+C when
+  done speaking.
+- `SidConfig` now exposes `vad_threshold`, `vad_min_silence_duration`, and
+  `vad_min_speech_duration` fields, allowing callers to tune VAD segmentation
+  for speaker identification without touching ASR defaults.
+
+### Changed
+- `--speaker-file` is no longer required; it defaults to `speakers.txt` in the
+  current directory. If the default file is missing during `--mic`/`--wav`,
+  the error message now suggests enrolling a speaker or specifying a custom
+  path with `--speaker-file`.
+- VAD parameters in `run_mic()` and `enroll_speaker_mic()` are now tuned for
+  speaker identification (threshold=0.3, min_speech=1.0s, min_silence=1.0s)
+  instead of the ASR defaults (threshold=0.1, min_speech=0.25s,
+  min_silence=0.5s). This prevents tiny fragments from breath pauses and
+  non-speech noise, producing 2-6 second segments that yield stable Titanet
+  embeddings.
+- Mic level bar (`show_mic_level`) is now enabled by default for both
+  `--mic` and `--enroll-mic` modes, so users can see live RMS energy and
+  verify the microphone is working.
+- `_load_speaker_file` error message now includes actionable hints when the
+  default `speakers.txt` is missing.
+
+## [0.6.0] - 2026-06-03
+
+### Added
+- `python -m sherox`: the top-level CLI can now be invoked as a module via the
+  new `sherox/__main__.py` entry point.
+- Exception hierarchy in `sherox/__init__.py`: `SherpaError` (base) with
+  `ModelNotFoundError`, `AudioError`, and `ConfigError`. Library code now raises
+  these instead of calling `sys.exit()`, so callers (tests, embedding apps) can
+  handle failures gracefully.
+- `sherox.asr` / `sherox.segment`: validate that `--capture-rate` is
+  `>= --sample-rate`, with a hint to use `--capture-rate 48000` for device
+  compatibility.
+
+### Changed
+- CLI entry points (`asr`, `kws`, `lid`, `segment`, `server`, `sid`, `tts`) now
+  delegate to a shared `utils.run_cli()` helper that maps `SherpaError` to exit
+  code 1 and `KeyboardInterrupt` to 130.
+- Consolidated the per-module `_safe_tar_members` implementations into a single
+  `utils.safe_tar_members()` used by `asr`, `kws`, `lid`, and `tts`.
+
+### Fixed
+- `sherox.server` `/ws` online handler: network sends are no longer performed
+  while holding `online_lock`, so a slow WebSocket client can no longer stall
+  decoding for other connections. The decode/endpoint/reset sequence remains
+  atomic under the lock.
+- `utils.safe_tar_members()` now also rejects symlink/hardlink members whose
+  target resolves outside the extraction directory (path-traversal hardening on
+  Python < 3.12, where `tarfile` `filter="data"` is unavailable).
+- `audio.mic_stream`: the input stream is now stopped and closed via
+  `try/finally` so device resources are released when the generator is closed.
+
 ## [0.5.0] - 2026-05-21
 
 ### Added

@@ -13,7 +13,7 @@ Documentation: https://deepwiki.com/bagustris/live-asr-sherpa
 - **Real-time microphone transcription** — partial hypotheses update live with <500 ms latency
 - **Offline WAV transcription** — process audio files through the same pipeline
 - **Speaker diarization** — colour-coded per-speaker output; ASR and diarization run concurrently to keep latency low
-- **Speaker identification** — identify known speakers in real-time or from a WAV file using neural embeddings
+- **Speaker identification** — enroll speakers via microphone or WAV files and identify them in real-time using neural embeddings
 - **Unified model loading** — all sherpa-onnx model families supported via a single `--model-type` flag
 - **CPU-optimized** — runs efficiently on any modern CPU using ONNX Runtime
 - **Auto model download** — fetches default models on first run
@@ -97,28 +97,42 @@ Diarization and ASR run **concurrently** (using a background thread pool), so th
 
 `sherox.sid` identifies known speakers from a reference database using neural speaker embeddings. The default model (`nemo_en_titanet_large.onnx`, ~96 MB) is downloaded automatically on first run.
 
-### 1. Prepare a speaker file
+### 1. Enroll speakers
 
-Create a text file with one `name /path/to/ref.wav` entry per line. Multiple files for the same speaker are averaged:
+**From microphone** — speak for a few seconds, press Ctrl+C when done:
+
+```bash
+# Saves recordings as alice_mic_enroll_001.wav alongside speakers.txt
+sherox.sid --enroll-mic alice
+```
+
+**From WAV files** — point to existing recordings:
+
+```bash
+sherox.sid --enroll alice ref1.wav ref2.wav
+```
+
+Both modes append entries to `speakers.txt` (default, created if absent). Duplicate `name+path` pairs are silently skipped. Multiple WAV files for the same speaker are averaged into a single embedding.
+
+The speaker file format (one `name /path/wav` per line):
 
 ```
-alice /path/to/alice1.wav
-alice /path/to/alice2.wav
+alice /path/to/alice_mic_enroll_001.wav
 bob   /path/to/bob1.wav
 ```
 
-### 2. Run
-
-**WAV file mode** — identify speaker in a recording:
-
-```bash
-sherox.sid --wav audio.wav --speaker-file speakers.txt
-```
+### 2. Identify
 
 **Microphone mode** — real-time identification (VAD-segmented):
 
 ```bash
-sherox.sid --mic --speaker-file speakers.txt
+sherox.sid --mic
+```
+
+**WAV file mode** — identify speaker in a recording:
+
+```bash
+sherox.sid --wav audio.wav
 ```
 
 Each identified speaker is printed in a distinct colour; audio that does not match any registered speaker prints as `unknown`.
@@ -126,12 +140,17 @@ Each identified speaker is printed in a distinct colour; audio that does not mat
 **Options:**
 
 ```
---speaker-file PATH   Text file with 'name /path/wav' entries (required)
---model PATH          Speaker embedding ONNX model (default: models/nemo_en_titanet_large.onnx)
---threshold FLOAT     Cosine similarity threshold (0–1, higher = stricter; default: 0.6)
---capture-rate HZ     Mic capture rate (default: 16000; use 48000 for device compatibility)
---listening           Show RMS energy bar for mic level calibration
+--enroll-mic NAME      Enroll a speaker by recording from microphone (Ctrl+C to stop)
+--enroll NAME WAV...   Enroll a speaker from WAV file(s)
+--mic                  Identify speakers from microphone (VAD-segmented)
+--wav PATH             Identify speaker in a WAV file
+--speaker-file PATH    Text file with 'name /path/wav' entries (default: speakers.txt)
+--model PATH           Speaker embedding ONNX model (default: models/nemo_en_titanet_large.onnx)
+--threshold FLOAT      Cosine similarity threshold (0–1, higher = stricter; default: 0.6)
+--capture-rate HZ      Mic capture rate (default: 16000; use 48000 for device compatibility)
 ```
+
+> **Tip:** A live RMS energy bar is shown by default in `--mic` and `--enroll-mic` modes. Use it to verify your microphone is picking up audio and to calibrate your speaking volume.
 
 See [SID_MODEL.md](SID_MODEL.md) for the default speaker ID model, alternative embedding models, and related VAD dependency.
 
@@ -179,17 +198,20 @@ See [ASR_MODEL.md](ASR_MODEL.md) for the complete supported ASR model catalog, g
 ### `sherox.sid`
 
 ```
---mic                   Stream from microphone (VAD-segmented)
---wav PATH              Identify speaker in a WAV file
---speaker-file PATH     Text file with 'name /path/to/ref.wav' entries (required)
---model PATH            Speaker embedding ONNX model
-                          (default: models/nemo_en_titanet_large.onnx; auto-downloaded)
---threshold FLOAT       Cosine similarity threshold for a match (default: 0.6)
---sample-rate INT       Expected sample rate for WAV input (default: 16000)
---capture-rate HZ       Microphone capture rate (default: 16000)
---chunk-size FLOAT      Mic audio chunk size in seconds (default: 0.1)
---threads INT           CPU thread count for ONNX runtime (default: 4)
---listening             Show a live RMS energy bar for mic level calibration
+--enroll-mic NAME        Enroll a speaker by recording from microphone
+                         (Ctrl+C to stop; recordings saved alongside --speaker-file)
+--enroll NAME WAV [WAV…] Enroll a speaker from one or more WAV files
+--mic                    Stream from microphone (VAD-segmented)
+--wav PATH               Identify speaker in a WAV file
+--speaker-file PATH      Text file with 'name /path/to/ref.wav' entries
+                           (default: speakers.txt)
+--model PATH             Speaker embedding ONNX model
+                           (default: models/nemo_en_titanet_large.onnx; auto-downloaded)
+--threshold FLOAT        Cosine similarity threshold for a match (default: 0.6)
+--sample-rate INT        Expected sample rate for WAV input (default: 16000)
+--capture-rate HZ        Microphone capture rate (default: 16000)
+--chunk-size FLOAT       Mic audio chunk size in seconds (default: 0.1)
+--threads INT            CPU thread count for ONNX runtime (default: 4)
 ```
 
 ### `sherox.tts`
@@ -220,6 +242,86 @@ sherox.tts --text "こんにちは、今日は良い天気ですね。" --lang j
 ```
 
 See [TTS_MODEL.md](TTS_MODEL.md) for the supported built-in TTS languages, backends, and model details.
+
+### `sherox.kws`
+
+```
+--mic                    Stream from microphone
+--wav PATH               Spot keywords in a WAV file
+--keywords LIST          Comma-separated keyword phrases (required, or --keywords-file)
+--keywords-file PATH     Plain-text file with one keyword per line (required, or --keywords)
+--model-dir PATH         Custom KWS model directory
+                           (default: auto-download zipformer-gigaspeech-3.3M)
+--sample-rate INT        Model input sample rate (default: 16000)
+--capture-rate HZ        Microphone capture rate (default: 16000)
+--chunk-size FLOAT       Audio chunk duration per decode (default: 0.1)
+--threads INT            CPU thread count for ONNX runtime (default: 4)
+--max-active-paths INT   Beam width for keyword search (default: 4)
+```
+
+### `sherox.lid`
+
+```
+--mic                    Stream from microphone
+--wav PATH               Identify language in a WAV file
+--size {tiny,base,small,medium}
+                         Whisper variant (default: tiny)
+--encoder PATH           Custom Whisper encoder .onnx (overrides --size)
+--decoder PATH           Custom Whisper decoder .onnx (overrides --size)
+--sample-rate INT        Expected WAV sample rate (default: 16000)
+--capture-rate HZ        Microphone capture rate (default: 16000)
+--chunk-size FLOAT       Mic audio chunk size in seconds (default: 0.1)
+--threads INT            CPU thread count for ONNX runtime (default: 4)
+--provider {cpu,cuda,coreml}
+                         ONNX Runtime execution provider (default: cpu)
+--listening              Show RMS energy bar for mic level calibration
+```
+
+### `sherox.segment`
+
+```
+--mic                    Segment microphone input
+--wav PATH               Segment a WAV file
+--vad-model {silero,ten-vad}
+                         VAD model (default: silero)
+--ten-vad-model {ten-vad.onnx,ten-vad.int8.onnx}
+                         Ten-VAD model variant (default: ten-vad.int8.onnx)
+--threshold F            VAD speech probability threshold 0.0–1.0 (default: 0.5)
+--min-silence SEC        Silence to end a segment in seconds (default: 0.5)
+--min-speech SEC         Speech to start a segment in seconds (default: 0.25)
+--sample-rate HZ         Audio sample rate for VAD model (default: 16000)
+--capture-rate HZ        Microphone capture rate (default: 16000)
+--threads INT            CPU thread count for ONNX runtime (default: 4)
+--output-dir DIR         Save segments as WAV files into this directory
+--listening              Show RMS energy bar for mic level calibration
+```
+
+### `sherox.server`
+
+```
+--model-dir PATH         Path to model directory (auto-selected if omitted)
+--model-type TYPE        Model architecture hint (blank = auto-detect)
+--offline                Use VAD-segmented offline pipeline
+--sample-rate HZ         Expected audio sample rate (default: 16000)
+--threads INT            CPU thread count for ONNX runtime (default: 4)
+--language LANG          Language code for Whisper/SenseVoice/Cohere (default: en)
+--vad-model {silero,ten-vad}
+                         VAD type for offline segmentation (default: silero)
+--ten-vad-model {ten-vad.onnx,ten-vad.int8.onnx}
+                         Ten-VAD model variant (default: ten-vad.int8.onnx)
+--host HOST              Host address to listen on (default: 0.0.0.0)
+--port PORT              Port to listen on (default: 8000)
+--log-level {debug,info,warning,error}
+                         Uvicorn log level (default: info)
+```
+
+### `sherox list-models`
+
+```
+--module {asr,tts,other,all}
+                         Filter by module (default: all)
+--no-color               Disable colour output
+```
 
 See [SEGMENT_MODEL.md](SEGMENT_MODEL.md) for the VAD models used by `sherox.segment`.
 

@@ -7,6 +7,7 @@ import pytest
 import soundfile as sf
 
 import sherox.lid as lid_module
+from sherox import ConfigError, SherpaError
 from sherox.config import LidConfig
 
 
@@ -116,12 +117,12 @@ class TestResolveModel:
 
     def test_exits_when_explicit_missing(self, tmp_path):
         cfg = LidConfig(encoder=str(tmp_path / "no.onnx"), decoder=str(tmp_path / "no2.onnx"))
-        with pytest.raises(SystemExit):
+        with pytest.raises(ConfigError):
             lid_module._resolve_model(cfg, tmp_path)
 
     def test_exits_on_unsupported_size(self, tmp_path):
         cfg = LidConfig(size="huge")
-        with pytest.raises(SystemExit):
+        with pytest.raises(ConfigError):
             lid_module._resolve_model(cfg, tmp_path)
 
     def test_downloads_and_extracts(self, tmp_path):

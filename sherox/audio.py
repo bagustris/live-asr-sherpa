@@ -150,15 +150,20 @@ def mic_stream(
         # indata shape: (frames, 1) — flatten to 1-D
         q.put(indata[:, 0].copy())
 
-    with sd.InputStream(
+    stream = sd.InputStream(
         samplerate=capture_rate,
         channels=1,
         dtype="float32",
         blocksize=chunk_frames,
         callback=_callback,
-    ):
+    )
+    stream.start()
+    try:
         while True:
             yield q.get()
+    finally:
+        stream.stop()
+        stream.close()
 
 
 def pipe_stream(

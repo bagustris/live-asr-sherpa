@@ -51,6 +51,7 @@ from .asr import _validate_vad as _asr_validate_vad
 from .asr_engine import build_offline_recognizer, build_recognizer, build_vad
 from .config import Config
 from .streaming import _run_asr
+from .utils import run_cli as _run_cli
 
 logger = logging.getLogger(__name__)
 
@@ -298,17 +299,21 @@ async def _handle_ws_online(ws: WebSocket, asr: _AppState) -> None:
             data = await ws.receive_bytes()
             chunk = _int16_to_float32(data)
 
+            # Hold the lock only for the decode + endpoint check + reset
+            # sequence, which must be atomic w.r.t. the shared recognizer.
+            # Network sends happen outside the lock so a slow client cannot
+            # stall decoding for other connections.
             async with asr.online_lock:
                 stream.accept_waveform(asr.cfg.sample_rate, chunk)
                 while asr.recognizer.is_ready(stream):
                     await loop.run_in_executor(None, asr.recognizer.decode_stream, stream)
                 text = asr.recognizer.get_result(stream).strip()
                 is_ep = asr.recognizer.is_endpoint(stream)
+                if is_ep and text:
+                    asr.recognizer.reset(stream)
 
             if is_ep and text:
                 await ws.send_text(json.dumps({"type": "segment", "text": text}))
-                async with asr.online_lock:
-                    asr.recognizer.reset(stream)
                 last_partial = ""
             elif text and text != last_partial:
                 await ws.send_text(json.dumps({"type": "partial", "text": text}))
@@ -375,6 +380,10 @@ def parse_server_args() -> argparse.Namespace:
 
 
 def main() -> None:
+    _run_cli(_main_impl)
+
+
+def _main_impl() -> None:
     args = parse_server_args()
     args.model_type = args.model_type.lower()
 

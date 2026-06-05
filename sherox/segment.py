@@ -30,8 +30,10 @@ from types import SimpleNamespace
 import numpy as np
 from rich.console import Console
 
+from . import AudioError, ConfigError
 from .asr_engine import build_vad
 from .utils import download_file as _download_file
+from .utils import run_cli as _run_cli
 from .audio import mic_stream, read_wav
 from .config import SegmentConfig
 
@@ -62,7 +64,7 @@ def _info(msg: str) -> None:
 
 def _error(msg: str) -> None:
     _err_console.print(f"[bold red]\\[error][/bold red] {msg}")
-    sys.exit(1)
+    raise ConfigError(msg)
 
 
 def _require_soundfile():
@@ -72,11 +74,10 @@ def _require_soundfile():
     try:
         import soundfile as _soundfile  # noqa: PLC0415
     except ImportError as exc:  # pragma: no cover - depends on environment
-        _error(
+        raise AudioError(
             "soundfile is required for reading and writing segment audio. "
             "Install it with: pip install soundfile"
-        )
-        raise AssertionError("unreachable") from exc
+        ) from exc
     sf = _soundfile
     return sf
 
@@ -92,6 +93,11 @@ def _validate_runtime_args(args: argparse.Namespace) -> None:
         _error(f"--sample-rate must be > 0, got {args.sample_rate}")
     if args.capture_rate <= 0:
         _error(f"--capture-rate must be > 0, got {args.capture_rate}")
+    if args.capture_rate < args.sample_rate:
+        _error(
+            f"--capture-rate ({args.capture_rate}) must be >= --sample-rate ({args.sample_rate}). "
+            "Use --capture-rate 48000 for better device compatibility."
+        )
     if args.threads <= 0:
         _error(f"--threads must be > 0, got {args.threads}")
 
@@ -285,6 +291,10 @@ def run_segment(
 
 
 def main() -> None:
+    _run_cli(_main_impl)
+
+
+def _main_impl() -> None:
     args = parse_args()
     _validate_runtime_args(args)
 

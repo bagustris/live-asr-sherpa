@@ -16,6 +16,11 @@ Usage:
     # Create a new speaker file from scratch by enrolling:
     sherox.sid --enroll bob ref.wav --speaker-file new_speakers.txt
 
+    # Enroll a new speaker directly from microphone:
+    sherox.sid --enroll-mic alice
+
+    # --speaker-file defaults to speakers.txt (omitted above):
+
 Speaker file format (one 'name /absolute/path/wav' per line):
     alice /path/to/alice1.wav
     alice /path/to/alice2.wav
@@ -37,8 +42,10 @@ from typing import Dict, List, Tuple
 import numpy as np
 from rich.console import Console
 
+from . import ConfigError
 from .asr_engine import _require_sherpa_onnx, build_vad
 from .utils import download_file as _download_file
+from .utils import run_cli as _run_cli
 from .audio import mic_stream
 from .config import Config as _AsrConfig, SidConfig
 
@@ -46,6 +53,44 @@ _console = Console()
 _err_console = Console(stderr=True)
 
 _PREFIX = "  "
+
+
+def _require_soundfile():
+    try:
+        import soundfile as sf  # noqa: PLC0415
+        return sf
+    except ImportError as exc:  # pragma: no cover
+        raise RuntimeError(
+            "soundfile is required for audio I/O. "
+            "Install it with: pip install soundfile"
+        ) from exc
+
+
+def _print_mic_bar(chunk: np.ndarray) -> None:
+    energy = float(np.sqrt(np.mean(chunk ** 2)))
+    bar = "█" * min(int(energy * 500), 40)
+    sys.stdout.write(f"\r{_PREFIX}mic: {bar:<40} {energy:.4f}")
+    sys.stdout.flush()
+
+
+def _make_sid_vad_cfg(
+    vad_model: str,
+    vad_threshold: float,
+    vad_min_silence_duration: float,
+    vad_min_speech_duration: float,
+    sample_rate: int,
+    num_threads: int = 4,
+) -> _AsrConfig:
+    return _AsrConfig(
+        vad_model=vad_model,
+        vad_type="silero",
+        vad_threshold=vad_threshold,
+        vad_min_silence_duration=vad_min_silence_duration,
+        vad_min_speech_duration=vad_min_speech_duration,
+        sample_rate=sample_rate,
+        num_threads=num_threads,
+    )
+
 
 _MODEL_URL = (
     "https://github.com/k2-fsa/sherpa-onnx/releases/download/"
@@ -71,7 +116,7 @@ def _info(msg: str) -> None:
 
 def _error(msg: str) -> None:
     _err_console.print(f"[bold red]\\[error][/bold red] {msg}")
-    sys.exit(1)
+    raise ConfigError(msg)
 
 
 def _validate_model(model_path: str, project_dir: Path) -> str:
@@ -97,7 +142,15 @@ def _validate_vad(project_dir: Path) -> str:
 def _load_speaker_file(path: str) -> Dict[str, List[str]]:
     p = Path(path)
     if not p.is_file():
-        _error(f"Speaker file not found: {path}")
+        msg = f"Speaker file not found: {path}"
+        if Path(path).name == "speakers.txt":
+            msg += (
+                "\n\nNo speaker file found at the default location. "
+                "You can:\n"
+                "  • Enroll a new speaker with: --enroll-mic NAME\n"
+                "  • Specify an existing file with: --speaker-file PATH"
+            )
+        _error(msg)
     speakers: Dict[str, List[str]] = defaultdict(list)
     with open(p) as f:
         for i, line in enumerate(f, 1):
@@ -169,12 +222,96 @@ def enroll_speaker(name: str, wav_paths: List[str], speaker_file: str) -> None:
     )
 
 
+def enroll_speaker_mic(
+    name: str,
+    speaker_file: str,
+    vad_model: str = "",
+    capture_rate: int = 16000,
+    chunk_size: float = 0.1,
+    show_mic_level: bool = True,
+    vad_threshold: float = 0.3,
+    vad_min_silence_duration: float = 1.0,
+    vad_min_speech_duration: float = 1.0,
+) -> None:
+    """Enroll a speaker by recording from the microphone.
+
+    Captures audio via :func:`.mic_stream`, uses Silero VAD to segment
+    speech into utterances, saves each segment as a numbered WAV file
+    alongside *speaker_file*, then delegates to :func:`enroll_speaker`.
+
+    Press Ctrl+C to stop recording — any segments captured so far are
+    saved and enrolled.
+    """
+    sf = _require_soundfile()
+
+    speaker_path = Path(speaker_file)
+    wav_dir = speaker_path.parent
+
+    vad = build_vad(_make_sid_vad_cfg(
+        vad_model, vad_threshold, vad_min_silence_duration,
+        vad_min_speech_duration, capture_rate,
+    ))
+
+    _console.print(f"\n[bold yellow]Enrolling '{name}' from microphone.[/bold yellow]")
+    _console.print("Press [bold]Ctrl+C[/bold] when done speaking.\n")
+
+    audio = mic_stream(capture_rate=capture_rate, chunk_size=chunk_size)
+    segments: list[np.ndarray] = []
+
+    try:
+        for chunk in audio:
+            vad.accept_waveform(chunk)
+
+            if show_mic_level:
+                _print_mic_bar(chunk)
+
+            while not vad.empty():
+                seg = vad.front
+                samples = np.array(seg.samples, dtype=np.float32)
+                vad.pop()
+                segments.append(samples)
+                sys.stdout.write(f"\r{_PREFIX}Captured {len(segments)} segment(s)...")
+                sys.stdout.flush()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        vad.flush()
+        while not vad.empty():
+            seg = vad.front
+            samples = np.array(seg.samples, dtype=np.float32)
+            vad.pop()
+            segments.append(samples)
+        print()
+
+    if not segments:
+        _error("No speech detected. Enrollment cancelled.")
+
+    def _next_wav() -> Path:
+        n = 1
+        while True:
+            p = wav_dir / f"{name}_mic_enroll_{n:03d}.wav"
+            if not p.exists():
+                return p
+            n += 1
+
+    wav_paths: list[str] = []
+    try:
+        for samples in segments:
+            wav_path = _next_wav()
+            sf.write(str(wav_path), samples, samplerate=capture_rate)
+            wav_paths.append(str(wav_path))
+    except Exception:
+        for p in wav_paths:
+            Path(p).unlink(missing_ok=True)
+        raise
+
+    _info(f"Saved {len(wav_paths)} recording(s) to '{wav_dir}'")
+    enroll_speaker(name, wav_paths, speaker_file)
+
+
 def _load_wav_flat(path: str) -> Tuple[np.ndarray, int]:
     """Load an audio file and return (float32 mono samples, sample_rate)."""
-    try:
-        import soundfile as sf  # noqa: PLC0415
-    except ImportError as exc:  # pragma: no cover
-        raise RuntimeError("soundfile is required. pip install soundfile") from exc
+    sf = _require_soundfile()
     data, sr = sf.read(path, always_2d=True, dtype="float32")
     return np.ascontiguousarray(data[:, 0]), sr
 
@@ -242,14 +379,10 @@ def run_mic(cfg: SidConfig, speakers: Dict[str, List[str]]) -> None:
     extractor = _build_extractor(cfg)
     manager = _build_manager(extractor, speakers)
 
-    # Reuse VAD from the ASR engine (silero, adapts via Config)
-    asr_cfg = _AsrConfig(
-        vad_model=cfg.vad_model,
-        vad_type="silero",
-        sample_rate=cfg.capture_rate,
-        num_threads=cfg.num_threads,
-    )
-    vad = build_vad(asr_cfg)
+    vad = build_vad(_make_sid_vad_cfg(
+        cfg.vad_model, cfg.vad_threshold, cfg.vad_min_silence_duration,
+        cfg.vad_min_speech_duration, cfg.capture_rate, cfg.num_threads,
+    ))
 
     colour_map: Dict[str, str] = {}
     next_idx: List[int] = [0]
@@ -269,10 +402,7 @@ def run_mic(cfg: SidConfig, speakers: Dict[str, List[str]]) -> None:
             vad.accept_waveform(chunk)
 
             if cfg.show_mic_level:
-                energy = float(np.sqrt(np.mean(chunk ** 2)))
-                bar = "█" * min(int(energy * 500), 40)
-                sys.stdout.write(f"\r{_PREFIX}mic: {bar:<40} {energy:.4f}")
-                sys.stdout.flush()
+                _print_mic_bar(chunk)
 
             while not vad.empty():
                 segment = vad.front
@@ -313,9 +443,20 @@ def parse_args() -> argparse.Namespace:
         ),
     )
 
+    mode.add_argument(
+        "--enroll-mic",
+        metavar="NAME",
+        help=(
+            "Enroll a new speaker by recording from the microphone. "
+            "Provide the speaker name: --enroll-mic alice. "
+            "Press Ctrl+C when done speaking. "
+            "Recordings are saved alongside --speaker-file (default: speakers.txt)."
+        ),
+    )
+
     parser.add_argument(
         "--speaker-file",
-        required=True,
+        default="speakers.txt",
         metavar="PATH",
         help="Text file with 'name /path/to/ref.wav' entries (one per line)",
     )
@@ -348,13 +489,19 @@ def parse_args() -> argparse.Namespace:
         help="CPU thread count for ONNX runtime",
     )
     parser.add_argument(
-        "--listening", action="store_true",
-        help="Show a live RMS energy bar for microphone level calibration",
+        "--no-mic-level",
+        action="store_true",
+        default=False,
+        help="Suppress the live RMS energy bar during microphone capture",
     )
     return parser.parse_args()
 
 
 def main() -> None:
+    _run_cli(_main_impl)
+
+
+def _main_impl() -> None:
     args = parse_args()
     project_dir = Path(__file__).resolve().parent.parent
 
@@ -365,6 +512,21 @@ def main() -> None:
             _error("--enroll requires a NAME followed by at least one WAV file.")
         name, *wavs = args.enroll
         enroll_speaker(name, wavs, args.speaker_file)
+        return
+
+    if args.enroll_mic:
+        vad_model = _validate_vad(project_dir)
+        enroll_speaker_mic(
+            args.enroll_mic,
+            args.speaker_file,
+            vad_model=vad_model,
+            capture_rate=args.capture_rate,
+            chunk_size=args.chunk_size,
+            show_mic_level=not args.no_mic_level,
+            vad_threshold=0.3,
+            vad_min_silence_duration=1.0,
+            vad_min_speech_duration=1.0,
+        )
         return
 
     model_path = _validate_model(args.model, project_dir)
@@ -382,7 +544,7 @@ def main() -> None:
         num_threads=args.threads,
         vad_model=vad_model,
         wav=args.wav or "",
-        show_mic_level=args.listening,
+        show_mic_level=not args.no_mic_level,
     )
 
     speakers = _load_speaker_file(args.speaker_file)

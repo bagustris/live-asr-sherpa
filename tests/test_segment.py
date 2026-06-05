@@ -7,6 +7,7 @@ import numpy as np
 import pytest
 
 import sherox.segment as seg_module
+from sherox import ConfigError, SherpaError
 from sherox.config import SegmentConfig
 
 
@@ -113,11 +114,11 @@ class TestValidateRuntimeArgs:
         seg_module._validate_runtime_args(self._args())  # no exception
 
     def test_threshold_below_0_exits(self):
-        with pytest.raises(SystemExit):
+        with pytest.raises(ConfigError):
             seg_module._validate_runtime_args(self._args(threshold=-0.1))
 
     def test_threshold_above_1_exits(self):
-        with pytest.raises(SystemExit):
+        with pytest.raises(ConfigError):
             seg_module._validate_runtime_args(self._args(threshold=1.1))
 
     def test_threshold_at_boundaries_passes(self):
@@ -125,23 +126,23 @@ class TestValidateRuntimeArgs:
         seg_module._validate_runtime_args(self._args(threshold=1.0))
 
     def test_negative_min_silence_exits(self):
-        with pytest.raises(SystemExit):
+        with pytest.raises(ConfigError):
             seg_module._validate_runtime_args(self._args(min_silence=-0.1))
 
     def test_negative_min_speech_exits(self):
-        with pytest.raises(SystemExit):
+        with pytest.raises(ConfigError):
             seg_module._validate_runtime_args(self._args(min_speech=-0.1))
 
     def test_zero_sample_rate_exits(self):
-        with pytest.raises(SystemExit):
+        with pytest.raises(ConfigError):
             seg_module._validate_runtime_args(self._args(sample_rate=0))
 
     def test_zero_capture_rate_exits(self):
-        with pytest.raises(SystemExit):
+        with pytest.raises(ConfigError):
             seg_module._validate_runtime_args(self._args(capture_rate=0))
 
     def test_zero_threads_exits(self):
-        with pytest.raises(SystemExit):
+        with pytest.raises(ConfigError):
             seg_module._validate_runtime_args(self._args(threads=0))
 
 
@@ -166,7 +167,7 @@ class TestDownloadFile:
     def test_failure_exits(self, tmp_path):
         dest = tmp_path / "file.bin"
         with patch("sherox.utils.urllib.request.urlopen", side_effect=Exception("network error")):
-            with pytest.raises(SystemExit):
+            with pytest.raises(SherpaError):
                 seg_module._download_file("http://example.com/file.bin", dest)
 
     def test_progress_callback_with_positive_total(self, tmp_path):
@@ -235,7 +236,7 @@ class TestResolveVad:
 
     def test_unknown_ten_vad_model_exits(self, tmp_path):
         cfg = SegmentConfig(vad_type="ten-vad", ten_vad_model="unknown.onnx")
-        with pytest.raises(SystemExit):
+        with pytest.raises(ConfigError):
             seg_module._resolve_vad(cfg, tmp_path)
 
 

@@ -32,10 +32,13 @@ from typing import Tuple
 import numpy as np
 from rich.console import Console
 
+from . import ConfigError
 from .asr_engine import _require_sherpa_onnx, build_vad
 from .audio import mic_stream
 from .config import Config as _AsrConfig, LidConfig
 from .utils import download_file as _download_file
+from .utils import run_cli as _run_cli
+from .utils import safe_tar_members as _safe_tar_members
 
 _console = Console()
 _err_console = Console(stderr=True)
@@ -109,21 +112,7 @@ def _info(msg: str) -> None:
 
 def _error(msg: str) -> None:
     _err_console.print(f"[bold red]\\[error][/bold red] {msg}")
-    sys.exit(1)
-
-
-def _safe_tar_members(tf: tarfile.TarFile, dest_dir: Path):
-    """Yield only safe members, preventing path traversal on Python < 3.12."""
-    dest_resolved = dest_dir.resolve()
-    for member in tf.getmembers():
-        if member.isdev():
-            continue
-        member_path = (dest_dir / member.name).resolve()
-        try:
-            member_path.relative_to(dest_resolved)
-        except ValueError:
-            continue
-        yield member
+    raise ConfigError(msg)
 
 
 def _resolve_model(cfg: LidConfig, project_dir: Path) -> Tuple[str, str]:
@@ -346,6 +335,10 @@ def parse_args() -> argparse.Namespace:
 
 
 def main() -> None:
+    _run_cli(_main_impl)
+
+
+def _main_impl() -> None:
     args = parse_args()
     project_dir = Path(__file__).resolve().parent.parent
 

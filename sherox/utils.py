@@ -1,9 +1,13 @@
 """Shared utilities for the sherox package."""
 import sys
+import tarfile
 import urllib.request
 from pathlib import Path
+from typing import Callable
 
 from rich.console import Console
+
+from . import SherpaError
 
 _console = Console()
 _err_console = Console(stderr=True)
@@ -15,10 +19,10 @@ def _info(msg: str) -> None:
 
 def _error(msg: str) -> None:
     _err_console.print(f"[bold red]\\[error][/bold red] {msg}")
-    sys.exit(1)
+    raise SherpaError(msg)
 
 
-def download_file(url: str, dest: Path) -> None:
+def download_file(url: str, dest: Path | str) -> None:
     """Download ``url`` to ``dest`` with a simple percentage progress callback.
     Supports resuming interrupted downloads."""
     _info(f"Downloading from:\n  {url}")
@@ -75,3 +79,46 @@ def download_file(url: str, dest: Path) -> None:
     except Exception as exc:  # noqa: BLE001
         _error(f"Download failed: {exc}")
     print()
+
+
+def safe_tar_members(tf: tarfile.TarFile, dest_dir: Path):
+    """Yield only safe members for extraction into ``dest_dir``.
+
+    Emulates the safety guarantees of ``filter="data"`` on Python < 3.12:
+    - prevent path traversal (no member may escape ``dest_dir``);
+    - skip device/special files;
+    - skip symlinks and hardlinks whose target escapes ``dest_dir``.
+    """
+    dest_resolved = dest_dir.resolve()
+
+    def _escapes(path: Path) -> bool:
+        try:
+            path.resolve().relative_to(dest_resolved)
+        except ValueError:
+            return True
+        return False
+
+    for member in tf.getmembers():
+        if member.isdev():
+            continue
+        if _escapes(dest_dir / member.name):
+            continue
+        # For links, also reject targets that resolve outside dest_dir.
+        if member.issym() or member.islnk():
+            link_base = (dest_dir / member.name).parent
+            if _escapes(link_base / member.linkname):
+                continue
+        yield member
+
+
+def run_cli(impl: Callable[[], None]) -> None:
+    """Run a CLI entrypoint, mapping library exceptions to exit codes.
+
+    ``SherpaError`` (and subclasses) → exit 1; ``KeyboardInterrupt`` → exit 130.
+    """
+    try:
+        impl()
+    except SherpaError:
+        sys.exit(1)
+    except KeyboardInterrupt:
+        sys.exit(130)

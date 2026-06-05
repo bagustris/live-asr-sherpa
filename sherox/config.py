@@ -97,8 +97,11 @@ class SidConfig:
     chunk_size: float = 0.1         # seconds per mic chunk
     num_threads: int = 4
     vad_model: str = ""             # resolved path to silero_vad.onnx
+    vad_threshold: float = 0.3      # VAD sensitivity (higher = less sensitive)
+    vad_min_silence_duration: float = 1.0   # seconds of silence to end segment
+    vad_min_speech_duration: float = 1.0    # minimum speech for a valid segment
     wav: str = ""                   # path to input WAV file (--wav mode)
-    show_mic_level: bool = False
+    show_mic_level: bool = True
 
 
 # ── Spoken Language Identification ───────────────────────────────────────────

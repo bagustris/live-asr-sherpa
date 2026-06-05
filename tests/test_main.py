@@ -1,5 +1,8 @@
 """Tests for the top-level `sherox` CLI entry point (sherox/main.py)."""
 
+import subprocess
+import sys
+
 import pytest
 from unittest.mock import patch
 
@@ -38,3 +41,13 @@ class TestMainCLI:
             with pytest.raises(SystemExit) as exc:
                 main_module.main()
         assert exc.value.code != 0
+
+    def test_module_version_entrypoint(self):
+        result = subprocess.run(
+            [sys.executable, "-m", "sherox", "--version"],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+
+        assert "sherox" in result.stdout
