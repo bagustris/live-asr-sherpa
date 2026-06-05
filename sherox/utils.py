@@ -25,6 +25,7 @@ def _error(msg: str) -> None:
 def download_file(url: str, dest: Path | str) -> None:
     """Download ``url`` to ``dest`` with a simple percentage progress callback.
     Supports resuming interrupted downloads."""
+    dest = Path(dest)
     _info(f"Downloading from:\n  {url}")
     _info("This may take a few minutes…")
 

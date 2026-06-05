@@ -349,7 +349,6 @@ class TestBuildOfflineRecognizer:
 
 class TestRequireSherpaOnnx:
     def test_reimports_when_global_is_none(self):
-        import types
         import sherox.asr_engine as engine_module
 
         fake_sherpa = MagicMock()
@@ -362,11 +361,30 @@ class TestRequireSherpaOnnx:
         finally:
             engine_module.sherpa_onnx = original
 
+    def test_reimports_when_global_is_missing_proxy(self):
+        import sherox.asr_engine as engine_module
+
+        fake_sherpa = MagicMock()
+        original = engine_module.sherpa_onnx
+        try:
+            engine_module.sherpa_onnx = engine_module._MissingSherpaOnnxProxy()
+            with patch.dict("sys.modules", {"sherpa_onnx": fake_sherpa}):
+                result = engine_module._require_sherpa_onnx()
+            assert result is fake_sherpa
+        finally:
+            engine_module.sherpa_onnx = original
+
     def test_returns_existing_when_already_loaded(self):
         import sherox.asr_engine as engine_module
-        existing = engine_module.sherpa_onnx
-        result = engine_module._require_sherpa_onnx()
-        assert result is existing
+
+        existing = MagicMock()
+        original = engine_module.sherpa_onnx
+        try:
+            engine_module.sherpa_onnx = existing
+            result = engine_module._require_sherpa_onnx()
+            assert result is existing
+        finally:
+            engine_module.sherpa_onnx = original
 
     def test_raises_runtime_error_when_import_fails(self):
         import sherox.asr_engine as engine_module

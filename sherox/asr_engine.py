@@ -53,7 +53,9 @@ except ImportError:  # pragma: no cover - depends on environment
 
 def _require_sherpa_onnx():
     global sherpa_onnx
-    if sherpa_onnx is not None:
+    if sherpa_onnx is not None and not isinstance(
+        sherpa_onnx, _MissingSherpaOnnxProxy
+    ):
         return sherpa_onnx
     try:
         import sherpa_onnx as _sherpa_onnx  # noqa: PLC0415

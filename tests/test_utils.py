@@ -28,6 +28,23 @@ class TestDownloadFile:
         assert dest.exists()
         assert dest.read_text() == "chunk1chunk2"
 
+    def test_accepts_string_destination(self, tmp_path):
+        """Test that string paths are accepted as documented."""
+        dest = str(tmp_path / "test.txt")
+        url = "http://example.com/test.txt"
+
+        mock_response = MagicMock()
+        mock_response.status = 200
+        mock_response.headers = {"Content-Length": "5"}
+        mock_response.__enter__ = MagicMock(return_value=mock_response)
+        mock_response.__exit__ = MagicMock(return_value=False)
+        mock_response.read.side_effect = [b"hello", b""]
+
+        with patch("urllib.request.urlopen", return_value=mock_response):
+            download_file(url, dest)
+
+        assert Path(dest).read_text() == "hello"
+
     def test_resumes_download_when_partial_file_exists(self, tmp_path):
         """Test that download resumes from existing file position."""
         dest = tmp_path / "test.txt"
