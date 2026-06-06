@@ -145,9 +145,9 @@ class TestValidateModel:
 # ---------------------------------------------------------------------------
 
 class TestResolveKeywords:
-    def test_creates_temp_file_from_keywords_str(self):
+    def test_creates_temp_file_from_keywords_str(self, tmp_path):
         cfg = KwsConfig(keywords_str="hey sherpa, ok google")
-        path = kws_module._resolve_keywords(cfg)
+        path = kws_module._resolve_keywords(cfg, tmp_path)
         try:
             content = Path(path).read_text()
             assert "hey sherpa" in content
@@ -159,34 +159,34 @@ class TestResolveKeywords:
         kw_file = tmp_path / "kws.txt"
         kw_file.write_text("hey sherpa\n")
         cfg = KwsConfig(keywords_file=str(kw_file))
-        path = kws_module._resolve_keywords(cfg)
+        path = kws_module._resolve_keywords(cfg, tmp_path)
         assert path == str(kw_file)
 
     def test_exits_when_keywords_file_not_found(self, tmp_path):
         cfg = KwsConfig(keywords_file=str(tmp_path / "no_file.txt"))
         with pytest.raises(SherpaError):
-            kws_module._resolve_keywords(cfg)
+            kws_module._resolve_keywords(cfg, tmp_path)
 
-    def test_exits_when_no_keywords_given(self):
+    def test_exits_when_no_keywords_given(self, tmp_path):
         cfg = KwsConfig()  # both keywords_str and keywords_file empty
         with pytest.raises(SherpaError):
-            kws_module._resolve_keywords(cfg)
+            kws_module._resolve_keywords(cfg, tmp_path)
 
     def test_keywords_str_takes_priority_over_file(self, tmp_path):
         kw_file = tmp_path / "kws.txt"
         kw_file.write_text("from file\n")
         cfg = KwsConfig(keywords_str="from string", keywords_file=str(kw_file))
-        path = kws_module._resolve_keywords(cfg)
+        path = kws_module._resolve_keywords(cfg, tmp_path)
         try:
             content = Path(path).read_text()
             assert "from string" in content
         finally:
             Path(path).unlink(missing_ok=True)
 
-    def test_empty_keywords_str_exits(self):
+    def test_empty_keywords_str_exits(self, tmp_path):
         cfg = KwsConfig(keywords_str="  ,  , ")  # only whitespace/commas
         with pytest.raises(SherpaError):
-            kws_module._resolve_keywords(cfg)
+            kws_module._resolve_keywords(cfg, tmp_path)
 
 
 # ---------------------------------------------------------------------------
@@ -274,8 +274,8 @@ class TestMain:
 
         original_resolve = kws_module._resolve_keywords
 
-        def recording_resolve(cfg):
-            path = original_resolve(cfg)
+        def recording_resolve(cfg, model_dir):
+            path = original_resolve(cfg, model_dir)
             created_paths.append(path)
             return path
 

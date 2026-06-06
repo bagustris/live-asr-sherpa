@@ -42,7 +42,6 @@ import tempfile
 import time
 from pathlib import Path
 
-from . import ConfigError
 from .config import KwsConfig
 from .utils import _error, _info, download_file, run_cli as _run_cli, safe_tar_members as _safe_tar_members
 
@@ -62,7 +61,7 @@ def _require_sherpa_onnx():
         import sherpa_onnx  # noqa: PLC0415
         return sherpa_onnx
     except ImportError:
-        raise ConfigError(
+        _error(
             "sherpa-onnx is not installed. Run: pip install sherpa-onnx"
         )
 
@@ -72,7 +71,7 @@ def _require_sounddevice():
         import sounddevice as sd  # noqa: PLC0415
         return sd
     except ImportError:
-        raise ConfigError(
+        _error(
             "sounddevice is not installed. Run: pip install sounddevice"
         )
 
@@ -121,7 +120,7 @@ def _find(directory: Path, pattern: str) -> Path:
     return matches[0]
 
 
-def _resolve_keywords(cfg: KwsConfig) -> str:
+def _resolve_keywords(cfg: KwsConfig, model_dir: Path) -> str:
     """Return a path to a keywords file, creating a temp file if needed.
 
     sherpa-onnx's ``KeywordSpotter`` takes a ``keywords_file`` parameter — a
@@ -130,16 +129,22 @@ def _resolve_keywords(cfg: KwsConfig) -> str:
     file and return that path.
     """
     if cfg.keywords_str:
-        # Split on commas, strip whitespace, drop empty strings.
         words = [w.strip() for w in cfg.keywords_str.split(",") if w.strip()]
         if not words:
             _error("--keywords produced an empty keyword list.")
-        # Write to a temp file.  NamedTemporaryFile with delete=False so
-        # sherpa-onnx can open it after we close our handle.
+
+        bpe_model = model_dir / "bpe.model"
+        if bpe_model.is_file():
+            import sentencepiece as spm  # noqa: PLC0415
+            sp = spm.SentencePieceProcessor(model_file=str(bpe_model))
+            lines = [" ".join(sp.encode(w.upper(), out_type=str)) for w in words]
+        else:
+            lines = words
+
         with tempfile.NamedTemporaryFile(
             mode="w", suffix=".txt", delete=False, encoding="utf-8"
         ) as tmp:
-            tmp.write("\n".join(words) + "\n")
+            tmp.write("\n".join(lines) + "\n")
             return tmp.name
 
     if cfg.keywords_file:
@@ -155,30 +160,16 @@ def _build_spotter(model_dir: Path, keywords_file_path: str, cfg: KwsConfig):
     """Construct and return a ``sherpa_onnx.KeywordSpotter`` instance."""
     sherpa_onnx = _require_sherpa_onnx()
 
-    encoder = str(_find(model_dir, "encoder*.onnx"))
-    decoder = str(_find(model_dir, "decoder*.onnx"))
-    joiner = str(_find(model_dir, "joiner*.onnx"))
-    tokens = str(_find(model_dir, "tokens.txt"))
-
-    config = sherpa_onnx.KeywordSpotterConfig(
-        feat_config=sherpa_onnx.FeatureExtractorConfig(
-            sampling_rate=cfg.sample_rate,
-        ),
-        model_config=sherpa_onnx.OnlineTransducerModelConfig(
-            encoder=encoder,
-            decoder=decoder,
-            joiner=joiner,
-            tokens=tokens,
-            num_threads=cfg.num_threads,
-        ),
+    return sherpa_onnx.KeywordSpotter(
+        tokens=str(_find(model_dir, "tokens.txt")),
+        encoder=str(_find(model_dir, "encoder*.onnx")),
+        decoder=str(_find(model_dir, "decoder*.onnx")),
+        joiner=str(_find(model_dir, "joiner*.onnx")),
         keywords_file=keywords_file_path,
+        num_threads=cfg.num_threads,
+        sample_rate=cfg.sample_rate,
         max_active_paths=cfg.max_active_paths,
     )
-
-    if not config.validate():
-        _error("KWS config is invalid — check that all model files exist.")
-
-    return sherpa_onnx.KeywordSpotter(config)
 
 
 # ── Runtime loops ─────────────────────────────────────────────────────────────
@@ -221,11 +212,11 @@ def run_mic(spotter, cfg: KwsConfig) -> None:
                     spotter.decode_stream(stream)
 
                 result = spotter.get_result(stream)
-                if result.keyword:
+                if result:
                     elapsed = time.time() - start_time
                     h, rem = divmod(int(elapsed), 3600)
                     m, s = divmod(rem, 60)
-                    print(f"[{h:02d}:{m:02d}:{s:02d}] keyword: {result.keyword}")
+                    print(f"[{h:02d}:{m:02d}:{s:02d}] keyword: {result}")
                     # Reset stream so the same keyword can trigger again.
                     spotter.reset_stream(stream)
 
@@ -269,13 +260,12 @@ def run_wav(spotter, cfg: KwsConfig) -> None:
             spotter.decode_stream(stream)
 
         result = spotter.get_result(stream)
-        if result.keyword:
+        if result:
             timestamp = offset / cfg.sample_rate
             h, rem = divmod(int(timestamp), 3600)
             m, s = divmod(rem, 60)
-            kw = result.keyword
-            print(f"[{h:02d}:{m:02d}:{s:02d}] keyword: {kw}")
-            hits.append(kw)
+            print(f"[{h:02d}:{m:02d}:{s:02d}] keyword: {result}")
+            hits.append(result)
             spotter.reset_stream(stream)
 
         offset += chunk
@@ -362,7 +352,7 @@ def _main_impl() -> None:
         cfg.wav = args.wav  # type: ignore[attr-defined]
 
     model_dir = _validate_model(cfg.model_dir, project_dir)
-    keywords_file_path = _resolve_keywords(cfg)
+    keywords_file_path = _resolve_keywords(cfg, model_dir)
 
     try:
         spotter = _build_spotter(model_dir, keywords_file_path, cfg)

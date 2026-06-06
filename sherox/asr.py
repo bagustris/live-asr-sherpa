@@ -100,7 +100,7 @@ from types import SimpleNamespace
 
 from rich.console import Console
 
-from . import AudioError, ConfigError
+from . import ConfigError
 from .asr_engine import build_diarization, build_offline_recognizer, build_punctuation, build_recognizer, build_vad
 from .utils import download_file as _download_file
 from .utils import run_cli as _run_cli
@@ -134,11 +134,11 @@ def _require_soundfile():
         return sf
     try:
         import soundfile as _soundfile  # noqa: PLC0415
-    except ImportError as exc:  # pragma: no cover - depends on environment
-        raise AudioError(
+    except ImportError:  # pragma: no cover - depends on environment
+        _error(
             "soundfile is required for reading audio files. "
             "Install it with: pip install soundfile"
-        ) from exc
+        )
     sf = _soundfile
     return sf
 
