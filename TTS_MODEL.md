@@ -44,6 +44,21 @@ Example:
 sherox.tts --text "こんにちは、今日は良い天気ですね。" --lang jpn
 ```
 
+## Playback and Saving
+
+By default, `sherox.tts` writes `output.wav`. Add `--play` to play the synthesized audio after saving it:
+
+```bash
+sherox.tts --text "Halo dunia" --play
+```
+
+For playback-only output, use either `--play --no-save` or `--play --output none`:
+
+```bash
+sherox.tts --text "Halo dunia" --play --no-save
+sherox.tts --text "Halo dunia" --play --output none
+```
+
 ### Sarashina
 
 `jpn-sarashina` uses the `sarashina-tts` backend and supports optional voice cloning through `--audio-prompt` and `--audio-prompt-text`.

@@ -22,6 +22,21 @@ def _error(msg: str) -> None:
     raise SherpaError(msg)
 
 
+def render_mic_level(chunk, prefix: str = "  ") -> None:
+    """Write a live RMS energy bar for ``chunk`` to stdout in place (no newline).
+
+    Used by all microphone-capture commands to give visual feedback on input
+    level. Overwrites the current line with ``\\r``; callers are responsible for
+    clearing or advancing the line before printing other output.
+    """
+    import numpy as np  # noqa: PLC0415
+
+    energy = float(np.sqrt(np.mean(chunk ** 2)))
+    bar = "█" * min(int(energy * 500), 40)
+    sys.stdout.write(f"\r{prefix}mic: {bar:<40} {energy:.4f}")
+    sys.stdout.flush()
+
+
 def download_file(url: str, dest: Path | str) -> None:
     """Download ``url`` to ``dest`` with a simple percentage progress callback.
     Supports resuming interrupted downloads."""

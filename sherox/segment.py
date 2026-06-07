@@ -13,8 +13,8 @@ Usage:
     # Save each detected speech segment to a directory:
     sherox.segment --wav audio.wav --output-dir segments/
 
-    # Show live microphone level:
-    sherox.segment --mic --listening
+    # Suppress live microphone level:
+    sherox.segment --mic --no-mic-level
 
 Output format (stdout):
     [00:00.120 – 00:02.560]  (speech detected)
@@ -33,6 +33,7 @@ from rich.console import Console
 from . import ConfigError
 from .asr_engine import build_vad
 from .utils import download_file as _download_file
+from .utils import render_mic_level as _render_mic_level
 from .utils import run_cli as _run_cli
 from .audio import mic_stream, read_wav
 from .config import SegmentConfig
@@ -172,9 +173,9 @@ def parse_args() -> argparse.Namespace:
         help="Save each detected segment as a WAV file into this directory",
     )
     parser.add_argument(
-        "--listening",
+        "--no-mic-level",
         action="store_true",
-        help="Show a live RMS energy bar for mic level calibration",
+        help="Suppress the live RMS energy bar during microphone capture",
     )
     return parser.parse_args()
 
@@ -236,10 +237,7 @@ def run_segment(
             elapsed_samples += len(chunk)
 
             if cfg.show_mic_level:
-                energy = float(np.sqrt(np.mean(chunk ** 2)))
-                bar = "█" * min(int(energy * 500), 40)
-                sys.stdout.write(f"\r{prefix}mic: {bar:<40} {energy:.4f}")
-                sys.stdout.flush()
+                _render_mic_level(chunk, prefix)
 
             while not vad.empty():
                 seg = vad.front
@@ -309,7 +307,7 @@ def _main_impl() -> None:
         sample_rate=args.sample_rate,
         capture_rate=args.capture_rate,
         num_threads=args.threads,
-        show_mic_level=args.listening,
+        show_mic_level=not args.no_mic_level,
         output_dir=args.output_dir,
     )
 

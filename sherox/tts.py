@@ -41,6 +41,9 @@ Usage:
     # Play through the system speaker (requires sounddevice):
     sherox.tts --text "Halo" --play
 
+    # Play without saving a WAV file:
+    sherox.tts --text "Halo" --play --no-save
+
     # Control speech speed:
     sherox.tts --text "Halo" --speed 0.85
 
@@ -73,6 +76,7 @@ Models are auto-downloaded on first use into  models/<model-dir>/  at the projec
 """
 
 import argparse
+import io
 import sys
 import tarfile
 import wave
@@ -328,6 +332,8 @@ def _validate_runtime_args(args: argparse.Namespace) -> None:
         _error(f"--speed must be > 0, got {args.speed}")
     if args.threads <= 0:
         _error(f"--threads must be > 0, got {args.threads}")
+    if (args.no_save or _output_disables_save(args.output)) and not args.play:
+        _error("--no-save, --output none, and --output - require --play so generated audio is used.")
 
 
 def parse_args() -> argparse.Namespace:
@@ -373,12 +379,17 @@ def parse_args() -> argparse.Namespace:
         "--output",
         default="output.wav",
         metavar="PATH",
-        help="Output WAV file path",
+        help="Output WAV file path. Use 'none' or '-' with --play to disable saving.",
     )
     parser.add_argument(
         "--play",
         action="store_true",
         help="Play audio through the default output device after synthesis",
+    )
+    parser.add_argument(
+        "--no-save",
+        action="store_true",
+        help="Do not write a WAV file. Requires --play.",
     )
     parser.add_argument(
         "--threads",
@@ -547,19 +558,33 @@ def synthesise(tts, text: str, cfg: TtsConfig) -> tuple[np.ndarray, int]:
     return samples, audio.sample_rate
 
 
+def _output_disables_save(output: str) -> bool:
+    return output.lower() in {"none", "-"}
+
+
+def _should_save(cfg: TtsConfig) -> bool:
+    return not cfg.no_save and not _output_disables_save(cfg.output)
+
+
 def synthesise_to_file(tts, text: str, cfg: TtsConfig) -> Optional[tuple[np.ndarray, int]]:
-    """Synthesise *text* to cfg.output. Returns audio when available in memory."""
+    """Synthesise *text*, optionally writing cfg.output.
+
+    Returns audio when available in memory for playback.
+    """
     backend = getattr(tts, "__dict__", {}).get("backend", "sherpa_onnx")
+    should_save = _should_save(cfg)
 
     if backend == "sherpa_onnx":
         samples, sample_rate = synthesise(tts, text, cfg)
-        soundfile = _require_soundfile()
-        soundfile.write(cfg.output, samples, samplerate=sample_rate)
+        if should_save:
+            soundfile = _require_soundfile()
+            soundfile.write(cfg.output, samples, samplerate=sample_rate)
         return samples, sample_rate
 
     if backend == "piper_plus":
         length_scale = 1.0 / cfg.speed
-        with wave.open(cfg.output, "wb") as wav_file:
+        wav_target = cfg.output if should_save else io.BytesIO()
+        with wave.open(wav_target, "wb") as wav_file:
             tts.model.synthesize(
                 text,
                 wav_file,
@@ -570,7 +595,11 @@ def synthesise_to_file(tts, text: str, cfg: TtsConfig) -> Optional[tuple[np.ndar
         if not cfg.play:
             return None
         soundfile = _require_soundfile()
-        samples, sample_rate = soundfile.read(cfg.output, dtype="float32")
+        if should_save:
+            samples, sample_rate = soundfile.read(cfg.output, dtype="float32")
+        else:
+            wav_target.seek(0)
+            samples, sample_rate = soundfile.read(wav_target, dtype="float32")
         return np.asarray(samples, dtype=np.float32), sample_rate
 
     if backend == "sarashina":
@@ -595,8 +624,9 @@ def synthesise_to_file(tts, text: str, cfg: TtsConfig) -> Optional[tuple[np.ndar
 
         samples = wavs[0].cpu().numpy().astype(np.float32)
         sample_rate = 24000
-        soundfile = _require_soundfile()
-        soundfile.write(cfg.output, samples, samplerate=sample_rate)
+        if should_save:
+            soundfile = _require_soundfile()
+            soundfile.write(cfg.output, samples, samplerate=sample_rate)
         return samples, sample_rate
 
     _error(f"Unsupported TTS backend: {backend}")
@@ -654,6 +684,7 @@ def _main_impl() -> None:
         speed=args.speed,
         output=args.output,
         play=args.play,
+        no_save=args.no_save or _output_disables_save(args.output),
         num_threads=args.threads,
         audio_prompt=args.audio_prompt or "",
         audio_prompt_text=args.audio_prompt_text or "",
@@ -673,7 +704,8 @@ def _main_impl() -> None:
         _info("Playing audio…")
         _play(samples, sample_rate)
 
-    _info(f"Saved → {cfg.output}")
+    if _should_save(cfg):
+        _info(f"Saved → {cfg.output}")
 
 
 if __name__ == "__main__":  # pragma: no cover

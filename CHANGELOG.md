@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+## [0.8.0] - 2026-06-07
+
+### Changed
+- `--listening` replaced by `--no-mic-level` across `asr`, `segment`, and `lid`
+  — mic level bar is now **on by default** when using `--mic`; pass
+  `--no-mic-level` to suppress it.
+- `kws` (`sherox.kws --mic`) now shows the live RMS energy bar by default,
+  consistent with all other mic-mode commands. Suppress with `--no-mic-level`.
+- `livekit-wakeword` moved from core dependencies to the optional `wake` extra
+  (`pip install sherox[wake]`).
+
 ## [Major.Minor.Patch] - YYYY-MM-DD
 
 ## [0.7.0] - 2026-06-04

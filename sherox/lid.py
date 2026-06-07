@@ -37,6 +37,7 @@ from .asr_engine import _require_sherpa_onnx, build_vad
 from .audio import mic_stream
 from .config import Config as _AsrConfig, LidConfig
 from .utils import download_file as _download_file
+from .utils import render_mic_level as _render_mic_level
 from .utils import run_cli as _run_cli
 from .utils import safe_tar_members as _safe_tar_members
 
@@ -256,10 +257,7 @@ def run_mic(cfg: LidConfig) -> None:
             vad.accept_waveform(chunk)
 
             if cfg.show_mic_level:
-                energy = float(np.sqrt(np.mean(chunk ** 2)))
-                bar = "█" * min(int(energy * 500), 40)
-                sys.stdout.write(f"\r{_PREFIX}mic: {bar:<40} {energy:.4f}")
-                sys.stdout.flush()
+                _render_mic_level(chunk, _PREFIX)
 
             while not vad.empty():
                 segment = vad.front
@@ -328,8 +326,8 @@ def parse_args() -> argparse.Namespace:
         help="ONNX Runtime execution provider",
     )
     parser.add_argument(
-        "--listening", action="store_true",
-        help="Show a live RMS energy bar for microphone level calibration",
+        "--no-mic-level", action="store_true",
+        help="Suppress the live RMS energy bar during microphone capture",
     )
     return parser.parse_args()
 
@@ -355,7 +353,7 @@ def _main_impl() -> None:
         capture_rate=args.capture_rate,
         chunk_size=args.chunk_size,
         wav=args.wav or "",
-        show_mic_level=args.listening,
+        show_mic_level=not args.no_mic_level,
     )
 
     cfg.encoder, cfg.decoder = _resolve_model(cfg, project_dir)

@@ -88,10 +88,10 @@ class TestParseArgs:
             args = main_module.parse_args()
         assert args.language == "en"
 
-    def test_default_listening_is_false(self):
+    def test_default_no_mic_level_is_false(self):
         with patch("sys.argv", ["sherox.asr", "--mic"]):
             args = main_module.parse_args()
-        assert args.listening is False
+        assert args.no_mic_level is False
 
     def test_custom_model_type(self):
         with patch("sys.argv", ["sherox.asr", "--mic", "--model-type", "whisper"]):
@@ -123,10 +123,10 @@ class TestParseArgs:
             args = main_module.parse_args()
         assert args.sample_rate == 48000
 
-    def test_listening_flag(self):
-        with patch("sys.argv", ["sherox.asr", "--mic", "--listening"]):
+    def test_no_mic_level_flag(self):
+        with patch("sys.argv", ["sherox.asr", "--mic", "--no-mic-level"]):
             args = main_module.parse_args()
-        assert args.listening is True
+        assert args.no_mic_level is True
 
     def test_final_only_flag(self):
         with patch("sys.argv", ["sherox.asr", "--mic", "--final-only"]):
@@ -991,7 +991,7 @@ class TestMain:
             capture_rate=capture_rate,
             chunk_size=0.16,
             threads=4,
-            listening=False,
+            no_mic_level=False,
             vad_type="silero",
             ten_vad_model="ten-vad.int8.onnx",
             diarization=diarization,

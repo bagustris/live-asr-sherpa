@@ -45,6 +45,7 @@ from rich.console import Console
 from . import ConfigError
 from .asr_engine import _require_sherpa_onnx, build_vad
 from .utils import download_file as _download_file
+from .utils import render_mic_level as _render_mic_level
 from .utils import run_cli as _run_cli
 from .audio import mic_stream
 from .config import Config as _AsrConfig, SidConfig
@@ -64,13 +65,6 @@ def _require_soundfile():
             "soundfile is required for audio I/O. "
             "Install it with: pip install soundfile"
         ) from exc
-
-
-def _print_mic_bar(chunk: np.ndarray) -> None:
-    energy = float(np.sqrt(np.mean(chunk ** 2)))
-    bar = "█" * min(int(energy * 500), 40)
-    sys.stdout.write(f"\r{_PREFIX}mic: {bar:<40} {energy:.4f}")
-    sys.stdout.flush()
 
 
 def _make_sid_vad_cfg(
@@ -263,7 +257,7 @@ def enroll_speaker_mic(
             vad.accept_waveform(chunk)
 
             if show_mic_level:
-                _print_mic_bar(chunk)
+                _render_mic_level(chunk)
 
             while not vad.empty():
                 seg = vad.front
@@ -402,7 +396,7 @@ def run_mic(cfg: SidConfig, speakers: Dict[str, List[str]]) -> None:
             vad.accept_waveform(chunk)
 
             if cfg.show_mic_level:
-                _print_mic_bar(chunk)
+                _render_mic_level(chunk)
 
             while not vad.empty():
                 segment = vad.front

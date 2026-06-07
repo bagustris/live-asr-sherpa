@@ -4,9 +4,18 @@
 
 *Minimal, light, live speech recognition (and others) on Local PC*
 
-A terminal-based toolkit originally built with [**SHER**rpa-**O**nn**X**](https://github.com/k2-fsa/sherpa-onnx). Transcribe speech in real-time from your microphone or offline from WAV files — no GPU required. Also supports speaker diarization, speaker identification, TTS, language identification, keyword spotting, and speech segmentation.
+A terminal-based toolkit originally built with [**SHER**rpa-**O**nn**X**](https://github.com/k2-fsa/sherpa-onnx). Transcribe speech in real-time from your microphone or offline from WAV files — no GPU required. Also supports speaker diarization, speaker identification, TTS, language identification, keyword spotting, wake-word detection, and speech segmentation.
 
 Documentation: https://deepwiki.com/bagustris/live-asr-sherpa
+
+Supported tasks:  
+- Automatic Speech Recognition (ASR): `sherox.asr` (with optional diarization)
+- Speaker Identification (SID): `sherox.sid`
+- Text-to-Speech (TTS): `sherox.tts`
+- Language Identification (LID): `sherox.lid`
+- Keyword Spotting (KWS): `sherox.kws`
+- Wake-word Detection: `sherox.wake`
+- Speech Segmentation: `sherox.segment`
 
 ## Features
 
@@ -18,6 +27,7 @@ Documentation: https://deepwiki.com/bagustris/live-asr-sherpa
 - **CPU-optimized** — runs efficiently on any modern CPU using ONNX Runtime
 - **Auto model download** — fetches default models on first run
 - **Endpoint detection** — intelligently segments speech with configurable silence rules
+- **Wake-word detection** — run custom `livekit-wakeword` ONNX triggers from a microphone or WAV file
 - **Rich terminal output** — colour-coded speaker labels and styled status messages via the `rich` library
 
 ## Prerequisites
@@ -34,7 +44,7 @@ Documentation: https://deepwiki.com/bagustris/live-asr-sherpa
 pip install -e .
 ```
 
-> **Note:** This installs all dependencies and registers the `sherox.asr`, `sherox.sid`, `sherox.segment`, and `sherox.tts` CLI commands.
+> **Note:** This installs all dependencies and registers the `sherox`, `sherox.asr`, `sherox.sid`, `sherox.segment`, `sherox.tts`, `sherox.kws`, `sherox.wake`, `sherox.lid`, `sherox.server`, and `sherox.models` CLI commands.
 >
 > Japanese TTS uses the `piper-plus` backend rather than `sherpa-onnx`. Install it with:
 > ```bash
@@ -226,8 +236,9 @@ See [ASR_MODEL.md](ASR_MODEL.md) for the complete supported ASR model catalog, g
                         (not used for the built-in Japanese Piper Plus backend)
 --speaker-id N          Speaker identity index for multi-speaker models
 --speed F               Speech rate multiplier (default: 1.0)
---output PATH           Output WAV file path
+--output PATH           Output WAV file path (default: output.wav; use none or - with --play to skip saving)
 --play                  Play audio after synthesis
+--no-save               Do not write a WAV file; requires --play
 --threads INT           CPU thread count for ONNX runtime (default: 4)
 ```
 
@@ -236,6 +247,12 @@ Examples:
 ```bash
 # Default Indonesian model via sherpa-onnx
 sherox.tts --text "Halo dunia"
+
+# Play without saving a WAV file
+sherox.tts --text "Halo dunia" --play --no-save
+
+# Equivalent playback-only form
+sherox.tts --text "Halo dunia" --play --output none
 
 # Japanese via Piper Plus Tsukuyomi
 sherox.tts --text "こんにちは、今日は良い天気ですね。" --lang jpn
@@ -257,6 +274,29 @@ See [TTS_MODEL.md](TTS_MODEL.md) for the supported built-in TTS languages, backe
 --chunk-size FLOAT       Audio chunk duration per decode (default: 0.1)
 --threads INT            CPU thread count for ONNX runtime (default: 4)
 --max-active-paths INT   Beam width for keyword search (default: 4)
+```
+
+### `sherox.wake`
+
+Wake-word detection powered by [`livekit-wakeword`](https://github.com/livekit/livekit-wakeword). Use any custom ONNX model trained via `livekit-wakeword run configs/foo.yaml` — works for any language, including non-English names like "Hey Bagus".
+
+Examples:
+
+```bash
+sherox.wake --mic --model models/hey_bagus.onnx
+sherox.wake --wav audio.wav --model models/hey_bagus.onnx --threshold 0.7
+sherox.wake --mic --model hey_bagus --model models/hey_sherox.onnx
+```
+
+Model paths must point to `.onnx` files. Relative names are also searched under `models/`, so `--model hey_bagus` resolves to `models/hey_bagus.onnx` when present. Each detection prints `[HH:MM:SS] model_name: confidence`.
+
+```
+--mic                    Stream from microphone
+--wav PATH               Scan a WAV file
+--model PATH             Path to a wake-word ONNX model (may be repeated for multiple)
+--threshold FLOAT        Detection threshold 0.0-1.0 (default: 0.5)
+--debounce SECS          Minimum seconds between detections (default: 2.0)
+--chunk-size SECS        Audio chunk duration per inference (default: 2.0)
 ```
 
 ### `sherox.lid`
@@ -333,6 +373,7 @@ sherox/
 ├── sid.py         # sherox.sid — Speaker identification CLI
 ├── segment.py     # sherox.segment — VAD-based audio segmentation CLI
 ├── tts.py         # sherox.tts — Text-to-speech CLI
+├── wake.py        # sherox.wake — Wake-word detection CLI
 ├── asr_engine.py  # Unified model loading: ASR, VAD, diarization, embeddings
 ├── streaming.py   # Streaming & offline decode loops; rich terminal output
 ├── audio.py       # Microphone capture and WAV file reading generators
@@ -345,10 +386,11 @@ sherox/
 | `sid.py` | Parses arguments, builds speaker database from reference WAVs, runs mic/WAV identification |
 | `segment.py` | VAD-based segmentation of audio into timestamped speech clips |
 | `tts.py` | Text-to-speech synthesis and playback |
+| `wake.py` | Wake-word detection from microphone or WAV using custom `livekit-wakeword` ONNX models |
 | `asr_engine.py` | Builds `OnlineRecognizer`, `OfflineRecognizer`, `VoiceActivityDetector`, `OfflineSpeakerDiarization`, and `SpeakerEmbeddingExtractor` |
 | `streaming.py` | Feeds audio chunks to the recognizer; runs ASR and diarization concurrently; renders colour-coded output via `rich` |
 | `audio.py` | Provides two generators: `mic_stream()` for live capture, `read_wav()` for file input |
-| `config.py` | Holds runtime parameters (`Config`, `SidConfig`, `SegmentConfig`, `TtsConfig`) |
+| `config.py` | Holds runtime parameters (`Config`, `SidConfig`, `SegmentConfig`, `TtsConfig`, `WakeConfig`) |
 
 ## Endpoint Detection (Online Mode)
 

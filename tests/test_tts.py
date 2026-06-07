@@ -51,6 +51,7 @@ class TestParseArgs:
         assert args.speed == 1.0
         assert args.output == "output.wav"
         assert args.play is False
+        assert args.no_save is False
         assert args.threads == 4
 
     def test_custom_lang(self):
@@ -73,10 +74,20 @@ class TestParseArgs:
             args = tts_module.parse_args()
         assert args.play is True
 
+    def test_no_save_flag(self):
+        with patch("sys.argv", ["sherox.tts", "--play", "--no-save"]):
+            args = tts_module.parse_args()
+        assert args.no_save is True
+
     def test_custom_output(self):
         with patch("sys.argv", ["sherox.tts", "--output", "out.wav"]):
             args = tts_module.parse_args()
         assert args.output == "out.wav"
+
+    def test_output_none(self):
+        with patch("sys.argv", ["sherox.tts", "--play", "--output", "none"]):
+            args = tts_module.parse_args()
+        assert args.output == "none"
 
     def test_custom_threads(self):
         with patch("sys.argv", ["sherox.tts", "--threads", "8"]):
@@ -95,7 +106,14 @@ class TestParseArgs:
 
 class TestValidateRuntimeArgs:
     def _args(self, **kwargs):
-        defaults = dict(speaker_id=0, speed=1.0, threads=4)
+        defaults = dict(
+            speaker_id=0,
+            speed=1.0,
+            threads=4,
+            play=False,
+            no_save=False,
+            output="output.wav",
+        )
         defaults.update(kwargs)
         return argparse.Namespace(**defaults)
 
@@ -117,6 +135,20 @@ class TestValidateRuntimeArgs:
     def test_zero_threads_exits(self):
         with pytest.raises(ConfigError):
             tts_module._validate_runtime_args(self._args(threads=0))
+
+    def test_no_save_without_play_exits(self):
+        with pytest.raises(ConfigError):
+            tts_module._validate_runtime_args(self._args(no_save=True))
+
+    def test_output_none_without_play_exits(self):
+        with pytest.raises(ConfigError):
+            tts_module._validate_runtime_args(self._args(output="none"))
+
+    def test_no_save_with_play_passes(self):
+        tts_module._validate_runtime_args(self._args(play=True, no_save=True))
+
+    def test_output_dash_with_play_passes(self):
+        tts_module._validate_runtime_args(self._args(play=True, output="-"))
 
 
 # ---------------------------------------------------------------------------
@@ -444,6 +476,20 @@ class TestSynthesiseToFile:
         assert result[1] == 22050
         mock_sf.write.assert_called_once()
 
+    def test_sherpa_no_save_skips_write(self):
+        mock_audio = MagicMock()
+        mock_audio.samples = [0.1, 0.2]
+        mock_audio.sample_rate = 22050
+        mock_tts = MagicMock()
+        mock_tts.generate.return_value = mock_audio
+        mock_sf = MagicMock()
+        cfg = TtsConfig(output="out.wav", play=True, no_save=True)
+        with patch.object(tts_module, "_require_soundfile", return_value=mock_sf):
+            samples, sample_rate = tts_module.synthesise_to_file(mock_tts, "Hello", cfg)
+        assert sample_rate == 22050
+        assert samples.dtype == np.float32
+        mock_sf.write.assert_not_called()
+
     def test_writes_piper_plus_output(self):
         mock_engine = MagicMock()
         tts = SimpleNamespace(backend="piper_plus", model=mock_engine)
@@ -470,6 +516,22 @@ class TestSynthesiseToFile:
         assert samples.dtype == np.float32
         mock_engine.synthesize.assert_called_once()
         mock_sf.read.assert_called_once_with("out.wav", dtype="float32")
+
+    def test_piper_plus_no_save_uses_memory_buffer_for_playback(self):
+        mock_engine = MagicMock()
+        tts = SimpleNamespace(backend="piper_plus", model=mock_engine)
+        mock_wav = MagicMock()
+        mock_sf = MagicMock()
+        mock_sf.read.return_value = (np.array([0.1, 0.2], dtype=np.float32), 22050)
+        cfg = TtsConfig(language="jpn", output="out.wav", play=True, no_save=True)
+        with patch("wave.open") as mock_wave_open, \
+             patch.object(tts_module, "_require_soundfile", return_value=mock_sf):
+            mock_wave_open.return_value.__enter__.return_value = mock_wav
+            samples, sample_rate = tts_module.synthesise_to_file(tts, "こんにちは", cfg)
+        assert sample_rate == 22050
+        assert samples.dtype == np.float32
+        assert isinstance(mock_wave_open.call_args.args[0], tts_module.io.BytesIO)
+        assert isinstance(mock_sf.read.call_args.args[0], tts_module.io.BytesIO)
 
     def test_exits_for_unsupported_backend(self):
         tts = SimpleNamespace(backend="unsupported_backend")
@@ -581,6 +643,43 @@ class TestMain:
              patch.object(tts_module, "_require_soundfile", return_value=mock_sf):
             tts_module.main()
         mock_play.assert_called_once()
+
+    def test_main_with_play_no_save(self):
+        mock_sf = MagicMock()
+        with patch("sys.argv", ["sherox.tts", "--text", "Hi", "--play", "--no-save"]), \
+             patch.object(tts_module, "build_tts", return_value=self._mock_tts()), \
+             patch.object(tts_module, "_play") as mock_play, \
+             patch.object(tts_module, "_require_soundfile", return_value=mock_sf):
+            tts_module.main()
+        mock_play.assert_called_once()
+        mock_sf.write.assert_not_called()
+
+    def test_main_with_output_none_sets_no_save(self):
+        mock_sf = MagicMock()
+        with patch("sys.argv", ["sherox.tts", "--text", "Hi", "--play", "--output", "none"]), \
+             patch.object(tts_module, "build_tts", return_value=self._mock_tts()) as mock_build, \
+             patch.object(tts_module, "_play"), \
+             patch.object(tts_module, "_require_soundfile", return_value=mock_sf):
+            tts_module.main()
+        cfg = mock_build.call_args[0][0]
+        assert cfg.no_save is True
+        mock_sf.write.assert_not_called()
+
+    def test_main_with_output_dash_sets_no_save(self):
+        mock_sf = MagicMock()
+        with patch("sys.argv", ["sherox.tts", "--text", "Hi", "--play", "--output", "-"]), \
+             patch.object(tts_module, "build_tts", return_value=self._mock_tts()) as mock_build, \
+             patch.object(tts_module, "_play"), \
+             patch.object(tts_module, "_require_soundfile", return_value=mock_sf):
+            tts_module.main()
+        cfg = mock_build.call_args[0][0]
+        assert cfg.no_save is True
+        mock_sf.write.assert_not_called()
+
+    def test_main_no_save_without_play_exits(self):
+        with patch("sys.argv", ["sherox.tts", "--text", "Hi", "--no-save"]), \
+             pytest.raises(SystemExit):
+            tts_module.main()
 
     def test_main_exits_when_playback_requested_but_no_samples(self, tmp_path):
         out = str(tmp_path / "out.wav")
@@ -807,6 +906,20 @@ class TestSynthesiseToFileSarashina:
         with patch.object(tts_module, "_require_soundfile", return_value=mock_sf):
             samples, sr = tts_module.synthesise_to_file(tts, "テスト", cfg)
         assert samples.dtype == np.float32
+
+    def test_no_save_skips_write(self):
+        try:
+            import torch
+        except ImportError:
+            pytest.skip("torch not installed")
+        tts = self._make_tts()
+        mock_sf = MagicMock()
+        cfg = TtsConfig(language="jpn-sarashina", output="out.wav", play=True, no_save=True)
+        with patch.object(tts_module, "_require_soundfile", return_value=mock_sf):
+            samples, sr = tts_module.synthesise_to_file(tts, "テスト", cfg)
+        assert sr == 24000
+        assert samples.dtype == np.float32
+        mock_sf.write.assert_not_called()
 
 
 # ---------------------------------------------------------------------------

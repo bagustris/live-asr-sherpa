@@ -72,7 +72,7 @@ class TestParseArgs:
         assert args.chunk_size == 0.1
         assert args.threads == 4
         assert args.provider == "cpu"
-        assert args.listening is False
+        assert args.no_mic_level is False
 
     def test_custom_size(self):
         with patch("sys.argv", ["sherox.lid", "--wav", "a.wav", "--size", "base"]):

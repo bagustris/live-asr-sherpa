@@ -2,7 +2,7 @@
 
 Each module owns its own dataclass; CLI arguments override defaults at runtime.
 """
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 # ── ASR ──────────────────────────────────────────────────────────────────────
@@ -35,7 +35,7 @@ class Config:
     vad_min_speech_duration: float = 0.25
 
     language: str = "en"
-    show_mic_level: bool = False
+    show_mic_level: bool = True
 
     # Speaker diarization
     diarization: bool = False
@@ -80,7 +80,7 @@ class SegmentConfig:
     chunk_size: float = 0.1             # seconds
 
     show_timestamps: bool = True        # print [start – end] per segment
-    show_mic_level: bool = False
+    show_mic_level: bool = True
     output_dir: str = ""                # save segment wav clips here if set
 
 
@@ -128,7 +128,7 @@ class LidConfig:
     chunk_size: float = 0.1         # seconds per mic chunk
     vad_model: str = ""             # resolved path to silero_vad.onnx (mic mode)
     wav: str = ""                   # path to input WAV file (--wav mode)
-    show_mic_level: bool = False
+    show_mic_level: bool = True
 
 
 # ── TTS ───────────────────────────────────────────────────────────────────────
@@ -149,11 +149,14 @@ class TtsConfig:
     speed: float = 1.0
     num_threads: int = 4
 
-    # Output file path.  Ignored when play=True and no explicit output given.
+    # Output file path.  Use "none" or "-" with play=True to disable saving.
     output: str = "output.wav"
 
     # Play audio through the default output device instead of (or in addition to) saving.
     play: bool = False
+
+    # Do not write a WAV file. Requires play=True.
+    no_save: bool = False
 
     # Sarashina backend — zero-shot voice cloning parameters.
     audio_prompt: str = ""       # Path to reference WAV file (empty = default voice)
@@ -197,6 +200,43 @@ class KwsConfig:
     capture_rate: int = 16000
 
     max_active_paths: int = 4   # beam width for the keyword spotter
+
+    # WAV input path (empty means microphone mode).
+    wav: str = ""
+
+    show_mic_level: bool = True
+
+
+# ── Wake ──────────────────────────────────────────────────────────────────────
+
+@dataclass
+class WakeConfig:
+    """Configuration for the wake-word module (sherox.wake).
+
+    Built on top of ``livekit-wakeword``.  Supply one or more ONNX model
+    paths in ``model_paths`` — each path becomes an independent wake-word
+    detector.  Models are typically produced via the ``livekit-wakeword``
+    training pipeline (see https://github.com/livekit/livekit-wakeword).
+
+    Example::
+
+        cfg = WakeConfig(
+            model_paths=["models/hey_livekit.onnx"],
+            threshold=0.5,
+        )
+    """
+
+    # Paths to one or more ONNX wake-word models.
+    model_paths: list[str] = field(default_factory=list)
+
+    # Detection threshold (0.0 - 1.0; higher = fewer false positives).
+    threshold: float = 0.5
+
+    # Minimum seconds between detections of the same wake word.
+    debounce: float = 2.0
+
+    # Audio chunk duration per inference call (seconds).
+    chunk_size: float = 2.0
 
     # WAV input path (empty means microphone mode).
     wav: str = ""

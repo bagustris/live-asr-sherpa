@@ -97,6 +97,16 @@ class TestParseArgs:
             args = kws_module.parse_args()
         assert args.model_dir == "models/custom"
 
+    def test_default_no_mic_level_is_false(self):
+        with patch("sys.argv", ["sherox.kws", "--mic", "--keywords", "hey"]):
+            args = kws_module.parse_args()
+        assert args.no_mic_level is False
+
+    def test_no_mic_level_flag(self):
+        with patch("sys.argv", ["sherox.kws", "--mic", "--keywords", "hey", "--no-mic-level"]):
+            args = kws_module.parse_args()
+        assert args.no_mic_level is True
+
 
 # ---------------------------------------------------------------------------
 # _validate_model

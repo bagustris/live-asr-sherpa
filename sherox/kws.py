@@ -43,7 +43,7 @@ import time
 from pathlib import Path
 
 from .config import KwsConfig
-from .utils import _error, _info, download_file, run_cli as _run_cli, safe_tar_members as _safe_tar_members
+from .utils import _error, _info, download_file, render_mic_level, run_cli as _run_cli, safe_tar_members as _safe_tar_members
 
 # ── Model constants ───────────────────────────────────────────────────────────
 
@@ -206,6 +206,9 @@ def run_mic(spotter, cfg: KwsConfig) -> None:
                         samples,
                     ).astype(np.float32)
 
+                if cfg.show_mic_level:
+                    render_mic_level(samples)
+
                 stream.accept_waveform(cfg.sample_rate, samples)
 
                 while spotter.is_ready(stream):
@@ -216,6 +219,8 @@ def run_mic(spotter, cfg: KwsConfig) -> None:
                     elapsed = time.time() - start_time
                     h, rem = divmod(int(elapsed), 3600)
                     m, s = divmod(rem, 60)
+                    if cfg.show_mic_level:
+                        sys.stdout.write(f"\r{' ' * 54}\r")
                     print(f"[{h:02d}:{m:02d}:{s:02d}] keyword: {result}")
                     # Reset stream so the same keyword can trigger again.
                     spotter.reset_stream(stream)
@@ -327,6 +332,11 @@ def parse_args() -> argparse.Namespace:
         "--max-active-paths", type=int, default=4,
         help="Beam width for keyword search (higher = more sensitive, slower)",
     )
+    parser.add_argument(
+        "--no-mic-level",
+        action="store_true",
+        help="Suppress the live RMS energy bar during microphone capture",
+    )
     return parser.parse_args()
 
 
@@ -347,6 +357,7 @@ def _main_impl() -> None:
         chunk_size=args.chunk_size,
         num_threads=args.threads,
         max_active_paths=args.max_active_paths,
+        show_mic_level=not args.no_mic_level,
     )
     if args.wav:
         cfg.wav = args.wav  # type: ignore[attr-defined]

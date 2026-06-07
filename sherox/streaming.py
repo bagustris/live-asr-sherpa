@@ -13,6 +13,8 @@ from rich.console import Console
 from rich.text import Text
 import shutil
 
+from .utils import render_mic_level as _render_mic_level
+
 # ── Rich console (no markup auto-escaping needed; we build Text objects) ────
 _console = Console(highlight=False, markup=False)
 
@@ -402,10 +404,7 @@ def run_streaming(
             text = recognizer.get_result(stream).strip()
 
             if show_mic_level and not text:
-                energy = float(np.sqrt(np.mean(chunk ** 2)))
-                bar = "█" * min(int(energy * 500), 40)
-                sys.stdout.write(f"\r{_PREFIX}mic: {bar:<40} {energy:.4f}")
-                sys.stdout.flush()
+                _render_mic_level(chunk, _PREFIX)
 
             if recognizer.is_endpoint(stream):
                 next_elapsed = elapsed_s + chunk_s
@@ -573,10 +572,7 @@ def run_offline_vad_streaming(
             vad.accept_waveform(chunk)
 
             if show_mic_level:
-                energy = float(np.sqrt(np.mean(chunk ** 2)))
-                bar = "█" * min(int(energy * 500), 40)
-                sys.stdout.write(f"\r{_PREFIX}mic: {bar:<40} {energy:.4f}")
-                sys.stdout.flush()
+                _render_mic_level(chunk, _PREFIX)
 
             if progress_callback is not None:
                 progress_callback(elapsed_s)

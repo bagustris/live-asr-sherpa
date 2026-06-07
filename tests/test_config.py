@@ -55,8 +55,8 @@ def test_default_language():
     assert Config().language == "en"
 
 
-def test_default_show_mic_level_is_false():
-    assert Config().show_mic_level is False
+def test_default_show_mic_level_is_true():
+    assert Config().show_mic_level is True
 
 
 def test_custom_values():
@@ -181,6 +181,10 @@ def test_tts_default_play_is_false():
     assert TtsConfig().play is False
 
 
+def test_tts_default_no_save_is_false():
+    assert TtsConfig().no_save is False
+
+
 def test_tts_default_num_threads():
     assert TtsConfig().num_threads == 4
 
@@ -196,6 +200,7 @@ def test_tts_custom_values():
         speed=0.8,
         output="out.wav",
         play=True,
+        no_save=True,
         num_threads=2,
     )
     assert cfg.language == "jpn"
@@ -203,10 +208,14 @@ def test_tts_custom_values():
     assert cfg.speed == 0.8
     assert cfg.output == "out.wav"
     assert cfg.play is True
+    assert cfg.no_save is True
     assert cfg.num_threads == 2
 
 
 def test_tts_has_expected_fields():
     field_names = {f.name for f in fields(TtsConfig)}
-    expected = {"model_dir", "language", "speaker_id", "speed", "output", "play", "num_threads"}
+    expected = {
+        "model_dir", "language", "speaker_id", "speed", "output", "play",
+        "no_save", "num_threads",
+    }
     assert expected.issubset(field_names)

@@ -3,3 +3,4 @@ sounddevice>=0.5.5
 soundfile>=0.13.1
 numpy>=2.2.6
 rich>=13.0.0
+scipy>=1.10.0

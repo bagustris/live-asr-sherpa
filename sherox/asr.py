@@ -266,9 +266,9 @@ def parse_args() -> argparse.Namespace:
         help="Language code for Whisper and SenseVoice models (e.g. en, zh, ja)",
     )
     parser.add_argument(
-        "--listening",
+        "--no-mic-level",
         action="store_true",
-        help="Show a live RMS energy bar for microphone level calibration",
+        help="Suppress the live RMS energy bar during microphone capture",
     )
     parser.add_argument(
         "--diarization",
@@ -963,7 +963,7 @@ def _main_impl() -> None:
         vad_type=args.vad_type,
         ten_vad_model=args.ten_vad_model,
         language=args.language,
-        show_mic_level=args.listening,
+        show_mic_level=not args.no_mic_level,
         diarization=args.diarization,
         diarization_seg_model=args.diarization_seg_model,
         diarization_emb_model=args.diarization_emb_model,

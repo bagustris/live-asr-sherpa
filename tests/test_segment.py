@@ -49,7 +49,7 @@ class TestParseArgs:
         assert args.capture_rate == 16000
         assert args.threads == 4
         assert args.output_dir == ""
-        assert args.listening is False
+        assert args.no_mic_level is False
 
     def test_ten_vad_mode(self):
         with patch("sys.argv", ["sherox.segment", "--mic", "--vad-model", "ten-vad"]):
@@ -71,10 +71,10 @@ class TestParseArgs:
             args = seg_module.parse_args()
         assert args.output_dir == "/tmp/segs"
 
-    def test_listening_flag(self):
-        with patch("sys.argv", ["sherox.segment", "--mic", "--listening"]):
+    def test_no_mic_level_flag(self):
+        with patch("sys.argv", ["sherox.segment", "--mic", "--no-mic-level"]):
             args = seg_module.parse_args()
-        assert args.listening is True
+        assert args.no_mic_level is True
 
     def test_invalid_vad_type_exits(self):
         with patch("sys.argv", ["sherox.segment", "--mic", "--vad-model", "invalid"]):

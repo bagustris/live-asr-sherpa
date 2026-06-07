@@ -19,6 +19,7 @@ _SUBCOMMANDS = {
     "lid":          "Language identification",
     "segment":      "VAD-based audio segmentation",
     "kws":          "Keyword / wake-word spotting",
+    "wake":         "Wake-word detection (livekit-wakeword, custom ONNX)",
     "server":       "HTTP/WebSocket ASR server",
     "list-models":  "Show all auto-downloadable models with sizes and languages",
 }
