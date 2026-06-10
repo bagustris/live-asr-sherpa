@@ -10,6 +10,7 @@ dependencies = [
     "numpy>=2.2.6",
     "rich>=13.0.0",
     "scipy>=1.10.0",
+    "audiokit",
 ]
 
 [build-system]
@@ -82,3 +83,6 @@ explicit = true
 [tool.uv.sources]
 torch = { index = "pytorch-cpu" }
 torchaudio = { index = "pytorch-cpu" }
+# Shared audio plumbing (resampling, safe tar extraction) lives in the local
+# sibling package audiokit; resolved via path for local development.
+audiokit = { path = "../audiokit", editable = true }

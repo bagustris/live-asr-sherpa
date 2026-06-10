@@ -1,10 +1,10 @@
 """Shared utilities for the sherox package."""
 import sys
-import tarfile
 import urllib.request
 from pathlib import Path
 from typing import Callable
 
+from audiokit import safe_tar_members  # noqa: F401  re-exported; shared impl
 from rich.console import Console
 
 from . import SherpaError
@@ -95,36 +95,6 @@ def download_file(url: str, dest: Path | str) -> None:
     except Exception as exc:  # noqa: BLE001
         _error(f"Download failed: {exc}")
     print()
-
-
-def safe_tar_members(tf: tarfile.TarFile, dest_dir: Path):
-    """Yield only safe members for extraction into ``dest_dir``.
-
-    Emulates the safety guarantees of ``filter="data"`` on Python < 3.12:
-    - prevent path traversal (no member may escape ``dest_dir``);
-    - skip device/special files;
-    - skip symlinks and hardlinks whose target escapes ``dest_dir``.
-    """
-    dest_resolved = dest_dir.resolve()
-
-    def _escapes(path: Path) -> bool:
-        try:
-            path.resolve().relative_to(dest_resolved)
-        except ValueError:
-            return True
-        return False
-
-    for member in tf.getmembers():
-        if member.isdev():
-            continue
-        if _escapes(dest_dir / member.name):
-            continue
-        # For links, also reject targets that resolve outside dest_dir.
-        if member.issym() or member.islnk():
-            link_base = (dest_dir / member.name).parent
-            if _escapes(link_base / member.linkname):
-                continue
-        yield member
 
 
 def run_cli(impl: Callable[[], None]) -> None:
