@@ -274,6 +274,9 @@ See [TTS_MODEL.md](TTS_MODEL.md) for the supported built-in TTS languages, backe
 --chunk-size FLOAT       Audio chunk duration per decode (default: 0.1)
 --threads INT            CPU thread count for ONNX runtime (default: 4)
 --max-active-paths INT   Beam width for keyword search (default: 4)
+--keywords-score FLOAT   Boost score for keyword tokens (default: 1.0)
+--keywords-threshold FLOAT
+                         Trigger threshold; higher = stricter (default: 0.25)
 ```
 
 ### `sherox.wake`

@@ -199,12 +199,16 @@ class KwsConfig:
     # Microphone capture rate (may differ from model sample_rate).
     capture_rate: int = 16000
 
-    max_active_paths: int = 4   # beam width for the keyword spotter
+    max_active_paths: int = 4    # beam width for the keyword spotter
+    keywords_score: float = 1.0  # boost score for each keyword token
+    keywords_threshold: float = 0.25  # higher = harder to trigger
+    num_trailing_blanks: int = 1  # blank tokens required after keyword before firing
 
     # WAV input path (empty means microphone mode).
     wav: str = ""
 
     show_mic_level: bool = True
+    verbose: bool = False
 
 
 # ── Wake ──────────────────────────────────────────────────────────────────────

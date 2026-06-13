@@ -83,6 +83,42 @@ class TestParseArgs:
             args = kws_module.parse_args()
         assert args.max_active_paths == 4
 
+    def test_default_num_trailing_blanks(self):
+        with patch("sys.argv", ["sherox.kws", "--mic", "--keywords", "hey"]):
+            args = kws_module.parse_args()
+        assert args.num_trailing_blanks == 1
+
+    def test_custom_num_trailing_blanks(self):
+        with patch("sys.argv", [
+            "sherox.kws", "--mic", "--keywords", "hey", "--num-trailing-blanks", "3"
+        ]):
+            args = kws_module.parse_args()
+        assert args.num_trailing_blanks == 3
+
+    def test_default_keywords_score(self):
+        with patch("sys.argv", ["sherox.kws", "--mic", "--keywords", "hey"]):
+            args = kws_module.parse_args()
+        assert args.keywords_score == 1.0
+
+    def test_default_keywords_threshold(self):
+        with patch("sys.argv", ["sherox.kws", "--mic", "--keywords", "hey"]):
+            args = kws_module.parse_args()
+        assert args.keywords_threshold == 0.25
+
+    def test_custom_keywords_score(self):
+        with patch("sys.argv", [
+            "sherox.kws", "--mic", "--keywords", "hey", "--keywords-score", "2.5"
+        ]):
+            args = kws_module.parse_args()
+        assert args.keywords_score == 2.5
+
+    def test_custom_keywords_threshold(self):
+        with patch("sys.argv", [
+            "sherox.kws", "--mic", "--keywords", "hey", "--keywords-threshold", "0.6"
+        ]):
+            args = kws_module.parse_args()
+        assert args.keywords_threshold == 0.6
+
     def test_custom_capture_rate(self):
         with patch("sys.argv", [
             "sherox.kws", "--mic", "--keywords", "hey", "--capture-rate", "48000"
@@ -106,6 +142,16 @@ class TestParseArgs:
         with patch("sys.argv", ["sherox.kws", "--mic", "--keywords", "hey", "--no-mic-level"]):
             args = kws_module.parse_args()
         assert args.no_mic_level is True
+
+    def test_default_verbose_is_false(self):
+        with patch("sys.argv", ["sherox.kws", "--mic", "--keywords", "hey"]):
+            args = kws_module.parse_args()
+        assert args.verbose is False
+
+    def test_verbose_flag(self):
+        with patch("sys.argv", ["sherox.kws", "--mic", "--keywords", "hey", "--verbose"]):
+            args = kws_module.parse_args()
+        assert args.verbose is True
 
 
 # ---------------------------------------------------------------------------
@@ -159,9 +205,9 @@ class TestResolveKeywords:
         cfg = KwsConfig(keywords_str="hey sherpa, ok google")
         path = kws_module._resolve_keywords(cfg, tmp_path)
         try:
-            content = Path(path).read_text()
-            assert "hey sherpa" in content
-            assert "ok google" in content
+            content = Path(path).read_text().upper()
+            assert "HEY SHERPA" in content
+            assert "OK GOOGLE" in content
         finally:
             Path(path).unlink(missing_ok=True)
 
@@ -188,8 +234,8 @@ class TestResolveKeywords:
         cfg = KwsConfig(keywords_str="from string", keywords_file=str(kw_file))
         path = kws_module._resolve_keywords(cfg, tmp_path)
         try:
-            content = Path(path).read_text()
-            assert "from string" in content
+            content = Path(path).read_text().upper()
+            assert "FROM STRING" in content
         finally:
             Path(path).unlink(missing_ok=True)
 
@@ -215,16 +261,44 @@ class TestKwsConfig:
         assert cfg.keywords_file == ""
         assert cfg.model_dir == ""
         assert cfg.wav == ""
+        assert cfg.keywords_score == 1.0
+        assert cfg.keywords_threshold == 0.25
+        assert cfg.num_trailing_blanks == 1
+        assert cfg.verbose is False
 
     def test_custom_values(self):
         cfg = KwsConfig(
             keywords_str="hey sherpa",
             sample_rate=8000,
             num_threads=2,
+            keywords_score=2.0,
+            keywords_threshold=0.4,
         )
         assert cfg.keywords_str == "hey sherpa"
         assert cfg.sample_rate == 8000
         assert cfg.num_threads == 2
+        assert cfg.keywords_score == 2.0
+        assert cfg.keywords_threshold == 0.4
+
+
+# ---------------------------------------------------------------------------
+# _build_spotter
+# ---------------------------------------------------------------------------
+
+class TestBuildSpotter:
+    def test_passes_keyword_score_and_threshold(self, tmp_path):
+        for name in ["tokens.txt", "encoder.onnx", "decoder.onnx", "joiner.onnx"]:
+            (tmp_path / name).touch()
+        sherpa = MagicMock()
+        cfg = KwsConfig(keywords_score=2.0, keywords_threshold=0.4)
+
+        with patch.object(kws_module, "_require_sherpa_onnx", return_value=sherpa):
+            kws_module._build_spotter(tmp_path, "keywords.txt", cfg)
+
+        sherpa.KeywordSpotter.assert_called_once()
+        kwargs = sherpa.KeywordSpotter.call_args.kwargs
+        assert kwargs["keywords_score"] == 2.0
+        assert kwargs["keywords_threshold"] == 0.4
 
 
 # ---------------------------------------------------------------------------

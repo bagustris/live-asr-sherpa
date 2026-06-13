@@ -134,12 +134,31 @@ def _resolve_keywords(cfg: KwsConfig, model_dir: Path) -> str:
             _error("--keywords produced an empty keyword list.")
 
         bpe_model = model_dir / "bpe.model"
+        sp = None
         if bpe_model.is_file():
             import sentencepiece as spm  # noqa: PLC0415
             sp = spm.SentencePieceProcessor(model_file=str(bpe_model))
-            lines = [" ".join(sp.encode(w.upper(), out_type=str)) for w in words]
-        else:
-            lines = words
+
+        lines = []
+        for w in words:
+            # Separate keyword from potential :score and #threshold suffixes.
+            # sherpa-onnx expects: TOKENS :score #threshold
+            parts = w.split()
+            clean_parts = []
+            suffixes = []
+            for p in parts:
+                if p.startswith(":") or p.startswith("#"):
+                    suffixes.append(p)
+                else:
+                    clean_parts.append(p)
+            
+            clean_w = " ".join(clean_parts).upper()
+            if sp:
+                encoded = " ".join(sp.encode(clean_w, out_type=str))
+            else:
+                encoded = clean_w
+            
+            lines.append(f"{encoded} {' '.join(suffixes)}".strip())
 
         with tempfile.NamedTemporaryFile(
             mode="w", suffix=".txt", delete=False, encoding="utf-8"
@@ -169,6 +188,9 @@ def _build_spotter(model_dir: Path, keywords_file_path: str, cfg: KwsConfig):
         num_threads=cfg.num_threads,
         sample_rate=cfg.sample_rate,
         max_active_paths=cfg.max_active_paths,
+        keywords_score=cfg.keywords_score,
+        keywords_threshold=cfg.keywords_threshold,
+        num_trailing_blanks=cfg.num_trailing_blanks,
     )
 
 
@@ -214,14 +236,25 @@ def run_mic(spotter, cfg: KwsConfig) -> None:
                 while spotter.is_ready(stream):
                     spotter.decode_stream(stream)
 
-                result = spotter.get_result(stream)
-                if result:
+                # Use the underlying keyword_spotter to access the score attribute
+                # which is lost in the high-level wrapper's get_result().
+                result = spotter.keyword_spotter.get_result(stream)
+                if result.keyword:
                     elapsed = time.time() - start_time
                     h, rem = divmod(int(elapsed), 3600)
                     m, s = divmod(rem, 60)
                     if cfg.show_mic_level:
                         sys.stdout.write(f"\r{' ' * 54}\r")
-                    print(f"[{h:02d}:{m:02d}:{s:02d}] keyword: {result}")
+                    
+                    keyword = result.keyword.strip()
+                    if cfg.verbose:
+                        token_str = " ".join(result.tokens)
+                        print(
+                            f"[{h:02d}:{m:02d}:{s:02d}] keyword: {keyword}"
+                            f"  (tokens=[{token_str}])"
+                        )
+                    else:
+                        print(f"[{h:02d}:{m:02d}:{s:02d}] keyword: {keyword}")
                     # Reset stream so the same keyword can trigger again.
                     spotter.reset_stream(stream)
 
@@ -264,13 +297,23 @@ def run_wav(spotter, cfg: KwsConfig) -> None:
         while spotter.is_ready(stream):
             spotter.decode_stream(stream)
 
-        result = spotter.get_result(stream)
-        if result:
+        # Use the underlying keyword_spotter to access the score attribute.
+        result = spotter.keyword_spotter.get_result(stream)
+        if result.keyword:
             timestamp = offset / cfg.sample_rate
             h, rem = divmod(int(timestamp), 3600)
             m, s = divmod(rem, 60)
-            print(f"[{h:02d}:{m:02d}:{s:02d}] keyword: {result}")
-            hits.append(result)
+            
+            keyword = result.keyword.strip()
+            if cfg.verbose:
+                token_str = " ".join(result.tokens)
+                print(
+                    f"[{h:02d}:{m:02d}:{s:02d}] keyword: {keyword}"
+                    f"  (tokens=[{token_str}])"
+                )
+            else:
+                print(f"[{h:02d}:{m:02d}:{s:02d}] keyword: {keyword}")
+            hits.append(keyword)
             spotter.reset_stream(stream)
 
         offset += chunk
@@ -333,9 +376,29 @@ def parse_args() -> argparse.Namespace:
         help="Beam width for keyword search (higher = more sensitive, slower)",
     )
     parser.add_argument(
+        "--keywords-score", type=float, default=KwsConfig.keywords_score,
+        help="Boost score for each keyword token (higher = more sensitive)",
+    )
+    parser.add_argument(
+        "--keywords-threshold", type=float, default=KwsConfig.keywords_threshold,
+        help="Trigger threshold for keywords (higher = fewer false positives)",
+    )
+    parser.add_argument(
+        "--num-trailing-blanks", type=int, default=KwsConfig.num_trailing_blanks,
+        help=(
+            "Blank tokens required after keyword tokens before firing. "
+            "Increase to 2–4 to improve detection rate of short/common words"
+        ),
+    )
+    parser.add_argument(
         "--no-mic-level",
         action="store_true",
         help="Suppress the live RMS energy bar during microphone capture",
+    )
+    parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help="Print BPE tokens, score, and threshold alongside each keyword hit",
     )
     return parser.parse_args()
 
@@ -357,7 +420,11 @@ def _main_impl() -> None:
         chunk_size=args.chunk_size,
         num_threads=args.threads,
         max_active_paths=args.max_active_paths,
+        keywords_score=args.keywords_score,
+        keywords_threshold=args.keywords_threshold,
+        num_trailing_blanks=args.num_trailing_blanks,
         show_mic_level=not args.no_mic_level,
+        verbose=args.verbose,
     )
     if args.wav:
         cfg.wav = args.wav  # type: ignore[attr-defined]
@@ -367,6 +434,13 @@ def _main_impl() -> None:
 
     try:
         spotter = _build_spotter(model_dir, keywords_file_path, cfg)
+        _info(
+            "KWS settings: "
+            f"keywords_score={cfg.keywords_score}, "
+            f"keywords_threshold={cfg.keywords_threshold}, "
+            f"max_active_paths={cfg.max_active_paths}, "
+            f"num_trailing_blanks={cfg.num_trailing_blanks}"
+        )
 
         if args.mic:
             run_mic(spotter, cfg)
