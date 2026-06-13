@@ -41,14 +41,19 @@ Supported tasks:
 ### 1. Install
 
 ```bash
-pip install -e .
+# activate venv 
+source .venv/bin/activate 
+
+# install audiokit 
+uv pip install git+https://github.com/bagustris/audiokit  
+uv pip install -e .
 ```
 
 > **Note:** This installs all dependencies and registers the `sherox`, `sherox.asr`, `sherox.sid`, `sherox.segment`, `sherox.tts`, `sherox.kws`, `sherox.wake`, `sherox.lid`, `sherox.server`, and `sherox.models` CLI commands.
 >
 > Japanese TTS uses the `piper-plus` backend rather than `sherpa-onnx`. Install it with:
 > ```bash
-> pip install -e '.[tts-ja]'
+> uv pip install -e '.[tts-ja]'
 > ```
 
 ### 2. Run ASR
