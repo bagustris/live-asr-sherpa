@@ -8,14 +8,16 @@ Tests are in `tests/` and mirror the package by feature, for example `tests/test
 ## Build, Test, and Development Commands
 Install runtime dependencies with:
 
-```bash
-pip install -r requirements.txt
+```bash  
+# activate enviroment 
+source .venv/bin/activave  
+uv pip install -r requirements.txt
 ```
 
 Install a contributor setup with tests and coverage extras:
 
 ```bash
-pip install -e '.[dev]'
+uv pip install -e '.[dev]'
 ```
 
 Run the main CLI locally with the packaged entry points:

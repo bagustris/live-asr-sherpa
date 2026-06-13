@@ -10,5 +10,6 @@ build/
 venv/
 *.onnx
 models/
-.spectory
+.specstory
 .*
+.vscode 
