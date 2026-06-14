@@ -64,6 +64,11 @@ class TestParseArgs:
             args = tts_module.parse_args()
         assert args.lang == "jp"
 
+    def test_custom_lang_kitten(self):
+        with patch("sys.argv", ["sherox.tts", "--lang", "eng-kitten"]):
+            args = tts_module.parse_args()
+        assert args.lang == "eng-kitten"
+
     def test_custom_speed(self):
         with patch("sys.argv", ["sherox.tts", "--speed", "0.8"]):
             args = tts_module.parse_args()
@@ -1077,3 +1082,142 @@ class TestChineseTts:
         with patch.dict("sys.modules", {"sherpa_onnx": mock_sherpa}):
             result = tts_module.build_tts(cfg, tmp_path)
         assert result.backend == "sherpa_onnx"
+
+
+# ---------------------------------------------------------------------------
+# Supertonic-3 TTS
+# ---------------------------------------------------------------------------
+
+class TestSupertonicTts:
+    """Tests for the Supertonic-3 multi-language TTS model."""
+
+    SUPERTONIC_LANGS = [
+        "kor", "ara", "bul", "ces", "dan", "ell", "est", "fin",
+        "hin", "hrv", "hun", "ita", "lit", "lav", "nld", "pol",
+        "por", "ron", "rus", "slk", "slv", "swe", "tur", "ukr", "vie",
+    ]
+
+    def test_supertonic_base_metadata(self):
+        meta = tts_module._SUPERTONIC_BASE
+        assert meta["backend"] == "supertonic"
+        assert meta["sample_rate"] == 24000
+        assert "duration_predictor" in meta["files"]
+        assert "text_encoder" in meta["files"]
+        assert "vocoder" in meta["files"]
+
+    def test_all_supertonic_languages_in_registry(self):
+        for code in self.SUPERTONIC_LANGS:
+            assert code in tts_module._TTS_MODELS, f"{code} missing from _TTS_MODELS"
+            meta = tts_module._TTS_MODELS[code]
+            assert meta["backend"] == "supertonic", f"{code} should use supertonic backend"
+
+    def test_supertonic_languages_have_lang_code(self):
+        for code in self.SUPERTONIC_LANGS:
+            meta = tts_module._TTS_MODELS[code]
+            assert "lang_code" in meta, f"{code} missing lang_code"
+            assert len(meta["lang_code"]) == 2, f"{code} lang_code should be 2-letter"
+
+    def test_supertonic_languages_share_url(self):
+        urls = {tts_module._TTS_MODELS[c]["url"] for c in self.SUPERTONIC_LANGS}
+        assert len(urls) == 1, "All supertonic languages should share the same URL"
+
+    def test_supertonic_aliases_resolve(self):
+        alias_map = {
+            "ko": "kor", "ar": "ara", "bg": "bul", "cs": "ces",
+            "da": "dan", "el": "ell", "et": "est", "fi": "fin",
+            "hi": "hin", "hr": "hrv", "hu": "hun", "it": "ita",
+            "lt": "lit", "lv": "lav", "nl": "nld", "dut": "nld",
+            "pl": "pol", "pt": "por", "ro": "ron", "rum": "ron",
+            "ru": "rus", "sk": "slk", "sl": "slv", "sv": "swe",
+            "tr": "tur", "uk": "ukr", "vi": "vie",
+        }
+        for alias, expected in alias_map.items():
+            assert tts_module._LANGUAGE_ALIASES.get(alias) == expected, (
+                f"Alias '{alias}' should resolve to '{expected}'"
+            )
+
+    def test_existing_languages_not_overridden(self):
+        """Languages with dedicated models should NOT use supertonic."""
+        for code in ["eng", "deu", "fra", "spa", "ind", "zho", "jpn"]:
+            assert code in tts_module._TTS_MODELS
+            meta = tts_module._TTS_MODELS[code]
+            assert meta["backend"] != "supertonic", (
+                f"{code} should keep its dedicated model, not supertonic"
+            )
+
+    def test_indonesian_supertonic_available(self):
+        """Indonesian Supertonic-3 (ind-supertonic) should be available."""
+        meta = tts_module._TTS_MODELS["ind-supertonic"]
+        assert meta["backend"] == "supertonic"
+        assert meta["lang_code"] == "id"
+
+    def test_parse_args_supertonic_lang(self):
+        with patch("sys.argv", ["sherox.tts", "--lang", "kor"]):
+            args = tts_module.parse_args()
+        assert args.lang == "kor"
+
+    def test_parse_args_supertonic_lang_alias(self):
+        with patch("sys.argv", ["sherox.tts", "--lang", "ko"]):
+            args = tts_module.parse_args()
+        assert args.lang == "ko"
+
+    def test_build_tts_supertonic(self, tmp_path):
+        meta = tts_module._TTS_MODELS["rus"]
+        model_dir = tmp_path / meta["extracted"]
+        model_dir.mkdir(parents=True)
+        for f in meta["files"].values():
+            (model_dir / f).touch()
+
+        mock_sherpa = MagicMock()
+        mock_config = MagicMock()
+        mock_config.validate.return_value = True
+        mock_sherpa.OfflineTtsConfig.return_value = mock_config
+        mock_sherpa.OfflineTts.return_value = MagicMock()
+
+        cfg = TtsConfig(language="rus")
+        with patch.dict("sys.modules", {"sherpa_onnx": mock_sherpa}):
+            result = tts_module.build_tts(cfg, tmp_path)
+        assert result.backend == "supertonic"
+        assert result.lang_code == "ru"
+        assert result.sample_rate == 24000
+
+    def test_synthesise_to_file_supertonic(self):
+        mock_sf = MagicMock()
+        mock_tts_instance = MagicMock()
+        mock_audio = MagicMock()
+        mock_audio.samples = [0.1, 0.2, 0.3]
+        mock_tts_instance.generate.return_value = mock_audio
+
+        tts = SimpleNamespace(
+            backend="supertonic",
+            model=mock_tts_instance,
+            lang_code="ko",
+            sample_rate=24000,
+        )
+        cfg = TtsConfig(output="out.wav", language="kor")
+        with patch.object(tts_module, "_require_soundfile", return_value=mock_sf):
+            samples, sr = tts_module.synthesise_to_file(tts, "안녕하세요", cfg)
+        assert sr == 24000
+        assert samples.dtype == np.float32
+        mock_sf.write.assert_called_once()
+
+    def test_synthesise_to_file_supertonic_passes_lang(self):
+        mock_sf = MagicMock()
+        mock_tts_instance = MagicMock()
+        mock_audio = MagicMock()
+        mock_audio.samples = [0.1, 0.2]
+        mock_tts_instance.generate.return_value = mock_audio
+
+        tts = SimpleNamespace(
+            backend="supertonic",
+            model=mock_tts_instance,
+            lang_code="ja",
+            sample_rate=24000,
+        )
+        cfg = TtsConfig(output="out.wav", language="jpn")
+        with patch.object(tts_module, "_require_soundfile", return_value=mock_sf):
+            tts_module.synthesise_to_file(tts, "こんにちは", cfg)
+
+        call_args = mock_tts_instance.generate.call_args
+        gen_config = call_args[0][1]
+        assert gen_config.extra == {"lang": "ja"}

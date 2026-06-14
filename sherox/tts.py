@@ -47,18 +47,61 @@ Usage:
     # Control speech speed:
     sherox.tts --text "Halo" --speed 0.85
 
+    # Synthesise English with Kitten TTS (quantized, 24 kHz):
+    sherox.tts --text "Hello, how are you today?" --lang eng-kitten
+
+    # Synthesise Korean (Supertonic-3, 24 kHz):
+    sherox.tts --text "안녕하세요." --lang kor
+
+    # Synthesise Russian (Supertonic-3, 24 kHz):
+    sherox.tts --text "Привет, как дела?" --lang rus
+
+    # Synthesise Hindi (Supertonic-3, 24 kHz):
+    sherox.tts --text "नमस्ते, आप कैसे हैं?" --lang hin
+
+    # Synthesise Vietnamese (Supertonic-3, 24 kHz):
+    sherox.tts --text "Xin chào, bạn khỏe không?" --lang vie
+
 Supported languages (ISO 639-3 code → model):
     eng           English US   — vits-piper-en_US-amy-medium       (22050 Hz, 1 speaker)
+    eng-kitten    English      — Kitten TTS Nano v0.8, quantized    (24000 Hz, 8 speakers)
     deu           German       — vits-piper-de_DE-thorsten-medium   (22050 Hz, 1 speaker)
     fra           French       — vits-piper-fr_FR-upmc-medium       (22050 Hz, 1 speaker)
     spa           Spanish      — vits-piper-es_ES-mls_10246-medium  (22050 Hz, 1 speaker)
     ind           Indonesian   — vits-piper-id_ID-news_tts-medium   (22050 Hz, 1 speaker)
+    ind-supertonic Indonesian   — Supertonic-3 (24000 Hz, 10 speakers)
     zho           Chinese      — vits-icefall-zh-aishell3           (8 kHz, 174 speakers)
     jpn           Japanese     — piper-plus tsukuyomi               (22050 Hz, 1 speaker)
     jpn-sarashina Japanese     — Sarashina2.2-TTS, zero-shot        (24000 Hz, voice cloning)
+    kor           Korean       — Supertonic-3 (24000 Hz, 10 speakers)
+    ara           Arabic       — Supertonic-3 (24000 Hz, 10 speakers)
+    bul           Bulgarian    — Supertonic-3 (24000 Hz, 10 speakers)
+    ces           Czech        — Supertonic-3 (24000 Hz, 10 speakers)
+    dan           Danish       — Supertonic-3 (24000 Hz, 10 speakers)
+    ell           Greek        — Supertonic-3 (24000 Hz, 10 speakers)
+    est           Estonian     — Supertonic-3 (24000 Hz, 10 speakers)
+    fin           Finnish      — Supertonic-3 (24000 Hz, 10 speakers)
+    hin           Hindi        — Supertonic-3 (24000 Hz, 10 speakers)
+    hrv           Croatian     — Supertonic-3 (24000 Hz, 10 speakers)
+    hun           Hungarian    — Supertonic-3 (24000 Hz, 10 speakers)
+    ita           Italian      — Supertonic-3 (24000 Hz, 10 speakers)
+    lit           Lithuanian   — Supertonic-3 (24000 Hz, 10 speakers)
+    lav           Latvian      — Supertonic-3 (24000 Hz, 10 speakers)
+    nld           Dutch        — Supertonic-3 (24000 Hz, 10 speakers)
+    pol           Polish       — Supertonic-3 (24000 Hz, 10 speakers)
+    por           Portuguese   — Supertonic-3 (24000 Hz, 10 speakers)
+    ron           Romanian     — Supertonic-3 (24000 Hz, 10 speakers)
+    rus           Russian      — Supertonic-3 (24000 Hz, 10 speakers)
+    slk           Slovak       — Supertonic-3 (24000 Hz, 10 speakers)
+    slv           Slovenian    — Supertonic-3 (24000 Hz, 10 speakers)
+    swe           Swedish      — Supertonic-3 (24000 Hz, 10 speakers)
+    tur           Turkish      — Supertonic-3 (24000 Hz, 10 speakers)
+    ukr           Ukrainian    — Supertonic-3 (24000 Hz, 10 speakers)
+    vie           Vietnamese   — Supertonic-3 (24000 Hz, 10 speakers)
 
 Language aliases (short forms also accepted):
     en / eng-us                 → eng
+    eng-kitten                 → eng-kitten
     de / ger                    → deu
     fr                          → fra
     es                          → spa
@@ -66,11 +109,39 @@ Language aliases (short forms also accepted):
     zh / zh-cn / zh-tw / cmn    → zho
     ja / jp / ja-jp             → jpn
     sarashina / jpn_sarashina   → jpn-sarashina
+    ko                          → kor
+    ar                          → ara
+    bg                          → bul
+    cs                          → ces
+    da                          → dan
+    el                          → ell
+    et                          → est
+    fi                          → fin
+    hi                          → hin
+    hr                          → hrv
+    hu                          → hun
+    it                          → ita
+    lt                          → lit
+    lv                          → lav
+    nl / dut                    → nld
+    pl                          → pol
+    pt                          → por
+    ro / rum                    → ron
+    ru                          → rus
+    sk                          → slk
+    sl                          → slv
+    sv                          → swe
+    tr                          → tur
+    uk                          → ukr
+    vi                          → vie
 
 Notes:
     Chinese (zho): input must be plain Simplified Chinese text; numbers and mixed
     scripts may not normalise well. Use 8 kHz output; quality is acceptable for
     voice assistants and dev/test use.
+
+    Supertonic-3: shared model for 25+ languages (24 kHz, 10 speakers).  First use
+    downloads ~120 MB.  Select speaker with --speaker-id 0-9, language via --lang.
 
 Models are auto-downloaded on first use into  models/<model-dir>/  at the project root.
 """
@@ -216,7 +287,164 @@ _TTS_MODELS: dict[str, dict] = {
         "sample_rate": 24000,
         "description": "Japanese (Sarashina2.2-TTS, zero-shot voice cloning)",
     },
+    "eng-kitten": {
+        "backend": "kitten",
+        "url": (
+            "https://github.com/k2-fsa/sherpa-onnx/releases/download/"
+            "tts-models/kitten-nano-en-v0_8-int8.tar.bz2"
+        ),
+        "archive": "kitten-nano-en-v0_8-int8.tar.bz2",
+        "extracted": "kitten-nano-en-v0_8-int8",
+        "model": "model.int8.onnx",
+        "voices": "voices.bin",
+        "tokens": "tokens.txt",
+        "data_dir": "espeak-ng-data",
+        "sample_rate": 24000,
+        "description": "English (Kitten TTS Nano v0.8, quantized)",
+    },
 }
+
+# ── Supertonic-3 shared model metadata ───────────────────────────────────────
+_SUPERTONIC_BASE: dict = {
+    "backend": "supertonic",
+    "url": (
+        "https://github.com/k2-fsa/sherpa-onnx/releases/download/"
+        "tts-models/sherpa-onnx-supertonic-3-tts-int8-2026-05-11.tar.bz2"
+    ),
+    "archive": "sherpa-onnx-supertonic-3-tts-int8-2026-05-11.tar.bz2",
+    "extracted": "sherpa-onnx-supertonic-3-tts-int8-2026-05-11",
+    "files": {
+        "duration_predictor": "duration_predictor.int8.onnx",
+        "text_encoder": "text_encoder.int8.onnx",
+        "vector_estimator": "vector_estimator.int8.onnx",
+        "vocoder": "vocoder.int8.onnx",
+        "tts_json": "tts.json",
+        "unicode_indexer": "unicode_indexer.bin",
+        "voice_style": "voice.bin",
+    },
+    "sample_rate": 24000,
+}
+
+# Supertonic-3 supported languages: en, ko, ja, ar, bg, cs, da, de, el, es, et,
+# fi, fr, hi, hr, hu, id, it, lt, lv, nl, pl, pt, ro, ru, sk, sl, sv, tr, uk, vi
+#
+# Languages that already have a dedicated model in _TTS_MODELS (eng, deu, fra,
+# spa, ind, zho, jpn) keep their existing default.  All others use supertonic-3.
+# ind-supertonic provides an alternative Supertonic-3 model for Indonesian.
+_SUPERTONIC_LANGUAGES: dict[str, dict] = {
+    "kor": {
+        "lang_code": "ko",
+        "description": "Korean (Supertonic-3, 10 speakers)",
+    },
+    "ara": {
+        "lang_code": "ar",
+        "description": "Arabic (Supertonic-3, 10 speakers)",
+    },
+    "bul": {
+        "lang_code": "bg",
+        "description": "Bulgarian (Supertonic-3, 10 speakers)",
+    },
+    "ces": {
+        "lang_code": "cs",
+        "description": "Czech (Supertonic-3, 10 speakers)",
+    },
+    "dan": {
+        "lang_code": "da",
+        "description": "Danish (Supertonic-3, 10 speakers)",
+    },
+    "ell": {
+        "lang_code": "el",
+        "description": "Greek (Supertonic-3, 10 speakers)",
+    },
+    "est": {
+        "lang_code": "et",
+        "description": "Estonian (Supertonic-3, 10 speakers)",
+    },
+    "fin": {
+        "lang_code": "fi",
+        "description": "Finnish (Supertonic-3, 10 speakers)",
+    },
+    "hin": {
+        "lang_code": "hi",
+        "description": "Hindi (Supertonic-3, 10 speakers)",
+    },
+    "hrv": {
+        "lang_code": "hr",
+        "description": "Croatian (Supertonic-3, 10 speakers)",
+    },
+    "hun": {
+        "lang_code": "hu",
+        "description": "Hungarian (Supertonic-3, 10 speakers)",
+    },
+    "ita": {
+        "lang_code": "it",
+        "description": "Italian (Supertonic-3, 10 speakers)",
+    },
+    "lit": {
+        "lang_code": "lt",
+        "description": "Lithuanian (Supertonic-3, 10 speakers)",
+    },
+    "lav": {
+        "lang_code": "lv",
+        "description": "Latvian (Supertonic-3, 10 speakers)",
+    },
+    "nld": {
+        "lang_code": "nl",
+        "description": "Dutch (Supertonic-3, 10 speakers)",
+    },
+    "pol": {
+        "lang_code": "pl",
+        "description": "Polish (Supertonic-3, 10 speakers)",
+    },
+    "por": {
+        "lang_code": "pt",
+        "description": "Portuguese (Supertonic-3, 10 speakers)",
+    },
+    "ron": {
+        "lang_code": "ro",
+        "description": "Romanian (Supertonic-3, 10 speakers)",
+    },
+    "rus": {
+        "lang_code": "ru",
+        "description": "Russian (Supertonic-3, 10 speakers)",
+    },
+    "slk": {
+        "lang_code": "sk",
+        "description": "Slovak (Supertonic-3, 10 speakers)",
+    },
+    "slv": {
+        "lang_code": "sl",
+        "description": "Slovenian (Supertonic-3, 10 speakers)",
+    },
+    "swe": {
+        "lang_code": "sv",
+        "description": "Swedish (Supertonic-3, 10 speakers)",
+    },
+    "tur": {
+        "lang_code": "tr",
+        "description": "Turkish (Supertonic-3, 10 speakers)",
+    },
+    "ukr": {
+        "lang_code": "uk",
+        "description": "Ukrainian (Supertonic-3, 10 speakers)",
+    },
+    "vie": {
+        "lang_code": "vi",
+        "description": "Vietnamese (Supertonic-3, 10 speakers)",
+    },
+    "ind-supertonic": {
+        "lang_code": "id",
+        "description": "Indonesian (Supertonic-3, 10 speakers)",
+    },
+}
+
+# Merge supertonic entries into _TTS_MODELS
+for _code, _meta in _SUPERTONIC_LANGUAGES.items():
+    _TTS_MODELS[_code] = {
+        **_SUPERTONIC_BASE,
+        "lang_code": _meta["lang_code"],
+        "description": _meta["description"],
+    }
 
 _SUPPORTED_LANGS = ", ".join(
     f"{code} ({meta['description']})" for code, meta in _TTS_MODELS.items()
@@ -227,26 +455,11 @@ _LANGUAGE_ALIASES = {
     "en": "eng",
     "en-us": "eng",
     "en-gb": "eng",
-    # German
-    "de": "deu",
-    "ger": "deu",
-    "de-de": "deu",
-    # French
-    "fr": "fra",
-    "fre": "fra",
-    "fr-fr": "fra",
-    # Spanish
-    "es": "spa",
-    "es-es": "spa",
-    # Indonesian
-    "id": "ind",
-    "id-id": "ind",
-    # Chinese
-    "zh": "zho",
-    "zh-cn": "zho",
-    "zh-tw": "zho",
-    "cmn": "zho",
-    "chi": "zho",
+    # English Kitten
+    "eng-kitten": "eng-kitten",
+    # Korean
+    "ko": "kor",
+    "kor": "kor",
     # Japanese
     "ja": "jpn",
     "jp": "jpn",
@@ -254,6 +467,102 @@ _LANGUAGE_ALIASES = {
     # Japanese Sarashina (zero-shot)
     "sarashina": "jpn-sarashina",
     "jpn_sarashina": "jpn-sarashina",
+    # Arabic
+    "ar": "ara",
+    "ara": "ara",
+    # Bulgarian
+    "bg": "bul",
+    "bul": "bul",
+    # Czech
+    "cs": "ces",
+    "ces": "ces",
+    # Danish
+    "da": "dan",
+    "dan": "dan",
+    # German
+    "de": "deu",
+    "ger": "deu",
+    "de-de": "deu",
+    # Greek
+    "el": "ell",
+    "ell": "ell",
+    # Spanish
+    "es": "spa",
+    "es-es": "spa",
+    # Estonian
+    "et": "est",
+    "est": "est",
+    # Finnish
+    "fi": "fin",
+    "fin": "fin",
+    # French
+    "fr": "fra",
+    "fre": "fra",
+    "fr-fr": "fra",
+    # Hindi
+    "hi": "hin",
+    "hin": "hin",
+    # Croatian
+    "hr": "hrv",
+    "hrv": "hrv",
+    # Hungarian
+    "hu": "hun",
+    "hun": "hun",
+    # Indonesian
+    "id": "ind",
+    "id-id": "ind",
+    "ind": "ind",
+    "ind-supertonic": "ind-supertonic",
+    # Italian
+    "it": "ita",
+    "ita": "ita",
+    # Lithuanian
+    "lt": "lit",
+    "lit": "lit",
+    # Latvian
+    "lv": "lav",
+    "lav": "lav",
+    # Dutch
+    "nl": "nld",
+    "nld": "nld",
+    "dut": "nld",
+    # Polish
+    "pl": "pol",
+    "pol": "pol",
+    # Portuguese
+    "pt": "por",
+    "por": "por",
+    # Romanian
+    "ro": "ron",
+    "ron": "ron",
+    "rum": "ron",
+    # Russian
+    "ru": "rus",
+    "rus": "rus",
+    # Slovak
+    "sk": "slk",
+    "slk": "slk",
+    # Slovenian
+    "sl": "slv",
+    "slv": "slv",
+    # Swedish
+    "sv": "swe",
+    "swe": "swe",
+    # Turkish
+    "tr": "tur",
+    "tur": "tur",
+    # Ukrainian
+    "uk": "ukr",
+    "ukr": "ukr",
+    # Vietnamese
+    "vi": "vie",
+    "vie": "vie",
+    # Chinese
+    "zh": "zho",
+    "zh-cn": "zho",
+    "zh-tw": "zho",
+    "cmn": "zho",
+    "chi": "zho",
 }
 
 
@@ -515,6 +824,102 @@ def build_tts(cfg: TtsConfig, project_dir: Path):
             model=generator,
         )
 
+    if meta["backend"] == "kitten":
+        models_root = project_dir / "models" / "kitten"
+        models_root.mkdir(parents=True, exist_ok=True)
+        target_dir = models_root / meta["extracted"]
+
+        if target_dir.is_dir():
+            return SimpleNamespace(
+                backend="kitten",
+                model=str(target_dir),
+            )
+
+        # Download and extract
+        _info(f"TTS model for '{lang}' not found.")
+        archive = models_root / meta["archive"]
+        _download_file(meta["url"], archive)
+
+        _info("Extracting…")
+        try:
+            with tarfile.open(archive, "r:bz2") as tf:
+                if sys.version_info >= (3, 12):
+                    tf.extractall(models_root, filter="data")
+                else:  # pragma: no cover
+                    tf.extractall(models_root, members=_safe_tar_members(tf, models_root))
+        except Exception as exc:
+            _error(f"Extraction failed: {exc}")
+
+        archive.unlink(missing_ok=True)
+
+        if not target_dir.is_dir():
+            _error(f"Expected model directory not found after extraction: {target_dir}")
+
+        _info(f"Model saved to '{target_dir}'.\n")
+        return SimpleNamespace(
+            backend="kitten",
+            model=str(target_dir),
+        )
+
+    if meta["backend"] == "supertonic":
+        models_root = project_dir / "models" / "supertonic"
+        models_root.mkdir(parents=True, exist_ok=True)
+        target_dir = models_root / meta["extracted"]
+
+        if not target_dir.is_dir():
+            _info(f"TTS model for supertonic-3 not found.")
+            archive = models_root / meta["archive"]
+            _download_file(meta["url"], archive)
+
+            _info("Extracting…")
+            try:
+                with tarfile.open(archive, "r:bz2") as tf:
+                    if sys.version_info >= (3, 12):
+                        tf.extractall(models_root, filter="data")
+                    else:  # pragma: no cover
+                        tf.extractall(models_root, members=_safe_tar_members(tf, models_root))
+            except Exception as exc:
+                _error(f"Extraction failed: {exc}")
+
+            archive.unlink(missing_ok=True)
+
+            if not target_dir.is_dir():
+                _error(f"Expected model directory not found after extraction: {target_dir}")
+
+            _info(f"Model saved to '{target_dir}'.\n")
+
+        import sherpa_onnx  # noqa: PLC0415
+
+        model_dir_override = Path(cfg.model_dir) if cfg.model_dir else None
+        model_dir = model_dir_override if model_dir_override else target_dir
+
+        config = sherpa_onnx.OfflineTtsConfig(
+            model=sherpa_onnx.OfflineTtsModelConfig(
+                supertonic=sherpa_onnx.OfflineTtsSupertonicModelConfig(
+                    duration_predictor=str(model_dir / meta["files"]["duration_predictor"]),
+                    text_encoder=str(model_dir / meta["files"]["text_encoder"]),
+                    vector_estimator=str(model_dir / meta["files"]["vector_estimator"]),
+                    vocoder=str(model_dir / meta["files"]["vocoder"]),
+                    tts_json=str(model_dir / meta["files"]["tts_json"]),
+                    unicode_indexer=str(model_dir / meta["files"]["unicode_indexer"]),
+                    voice_style=str(model_dir / meta["files"]["voice_style"]),
+                ),
+                num_threads=cfg.num_threads,
+            ),
+        )
+
+        if not config.validate():
+            _error(
+                "TTS config is invalid — check that all model files exist and are valid."
+            )
+
+        return SimpleNamespace(
+            backend="supertonic",
+            model=sherpa_onnx.OfflineTts(config),
+            lang_code=meta["lang_code"],
+            sample_rate=meta["sample_rate"],
+        )
+
     import sherpa_onnx  # noqa: PLC0415
 
     model_dir_override = Path(cfg.model_dir) if cfg.model_dir else None
@@ -624,6 +1029,64 @@ def synthesise_to_file(tts, text: str, cfg: TtsConfig) -> Optional[tuple[np.ndar
 
         samples = wavs[0].cpu().numpy().astype(np.float32)
         sample_rate = 24000
+        if should_save:
+            soundfile = _require_soundfile()
+            soundfile.write(cfg.output, samples, samplerate=sample_rate)
+        return samples, sample_rate
+
+    if backend == "kitten":
+        import sherpa_onnx  # noqa: PLC0415
+
+        lang = _normalize_language(cfg.language)
+        meta = _TTS_MODELS[lang]
+
+        model_path = Path(tts.model) / meta["model"]
+        voices_path = Path(tts.model) / meta["voices"]
+        tokens_path = Path(tts.model) / meta["tokens"]
+        data_dir_path = Path(tts.model) / meta["data_dir"]
+
+        config = sherpa_onnx.OfflineTtsConfig(
+            model=sherpa_onnx.OfflineTtsModelConfig(
+                kitten=sherpa_onnx.OfflineTtsKittenModelConfig(
+                    model=str(model_path),
+                    voices=str(voices_path),
+                    tokens=str(tokens_path),
+                    data_dir=str(data_dir_path),
+                ),
+                num_threads=cfg.num_threads,
+            ),
+        )
+
+        if not config.validate():
+            _error(
+                "TTS config is invalid — check that all model files exist and are valid."
+            )
+
+        tts_instance = sherpa_onnx.OfflineTts(config)
+        audio = tts_instance.generate(text=text, sid=cfg.speaker_id, speed=cfg.speed)
+        samples = np.array(audio.samples, dtype=np.float32)
+        sample_rate = audio.sample_rate
+
+        if should_save:
+            soundfile = _require_soundfile()
+            soundfile.write(cfg.output, samples, samplerate=sample_rate)
+        return samples, sample_rate
+
+    if backend == "supertonic":
+        import sherpa_onnx  # noqa: PLC0415
+
+        lang_code = getattr(tts, "lang_code", "en")
+
+        gen_config = sherpa_onnx.GenerationConfig()
+        gen_config.sid = cfg.speaker_id
+        gen_config.num_steps = 8
+        gen_config.speed = cfg.speed
+        gen_config.extra = {"lang": lang_code}
+
+        audio = tts.model.generate(text, gen_config)
+        samples = np.array(audio.samples, dtype=np.float32)
+        sample_rate = audio.sample_rate
+
         if should_save:
             soundfile = _require_soundfile()
             soundfile.write(cfg.output, samples, samplerate=sample_rate)
