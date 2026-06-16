@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `sherox.wake`: new wake-word detection subcommand backed by
+  `livekit-wakeword`, supporting custom ONNX models (any language) from a
+  microphone or WAV file. Supports multiple models at once, configurable
+  `--threshold`, `--debounce`, and `--chunk-size`. Models are resolved from
+  an explicit path or looked up under `models/<name>.onnx`.
+- `sherox.tts --lang eng-kitten`: Kitten TTS Nano v0.8 (quantized, 24 kHz,
+  8 speakers), auto-downloaded to `models/kitten/`.
+- `sherox.tts`: Supertonic-3 multilingual model (24 kHz, 10 speakers,
+  ~120 MB shared download) adds 25 new `--lang` codes — `kor`, `ara`, `bul`,
+  `ces`, `dan`, `ell`, `est`, `fin`, `hin`, `hrv`, `hun`, `ita`, `lit`, `lav`,
+  `nld`, `pol`, `por`, `ron`, `rus`, `slk`, `slv`, `swe`, `tur`, `ukr`, `vie`
+  — plus `ind-supertonic` as an alternate Indonesian voice. Existing
+  dedicated-model languages (`eng`, `deu`, `fra`, `spa`, `ind`, `zho`, `jpn`)
+  are unaffected.
+- `sherox list-models`: registry now includes `eng-kitten`, the
+  Supertonic-3 entry, and the `wake` module.
+
 ## [0.8.0] - 2026-06-07
 
 ### Changed

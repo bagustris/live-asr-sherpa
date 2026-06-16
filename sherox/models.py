@@ -154,13 +154,22 @@ _ASR_MODELS: list[tuple[str, str, str, str, str]] = [
 
 _TTS_MODELS: list[tuple[str, str, str, str, str]] = [
     ("eng (vits-piper-en_US-amy-medium)",   "en",  "offline", "~50 MB",  "Piper VITS English US (Amy)"),
+    ("eng-kitten (kitten-nano-en-v0_8-int8)", "en", "offline", "~25 MB", "Kitten TTS Nano v0.8, quantized, 8 speakers"),
     ("deu (vits-piper-de_DE-thorsten-medium)", "de", "offline", "~50 MB", "Piper VITS German (Thorsten)"),
     ("fra (vits-piper-fr_FR-upmc-medium)",   "fr",  "offline", "~50 MB",  "Piper VITS French (UPMC)"),
     ("spa (vits-piper-es_ES-mls_10246-medium)", "es", "offline", "~50 MB", "Piper VITS Spanish (MLS)"),
     ("ind (vits-piper-id_ID-news_tts-medium)", "id", "offline", "~50 MB", "Piper VITS Indonesian"),
-    ("zho (vits-aishell3-coqui-107-speakers)", "zh", "offline", "~50 MB", "VITS Mandarin Chinese (AiShell3)"),
+    ("zho (vits-icefall-zh-aishell3)", "zh", "offline", "~50 MB", "VITS Mandarin Chinese (AiShell3, 174 speakers)"),
     ("jpn (vits-piper-ja_JA-nakamura-medium)", "ja", "offline", "~50 MB", "Piper VITS Japanese (Nakamura)"),
     ("jpn-sarashina (zero-shot voice cloning)", "ja", "offline", "~1.5 GB", "Sarashina TTS zero-shot cloning"),
+    (
+        "supertonic-3 (shared model)",
+        "ko, ar, bg, cs, da, el, et, fi, hi, hr, hu, it, lt, lv, nl, "
+        "pl, pt, ro, ru, sk, sl, sv, tr, uk, vi, id",
+        "offline",
+        "~120 MB",
+        "Supertonic-3 multilingual TTS, 25 languages + alt Indonesian, 10 speakers each",
+    ),
 ]
 
 # ── SID / KWS / VAD model registry ────────────────────────────────────────────
@@ -175,6 +184,7 @@ _OTHER_MODELS: list[tuple[str, str, str, str, str, str]] = [
     ("punct",   "punct-ct-transformer-zh-en",  "zh, en",     "offline", "~40 MB",  "CT-Transformer punctuation restoration"),
     ("diarization", "sherpa-onnx-pyannote-segmentation-3-0", "en", "offline", "~30 MB", "Pyannote speaker segmentation"),
     ("diarization", "nemo_en_speakerverification_speakernet", "en", "offline", "~22 MB", "NeMo speaker embedding extractor"),
+    ("wake", "user-provided ONNX (livekit-wakeword)", "language-independent", "online", "varies", "Custom wake-word models trained via livekit-wakeword"),
 ]
 
 _console = Console()
