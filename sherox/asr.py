@@ -688,15 +688,17 @@ def _download_model(model_dir: str, model_type: str) -> None:
         url = _GERMAN_NEMO_URL
         archive_name = _GERMAN_NEMO_ARCHIVE
         extracted_name = _GERMAN_NEMO_EXTRACTED
-    # NeMo CTC English models (medium is the auto-download default; small is opt-in)
-    elif model_dir.name == _NEMO_CTC_EN_MEDIUM_TARGET:
-        url = _NEMO_CTC_EN_MEDIUM_URL
-        archive_name = _NEMO_CTC_EN_MEDIUM_ARCHIVE
-        extracted_name = _NEMO_CTC_EN_MEDIUM_EXTRACTED
+    # NeMo CTC English models (medium is the auto-download default; small is opt-in).
+    # Check the small target by name first so an explicit small --model-dir isn't
+    # shadowed by the nemo_ctc model_type fallback below.
     elif model_dir.name == _NEMO_CTC_EN_SMALL_TARGET:
         url = _NEMO_CTC_EN_SMALL_URL
         archive_name = _NEMO_CTC_EN_SMALL_ARCHIVE
         extracted_name = _NEMO_CTC_EN_SMALL_EXTRACTED
+    elif model_type == "nemo_ctc" or model_dir.name == _NEMO_CTC_EN_MEDIUM_TARGET:
+        url = _NEMO_CTC_EN_MEDIUM_URL
+        archive_name = _NEMO_CTC_EN_MEDIUM_ARCHIVE
+        extracted_name = _NEMO_CTC_EN_MEDIUM_EXTRACTED
     # Use parakeet as the default offline model download target
     elif model_type == "nemo_transducer" or model_dir.name in (
         _PARAKEET_FP16_TARGET, _PARAKEET_INT8_TARGET

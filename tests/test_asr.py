@@ -535,10 +535,10 @@ def _extracted_name_for(model_dir_name: str, model_type: str) -> str:
         return main_module._WHISPER_DISTIL_LARGE_V35_EXTRACTED
     if model_type == "multilingual_streaming" or model_dir_name == main_module._MULTILINGUAL_STREAMING_TARGET:
         return main_module._MULTILINGUAL_STREAMING_EXTRACTED
-    if model_dir_name == main_module._NEMO_CTC_EN_MEDIUM_TARGET:
-        return main_module._NEMO_CTC_EN_MEDIUM_EXTRACTED
     if model_dir_name == main_module._NEMO_CTC_EN_SMALL_TARGET:
         return main_module._NEMO_CTC_EN_SMALL_EXTRACTED
+    if model_type == "nemo_ctc" or model_dir_name == main_module._NEMO_CTC_EN_MEDIUM_TARGET:
+        return main_module._NEMO_CTC_EN_MEDIUM_EXTRACTED
     if model_type == "nemo_transducer" or model_dir_name in (
         main_module._PARAKEET_FP16_TARGET,
         main_module._PARAKEET_INT8_TARGET,
@@ -664,6 +664,16 @@ class TestDownloadModel:
         medium_url = _run_download_model(tmp_path, main_module._NEMO_CTC_EN_MEDIUM_TARGET, "nemo_ctc")
         small_url = _run_download_model(tmp_path, main_module._NEMO_CTC_EN_SMALL_TARGET, "nemo_ctc")
         assert medium_url != small_url
+
+    def test_uses_nemo_ctc_en_medium_url_for_custom_dir_name_with_nemo_ctc_type(self, tmp_path):
+        # A non-canonical --model-dir combined with --model-type nemo_ctc must still
+        # resolve to the English CTC model, not the unrelated default fallback.
+        url = _run_download_model(tmp_path, "my-custom-ctc-model", "nemo_ctc")
+        assert "nemo-ctc-en-conformer-medium" in url
+
+    def test_nemo_ctc_type_does_not_shadow_small_target_dir_name(self, tmp_path):
+        url = _run_download_model(tmp_path, main_module._NEMO_CTC_EN_SMALL_TARGET, "nemo_ctc")
+        assert "nemo-ctc-en-conformer-small" in url
 
 
 # ---------------------------------------------------------------------------
@@ -1413,6 +1423,26 @@ class TestMain:
 
         called_dir, called_type = mock_vm.call_args[0]
         assert Path(called_dir).name == main_module._NEMO_CTC_EN_MEDIUM_TARGET
+        assert called_type == "nemo_ctc"
+
+    def test_nemo_ctc_model_type_with_german_lang_uses_german_target(self):
+        args = self._common_patches(None, model_type="nemo_ctc", offline=True)
+        args.language = "de"
+        mock_rec = MagicMock()
+
+        with patch.object(main_module, "parse_args", return_value=args), \
+             patch.object(main_module, "_validate_runtime_args"), \
+             patch.object(main_module, "_validate_model") as mock_vm, \
+             patch.object(main_module, "_validate_vad", return_value="models/silero_vad.onnx"), \
+             patch.object(main_module, "_validate_mic"), \
+             patch("sherox.asr.build_offline_recognizer", return_value=mock_rec), \
+             patch("sherox.asr.build_vad", return_value=MagicMock()), \
+             patch("sherox.asr.mic_stream", return_value=iter([])), \
+             patch("sherox.asr.run_offline_vad_streaming"):
+            main_module.main()
+
+        called_dir, called_type = mock_vm.call_args[0]
+        assert Path(called_dir).name == main_module._GERMAN_NEMO_TARGET
         assert called_type == "nemo_ctc"
 
     def test_online_with_diarization(self):
