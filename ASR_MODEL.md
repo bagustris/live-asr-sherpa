@@ -49,7 +49,8 @@ Use these with `--offline`. Audio is VAD-segmented before recognition, which usu
 | Whisper medium.en | `models/sherpa-onnx-whisper-medium.en` | `whisper` | en | Higher accuracy |
 | Whisper large-v3 | `models/sherpa-onnx-whisper-large-v3` | `whisper` | multi | Multilingual; **auto-downloaded** when `--model-dir` matches; ~3 GB; use `--language` |
 | Paraformer ZH | `models/sherpa-onnx-paraformer-zh-2023-09-14` | `paraformer` | zh | |
-| NeMo CTC En | `models/sherpa-onnx-nemo-ctc-en-conformer-medium` | `nemo_ctc` | en | NeMo Conformer CTC |
+| NeMo CTC En (medium) | `models/sherpa-onnx-nemo-ctc-en-conformer-medium` | `nemo_ctc` | en | **Auto-downloaded** when selected; NeMo Conformer CTC; exposes per-word confidence |
+| NeMo CTC En (small) | `models/sherpa-onnx-nemo-ctc-en-conformer-small` | `nemo_ctc` | en | **Auto-downloaded** when `--model-dir` matches; lighter/faster variant |
 | SenseVoice | `models/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17` | `sense_voice` | multi | 5 languages; **auto-downloaded**; use `--language` |
 | Moonshine tiny | `models/sherpa-onnx-moonshine-tiny-en-int8` | `moonshine` | en | Very fast, English only |
 | Moonshine base | `models/sherpa-onnx-moonshine-base-en-int8` | `moonshine` | en | Better accuracy than tiny |
@@ -102,6 +103,13 @@ sherox.asr --wav audio.wav --lang de
 # German NeMo CTC (offline, auto-downloaded, default for --lang de --offline)
 sherox.asr --mic --lang de --offline
 sherox.asr --wav audio.wav --lang de --offline
+
+# NeMo CTC English (offline, auto-downloaded); per-word confidence via CTC posteriors
+sherox.asr --wav audio.wav --offline --model-type nemo_ctc --language en
+
+# NeMo CTC English, lighter/faster variant (auto-downloaded via --model-dir)
+sherox.asr --wav audio.wav --offline --model-type nemo_ctc \
+  --model-dir models/sherpa-onnx-nemo-ctc-en-conformer-small
 
 # ReazonSpeech Japanese (auto-downloaded)
 sherox.asr --mic --model-type reazonspeech-ja
