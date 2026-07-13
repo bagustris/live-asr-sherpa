@@ -457,6 +457,27 @@ _PARAKEET_CTC_JA_INT8_ARCHIVE = "sherpa-onnx-nemo-parakeet-tdt_ctc-0.6b-ja-35000
 _PARAKEET_CTC_JA_INT8_EXTRACTED = "sherpa-onnx-nemo-parakeet-tdt_ctc-0.6b-ja-35000-int8"
 _PARAKEET_CTC_JA_INT8_TARGET = "parakeet-ctc-ja-int8"
 
+# ── NeMo CTC English model URLs ────────────────────────────────────────────────
+# English NeMo Conformer CTC model (~158 MB). Auto-download default for
+# `--model-type nemo_ctc --language en`; exposes per-word confidence via CTC
+# token posteriors, unlike the Parakeet transducer default.
+_NEMO_CTC_EN_MEDIUM_URL = (
+    "https://github.com/k2-fsa/sherpa-onnx/releases/download/"
+    "asr-models/sherpa-onnx-nemo-ctc-en-conformer-medium.tar.bz2"
+)
+_NEMO_CTC_EN_MEDIUM_ARCHIVE = "sherpa-onnx-nemo-ctc-en-conformer-medium.tar.bz2"
+_NEMO_CTC_EN_MEDIUM_EXTRACTED = "sherpa-onnx-nemo-ctc-en-conformer-medium"
+_NEMO_CTC_EN_MEDIUM_TARGET = "sherpa-onnx-nemo-ctc-en-conformer-medium"
+
+# Lighter variant; select by passing --model-dir models/<small target> explicitly.
+_NEMO_CTC_EN_SMALL_URL = (
+    "https://github.com/k2-fsa/sherpa-onnx/releases/download/"
+    "asr-models/sherpa-onnx-nemo-ctc-en-conformer-small.tar.bz2"
+)
+_NEMO_CTC_EN_SMALL_ARCHIVE = "sherpa-onnx-nemo-ctc-en-conformer-small.tar.bz2"
+_NEMO_CTC_EN_SMALL_EXTRACTED = "sherpa-onnx-nemo-ctc-en-conformer-small"
+_NEMO_CTC_EN_SMALL_TARGET = "sherpa-onnx-nemo-ctc-en-conformer-small"
+
 # ── Cohere Transcribe model URLs ──────────────────────────────────────────────
 # Multilingual model supporting 14 languages
 # (https://huggingface.co/CohereLabs/cohere-transcribe-03-2026)
@@ -667,6 +688,15 @@ def _download_model(model_dir: str, model_type: str) -> None:
         url = _GERMAN_NEMO_URL
         archive_name = _GERMAN_NEMO_ARCHIVE
         extracted_name = _GERMAN_NEMO_EXTRACTED
+    # NeMo CTC English models (medium is the auto-download default; small is opt-in)
+    elif model_dir.name == _NEMO_CTC_EN_MEDIUM_TARGET:
+        url = _NEMO_CTC_EN_MEDIUM_URL
+        archive_name = _NEMO_CTC_EN_MEDIUM_ARCHIVE
+        extracted_name = _NEMO_CTC_EN_MEDIUM_EXTRACTED
+    elif model_dir.name == _NEMO_CTC_EN_SMALL_TARGET:
+        url = _NEMO_CTC_EN_SMALL_URL
+        archive_name = _NEMO_CTC_EN_SMALL_ARCHIVE
+        extracted_name = _NEMO_CTC_EN_SMALL_EXTRACTED
     # Use parakeet as the default offline model download target
     elif model_type == "nemo_transducer" or model_dir.name in (
         _PARAKEET_FP16_TARGET, _PARAKEET_INT8_TARGET
@@ -747,6 +777,10 @@ def _resolve_default_model(language: str, model_type: str, offline: bool) -> tup
         return model_type, _MULTILINGUAL_STREAMING_TARGET
     if model_type == "nemo_transducer":
         return model_type, _PARAKEET_TARGET
+    if model_type == "nemo_ctc":
+        if language == "de":
+            return model_type, _GERMAN_NEMO_TARGET
+        return model_type, _NEMO_CTC_EN_MEDIUM_TARGET
     if model_type:
         return model_type, _PARAKEET_TARGET if offline else _MODEL_TARGET
     # German: online uses streaming zipformer, offline uses NeMo CTC
