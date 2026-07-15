@@ -989,8 +989,12 @@ class TestRunOfflineVadStreamingJsonOutput:
 
         from concurrent.futures import Future
         fut = Future()
-        from sherox.streaming import _ASRResult
-        fut.set_result(_ASRResult(text="offline text", tokens=[], timestamps=[]))
+        from sherox.streaming import _ASRResult, _TimedASRResult
+        fut.set_result(
+            _TimedASRResult(
+                _ASRResult(text="offline text", tokens=[], timestamps=[]), 0.0, 0.0
+            )
+        )
 
         with patch("sherox.streaming.ThreadPoolExecutor") as mock_exec_cls:
             mock_exec = MagicMock()

@@ -33,6 +33,7 @@ class Config:
     vad_threshold: float = 0.1
     vad_min_silence_duration: float = 0.5
     vad_min_speech_duration: float = 0.25
+    vad_max_speech_duration: float = 20.0  # force-cut a segment past this length
 
     language: str = "en"
     show_mic_level: bool = True
@@ -59,6 +60,9 @@ class Config:
     # Terminal output options (see --no-color / --json in sherox.asr)
     no_color: bool = False           # disable ANSI colour codes in transcript output
     json_output: bool = False        # emit each segment as a JSON line instead of styled text
+
+    # Latency diagnostics
+    debug_latency: bool = False      # print per-segment endpoint→text timing to stderr
 
 
 # ── Segment ───────────────────────────────────────────────────────────────────

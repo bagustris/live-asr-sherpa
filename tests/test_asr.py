@@ -1,4 +1,5 @@
 import argparse
+import tempfile
 import urllib.request
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -410,6 +411,10 @@ class TestValidateRuntimeArgs:
             capture_rate=16000,
             chunk_size=0.16,
             threads=4,
+            vad_min_silence_duration=0.5,
+            vad_threshold=0.1,
+            vad_min_speech_duration=0.25,
+            vad_max_speech_duration=20.0,
             speaker_tag=False,
             diarization=False,
             num_speakers=-1,
@@ -454,10 +459,9 @@ class TestValidateRuntimeArgs:
         args = self._base_args(wav=["a.wav"], output="/out.srt")
         main_module._validate_runtime_args(args)  # must not raise
 
-    def test_output_dir_without_wav_exits(self):
-        args = self._base_args(wav=None, output_dir="/some/dir")
-        with pytest.raises(ConfigError):
-            main_module._validate_runtime_args(args)
+    def test_output_dir_without_wav_is_ok_for_mic_mode(self):
+        args = self._base_args(wav=None, pipe=False, output_dir="/some/dir")
+        main_module._validate_runtime_args(args)  # must not raise — mic mode supports --output-dir
 
     def test_output_dir_with_pipe_exits(self):
         args = self._base_args(pipe=True, output_dir="/some/dir")
@@ -1021,6 +1025,10 @@ class TestMain:
             no_mic_level=False,
             vad_type="silero",
             ten_vad_model="ten-vad.int8.onnx",
+            vad_min_silence_duration=0.5,
+            vad_threshold=0.1,
+            vad_min_speech_duration=0.25,
+            vad_max_speech_duration=20.0,
             diarization=diarization,
             diarization_seg_model="",
             diarization_emb_model="",
@@ -1038,6 +1046,8 @@ class TestMain:
             translate=False,
             no_color=False,
             json_output=False,
+            debug_latency=False,
+            no_save_transcript=False,
         )
         return args
 
@@ -1467,6 +1477,118 @@ class TestMain:
 
         kwargs = mock_run.call_args[1]
         assert kwargs.get("diarization") is mock_diarizer
+
+
+# ---------------------------------------------------------------------------
+# Mic-mode transcript auto-save
+# ---------------------------------------------------------------------------
+
+class TestMicTranscriptPath:
+    def test_explicit_output_wins(self):
+        args = argparse.Namespace(output="/custom/path.srt", output_dir="", output_format="txt")
+        assert main_module._mic_transcript_path(args, "some-model") == "/custom/path.srt"
+
+    def test_output_dir_gets_auto_named_file(self, tmp_path):
+        args = argparse.Namespace(output="", output_dir=str(tmp_path), output_format="vtt")
+        result = main_module._mic_transcript_path(args, "parakeet-tdt-0.6b-v2-int8")
+        result_path = Path(result)
+        assert result_path.parent == tmp_path
+        assert result_path.name.startswith("sherox_asr_parakeet-tdt-0.6b-v2-int8_")
+        assert result_path.suffix == ".vtt"
+        assert tmp_path.is_dir()  # created if missing
+
+    def test_falls_back_to_system_temp_dir(self):
+        args = argparse.Namespace(output="", output_dir="", output_format="txt")
+        result = main_module._mic_transcript_path(args, "my-model")
+        result_path = Path(result)
+        assert result_path.parent == Path(tempfile.gettempdir())
+        assert result_path.name.startswith("sherox_asr_my-model_")
+        assert result_path.suffix == ".txt"
+
+    def test_stem_has_timestamp_granular_to_the_second(self):
+        stem1 = main_module._mic_transcript_stem("model")
+        # Format: sherox_asr_<model>_YYYYMMDD_HHMMSS
+        assert stem1.count("_") >= 3
+        assert stem1.startswith("sherox_asr_model_")
+
+
+class TestMicTranscriptSave:
+    def _args(self, **overrides):
+        args = TestMain()._common_patches(None, offline=True)
+        for k, v in overrides.items():
+            setattr(args, k, v)
+        return args
+
+    def test_saves_to_temp_dir_by_default(self, tmp_path):
+        args = self._args()
+        mock_rec = MagicMock()
+        mock_vad = MagicMock()
+
+        def fake_run(*a, subtitles=None, **kw):
+            if subtitles is not None:
+                subtitles.append((0.0, 1.0, "hello world"))
+
+        with patch.object(main_module, "parse_args", return_value=args), \
+             patch.object(main_module, "_validate_runtime_args"), \
+             patch.object(main_module, "_validate_model"), \
+             patch.object(main_module, "_validate_vad", return_value=""), \
+             patch.object(main_module, "_validate_mic"), \
+             patch("sherox.asr.build_offline_recognizer", return_value=mock_rec), \
+             patch("sherox.asr.build_vad", return_value=mock_vad), \
+             patch("sherox.asr.mic_stream", return_value=iter([])), \
+             patch("sherox.asr.run_offline_vad_streaming", side_effect=fake_run), \
+             patch("sherox.asr.tempfile.gettempdir", return_value=str(tmp_path)):
+            main_module.main()
+
+        saved = list(tmp_path.glob("sherox_asr_*.txt"))
+        assert len(saved) == 1
+        assert saved[0].read_text().strip() == "hello world"
+
+    def test_no_save_transcript_skips_write_when_no_explicit_output(self, tmp_path):
+        args = self._args(no_save_transcript=True)
+        mock_rec = MagicMock()
+        mock_vad = MagicMock()
+
+        def fake_run(*a, subtitles=None, **kw):
+            if subtitles is not None:
+                subtitles.append((0.0, 1.0, "should not be saved"))
+
+        with patch.object(main_module, "parse_args", return_value=args), \
+             patch.object(main_module, "_validate_runtime_args"), \
+             patch.object(main_module, "_validate_model"), \
+             patch.object(main_module, "_validate_vad", return_value=""), \
+             patch.object(main_module, "_validate_mic"), \
+             patch("sherox.asr.build_offline_recognizer", return_value=mock_rec), \
+             patch("sherox.asr.build_vad", return_value=mock_vad), \
+             patch("sherox.asr.mic_stream", return_value=iter([])), \
+             patch("sherox.asr.run_offline_vad_streaming", side_effect=fake_run), \
+             patch("sherox.asr.tempfile.gettempdir", return_value=str(tmp_path)):
+            main_module.main()
+
+        assert list(tmp_path.glob("sherox_asr_*.txt")) == []
+
+    def test_explicit_output_overrides_no_save_transcript(self, tmp_path):
+        out_file = tmp_path / "explicit.txt"
+        args = self._args(no_save_transcript=True, output=str(out_file))
+        mock_rec = MagicMock()
+        mock_vad = MagicMock()
+
+        def fake_run(*a, subtitles=None, **kw):
+            if subtitles is not None:
+                subtitles.append((0.0, 1.0, "explicit save"))
+
+        with patch.object(main_module, "parse_args", return_value=args), \
+             patch.object(main_module, "_validate_runtime_args"), \
+             patch.object(main_module, "_validate_model"), \
+             patch.object(main_module, "_validate_vad", return_value=""), \
+             patch.object(main_module, "_validate_mic"), \
+             patch("sherox.asr.build_offline_recognizer", return_value=mock_rec), \
+             patch("sherox.asr.build_vad", return_value=mock_vad), \
+             patch("sherox.asr.mic_stream", return_value=iter([])), \
+             patch("sherox.asr.run_offline_vad_streaming", side_effect=fake_run):
+            main_module.main()
+
+        assert out_file.read_text().strip() == "explicit save"
 
 
 # ---------------------------------------------------------------------------

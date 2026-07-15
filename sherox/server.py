@@ -48,7 +48,12 @@ except ImportError as _e:  # pragma: no cover
 
 from .asr import _validate_model as _asr_validate_model
 from .asr import _validate_vad as _asr_validate_vad
-from .asr_engine import build_offline_recognizer, build_recognizer, build_vad
+from .asr_engine import (
+    build_offline_recognizer,
+    build_recognizer,
+    build_vad,
+    warmup_offline_recognizer,
+)
 from .config import Config
 from .streaming import _run_asr
 from .utils import run_cli as _run_cli
@@ -105,6 +110,7 @@ async def lifespan(app: FastAPI):
             cfg.vad_type, cfg.ten_vad_model, True, project_dir,
         )
         recognizer = await loop.run_in_executor(None, build_offline_recognizer, cfg)
+        await loop.run_in_executor(None, warmup_offline_recognizer, recognizer, cfg.sample_rate)
         mode = "offline"
     else:
         recognizer = await loop.run_in_executor(None, build_recognizer, cfg)

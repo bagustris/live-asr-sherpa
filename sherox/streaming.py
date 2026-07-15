@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+import time
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor, Future
 from typing import Any, Callable, Deque, Generator, NamedTuple, Optional, Tuple
@@ -179,6 +180,13 @@ class _PendingSegment(NamedTuple):
     diar_future: Optional[Future]
     start_s: float
     end_s: float
+    endpoint_wall: float = 0.0  # perf_counter() when the VAD handed off this segment
+
+
+class _TimedASRResult(NamedTuple):
+    result: _ASRResult
+    decode_start_wall: float
+    decode_done_wall: float
 
 
 # ── Core ASR helpers ─────────────────────────────────────────────────────────
@@ -209,6 +217,22 @@ def _run_asr_full(
     tokens: list[str] = list(getattr(result, "tokens", []) or [])
     timestamps: list[float] = list(getattr(result, "timestamps", []) or [])
     return _ASRResult(text=text, tokens=tokens, timestamps=timestamps)
+
+
+def _run_asr_full_timed(
+    recognizer: Any,
+    samples: np.ndarray,
+    sample_rate: int,
+) -> _TimedASRResult:
+    """Like _run_asr_full, but also records when decoding actually started.
+
+    The gap between submission (endpoint_wall) and decode_start_wall reveals
+    executor queueing delay — segments arriving faster than they can be
+    decoded — as distinct from raw decode time.
+    """
+    decode_start_wall = time.perf_counter()
+    result = _run_asr_full(recognizer, samples, sample_rate)
+    return _TimedASRResult(result, decode_start_wall, time.perf_counter())
 
 
 def _print_word_timestamps(tokens: list[str], timestamps: list[float]) -> None:
@@ -484,6 +508,7 @@ def run_offline_vad_streaming(
     progress_callback: Optional[Callable[[float], None]] = None,
     json_output: bool = False,
     no_color: bool = False,
+    debug_latency: bool = False,
 ) -> None:
     """VAD-segmented offline ASR with optional concurrent speaker diarization.
 
@@ -499,6 +524,7 @@ def run_offline_vad_streaming(
     *progress_callback*: called with elapsed_seconds after each audio chunk.
     *json_output*: emit each segment as a JSON line instead of styled text.
     *no_color*: disable ANSI colour codes in transcript output.
+    *debug_latency*: print per-segment endpoint→text timing to stderr.
     """
     # Build the output console once — reuse for every segment in this call.
     _out_console = (
@@ -513,16 +539,28 @@ def run_offline_vad_streaming(
     elapsed_s = 0.0
 
     def _submit(samples: np.ndarray, start_s: float, end_s: float) -> None:
-        asr_f = executor.submit(_run_asr_full, recognizer, samples, sample_rate)
+        endpoint_wall = time.perf_counter()
+        asr_f = executor.submit(_run_asr_full_timed, recognizer, samples, sample_rate)
         diar_f = (
             executor.submit(diarization.process, samples)
             if diarization is not None
             else None
         )
-        pending.append(_PendingSegment(asr_f, diar_f, start_s, end_s))
+        pending.append(_PendingSegment(asr_f, diar_f, start_s, end_s, endpoint_wall))
 
     def _print_result(seg: _PendingSegment) -> None:
-        asr_result: _ASRResult = seg.asr_future.result()
+        timed: _TimedASRResult = seg.asr_future.result()
+        asr_result: _ASRResult = timed.result
+        if debug_latency:
+            queue_s = timed.decode_start_wall - seg.endpoint_wall
+            decode_s = timed.decode_done_wall - timed.decode_start_wall
+            total_s = timed.decode_done_wall - seg.endpoint_wall
+            print(
+                f"[latency] segment {seg.start_s:.2f}-{seg.end_s:.2f}s  "
+                f"queue={queue_s:.3f}s  decode={decode_s:.3f}s  "
+                f"endpoint→text={total_s:.3f}s",
+                file=sys.stderr,
+            )
         text = asr_result.text
         if not text:
             return

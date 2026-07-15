@@ -95,13 +95,22 @@ import argparse
 from contextlib import nullcontext
 import sys
 import tarfile
+import tempfile
+from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
 
 from rich.console import Console
 
 from . import ConfigError
-from .asr_engine import build_diarization, build_offline_recognizer, build_punctuation, build_recognizer, build_vad
+from .asr_engine import (
+    build_diarization,
+    build_offline_recognizer,
+    build_punctuation,
+    build_recognizer,
+    build_vad,
+    warmup_offline_recognizer,
+)
 from .utils import download_file as _download_file
 from .utils import run_cli as _run_cli
 from .utils import safe_tar_members as _safe_tar_members
@@ -157,6 +166,17 @@ def _validate_runtime_args(args: argparse.Namespace) -> None:
         _error(f"--chunk-size must be > 0, got {args.chunk_size}")
     if args.threads <= 0:
         _error(f"--threads must be > 0, got {args.threads}")
+    if args.vad_min_silence_duration <= 0:
+        _error(f"--vad-min-silence-duration must be > 0, got {args.vad_min_silence_duration}")
+    if not 0 < args.vad_threshold < 1:
+        _error(f"--vad-threshold must be between 0 and 1, got {args.vad_threshold}")
+    if args.vad_min_speech_duration <= 0:
+        _error(f"--vad-min-speech-duration must be > 0, got {args.vad_min_speech_duration}")
+    if args.vad_max_speech_duration <= args.vad_min_speech_duration:
+        _error(
+            f"--vad-max-speech-duration ({args.vad_max_speech_duration}) must be > "
+            f"--vad-min-speech-duration ({args.vad_min_speech_duration})"
+        )
     if args.speaker_tag and not args.diarization:
         _error("--speaker-tag requires --diarization")
     if args.num_speakers == 0 or args.num_speakers < -1:
@@ -165,8 +185,8 @@ def _validate_runtime_args(args: argparse.Namespace) -> None:
         _error("--denoise is only supported with --wav (not --mic or --pipe)")
     if args.output and args.wav and len(args.wav) > 1:
         _error("--output can only be used with a single --wav file; use --output-dir for batch mode")
-    if args.output_dir and not args.wav:
-        _error("--output-dir requires --wav (use --output for single-file pipe output)")
+    if args.output_dir and not args.wav and args.pipe:
+        _error("--output-dir is not supported with --pipe; use --output instead")
     if args.translate:
         if not args.offline:
             _error(
@@ -256,6 +276,51 @@ def parse_args() -> argparse.Namespace:
         help=(
             "Ten-VAD model variant to use when --vad-model is ten-vad "
             "(default: ten-vad.int8.onnx)."
+        ),
+    )
+    parser.add_argument(
+        "--vad-min-silence-duration",
+        type=float,
+        default=0.5,
+        metavar="SECONDS",
+        help=(
+            "Offline pipeline only: seconds of trailing silence before an utterance "
+            "is handed to the recognizer. Lower values reduce end-to-end latency at "
+            "the risk of cutting off a segment mid-word during natural pauses."
+        ),
+    )
+    parser.add_argument(
+        "--vad-threshold",
+        type=float,
+        default=0.1,
+        metavar="0-1",
+        help=(
+            "Offline pipeline only: speech-probability threshold for the VAD. "
+            "Lower values trigger speech detection more easily (more sensitive, "
+            "more false positives on noise)."
+        ),
+    )
+    parser.add_argument(
+        "--vad-min-speech-duration",
+        type=float,
+        default=0.25,
+        metavar="SECONDS",
+        help=(
+            "Offline pipeline only: minimum speech duration for the VAD to emit a "
+            "segment. Lower values (e.g. 0.1) let short utterances like single-word "
+            "commands through; too low risks decoding noise blips."
+        ),
+    )
+    parser.add_argument(
+        "--vad-max-speech-duration",
+        type=float,
+        default=20.0,
+        metavar="SECONDS",
+        help=(
+            "Offline pipeline only: force-cut a segment once it reaches this length, "
+            "even without a pause. During continuous speech with no natural silence, "
+            "this bounds the worst-case wait before any text appears — lower it for "
+            "more frequent feedback during long, uninterrupted dictation."
         ),
     )
     parser.add_argument(
@@ -351,13 +416,29 @@ def parse_args() -> argparse.Namespace:
         "--output",
         default="",
         metavar="PATH",
-        help="Output file for transcription (format inferred from extension: .srt, .vtt, .txt; single WAV only)",
+        help=(
+            "Output file for transcription (format inferred from extension: "
+            ".srt, .vtt, .txt; single WAV only, or --mic)"
+        ),
     )
     parser.add_argument(
         "--output-dir",
         default="",
         metavar="DIR",
-        help="Output directory for batch transcription (one file per WAV, format from --output-format)",
+        help=(
+            "Output directory for transcription (one file per WAV in batch mode, "
+            "or one auto-named file per --mic session; format from --output-format)"
+        ),
+    )
+    parser.add_argument(
+        "--no-save-transcript",
+        action="store_true",
+        help=(
+            "Microphone mode only: by default, a finished or Ctrl+C-interrupted "
+            "--mic session is auto-saved as a timestamped .txt file under the "
+            "system temp directory unless --output/--output-dir was given. "
+            "Pass this to disable the automatic save entirely."
+        ),
     )
     parser.add_argument(
         "--output-format",
@@ -391,6 +472,16 @@ def parse_args() -> argparse.Namespace:
             "(\"speaker\" key added when --diarization is active). "
             "Partial hypotheses are suppressed in this mode. "
             "Example: sherox.asr --mic --json | jq -r '.text'"
+        ),
+    )
+    parser.add_argument(
+        "--debug-latency",
+        action="store_true",
+        help=(
+            "Offline pipeline only: print per-segment timing to stderr — "
+            "endpoint (VAD cutoff) to decode-start, decode duration, and "
+            "endpoint-to-text total. Use this to find where latency is actually "
+            "going before tuning VAD/thread settings."
         ),
     )
     return parser.parse_args()
@@ -998,6 +1089,10 @@ def _main_impl() -> None:
         offline=args.offline,
         vad_type=args.vad_type,
         ten_vad_model=args.ten_vad_model,
+        vad_min_silence_duration=args.vad_min_silence_duration,
+        vad_threshold=args.vad_threshold,
+        vad_min_speech_duration=args.vad_min_speech_duration,
+        vad_max_speech_duration=args.vad_max_speech_duration,
         language=args.language,
         show_mic_level=not args.no_mic_level,
         diarization=args.diarization,
@@ -1012,6 +1107,7 @@ def _main_impl() -> None:
         translate=args.translate,
         no_color=args.no_color,
         json_output=args.json_output,
+        debug_latency=args.debug_latency,
     )
 
     global _json_mode
@@ -1070,6 +1166,7 @@ def _main_impl() -> None:
     # Build models once before any batch processing.
     if cfg.offline:
         recognizer = build_offline_recognizer(cfg)
+        warmup_offline_recognizer(recognizer, cfg.sample_rate)
         vad_sample_rate = cfg.sample_rate  # WAV path uses cfg.sample_rate; mic path overrides below
         cfg.sample_rate = vad_sample_rate
         vad = build_vad(cfg)
@@ -1145,6 +1242,7 @@ def _main_impl() -> None:
                         progress_callback=_progress_cb,
                         json_output=cfg.json_output,
                         no_color=cfg.no_color,
+                        debug_latency=cfg.debug_latency,
                     )
                 else:
                     run_streaming(
@@ -1192,6 +1290,7 @@ def _main_impl() -> None:
                 punctuation=punctuator,
                 json_output=cfg.json_output,
                 no_color=cfg.no_color,
+                debug_latency=cfg.debug_latency,
             )
         else:
             run_streaming(
@@ -1213,6 +1312,10 @@ def _main_impl() -> None:
             _info(f"Output written to: {args.output}")
     else:
         # Microphone mode — rebuild VAD with capture_rate so it matches input.
+        # Collect subtitles unless the user explicitly opted out of the
+        # automatic temp-dir save AND didn't ask for an explicit --output(-dir).
+        want_transcript = bool(args.output) or bool(args.output_dir) or not args.no_save_transcript
+        subtitles: list[tuple[float, float, str]] | None = [] if want_transcript else None
         if cfg.offline:
             cfg.sample_rate = args.capture_rate
             vad = build_vad(cfg)
@@ -1227,8 +1330,10 @@ def _main_impl() -> None:
                 show_speaker_tag=args.speaker_tag,
                 word_timestamps=cfg.word_timestamps,
                 punctuation=punctuator,
+                subtitles=subtitles,
                 json_output=cfg.json_output,
                 no_color=cfg.no_color,
+                debug_latency=cfg.debug_latency,
             )
         else:
             _info("Listening on microphone — press Ctrl+C to stop.\n")
@@ -1241,10 +1346,15 @@ def _main_impl() -> None:
                 show_speaker_tag=args.speaker_tag,
                 word_timestamps=cfg.word_timestamps,
                 punctuation=punctuator,
+                subtitles=subtitles,
                 final_only=args.final_only,
                 json_output=cfg.json_output,
                 no_color=cfg.no_color,
             )
+        if subtitles:
+            out_path = _mic_transcript_path(args, model_name)
+            _write_subtitles(subtitles, out_path)
+            _info(f"Transcript saved to: {out_path}")
 
 
 def _write_subtitles(subtitles: list[tuple[float, float, str]], path: str) -> None:
@@ -1256,6 +1366,28 @@ def _write_subtitles(subtitles: list[tuple[float, float, str]], path: str) -> No
         write_vtt(subtitles, path)
     else:
         write_txt(subtitles, path)
+
+
+def _mic_transcript_stem(model_name: str) -> str:
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    return f"sherox_asr_{model_name}_{ts}"
+
+
+def _mic_transcript_path(args: argparse.Namespace, model_name: str) -> str:
+    """Resolve where to save a --mic session's transcript.
+
+    Explicit --output wins outright; --output-dir gets an auto-named file
+    inside it; otherwise falls back to a timestamped file under the system
+    temp directory so a Ctrl+C-interrupted session is never silently lost.
+    """
+    if args.output:
+        return args.output
+    stem = _mic_transcript_stem(model_name)
+    if args.output_dir:
+        out_dir = Path(args.output_dir)
+        out_dir.mkdir(parents=True, exist_ok=True)
+        return str(out_dir / f"{stem}.{args.output_format}")
+    return str(Path(tempfile.gettempdir()) / f"{stem}.{args.output_format}")
 
 
 if __name__ == "__main__":  # pragma: no cover
