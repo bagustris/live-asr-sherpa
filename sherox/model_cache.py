@@ -82,23 +82,39 @@ def migrate(project_dir: Path, model_type: str = "") -> None:
 
 def _relink(project_dir: Path, cached_dir: Path) -> None:
     project_dir.parent.mkdir(parents=True, exist_ok=True)
-    if project_dir.is_symlink() and not project_dir.exists():
+    if project_dir.is_symlink():
+        if project_dir.resolve() == cached_dir.resolve():
+            return  # already correctly linked
+        # Points somewhere else (stale target, or broken) — clear it so the
+        # symlink_to() below doesn't silently no-op and leave callers
+        # believing they got `cached_dir` when they didn't.
         project_dir.unlink()
-    if not project_dir.exists():
-        try:
-            project_dir.symlink_to(cached_dir, target_is_directory=True)
-        except OSError:
-            # Symlinks aren't available (e.g. no Developer Mode on Windows,
-            # or a filesystem like FAT32/exFAT that doesn't support them) —
-            # fall back to a real copy so the model is still usable.
-            shutil.copytree(cached_dir, project_dir)
+    elif project_dir.exists():
+        # An unexpected file or directory occupies the slot (e.g. a partial
+        # download from a crashed run) — clear it rather than leaving
+        # try_link() reporting success while `project_dir` isn't usable.
+        if project_dir.is_dir():
+            shutil.rmtree(project_dir)
+        else:
+            project_dir.unlink()
+    try:
+        project_dir.symlink_to(cached_dir, target_is_directory=True)
+    except OSError:
+        # Symlinks aren't available (e.g. no Developer Mode on Windows,
+        # or a filesystem like FAT32/exFAT that doesn't support them) —
+        # fall back to a real copy so the model is still usable.
+        shutil.copytree(cached_dir, project_dir)
 
 
 def ensure_model(model_dir: str, model_type: str, download_fn: Callable[[str, str], None]) -> str:
     """Ensure `model_dir` exists: untouched if already a real directory,
     symlinked if another project already cached it, or freshly downloaded
     via `download_fn(model_dir, model_type)` and then migrated into the
-    shared cache for reuse by sibling projects."""
+    shared cache for reuse by sibling projects.
+
+    Raises FileNotFoundError if `download_fn` returns without producing a
+    directory at `model_dir` — callers must not be handed a path that
+    doesn't actually contain a model."""
     path = Path(model_dir)
     if path.is_dir():
         return str(path)
@@ -107,7 +123,12 @@ def ensure_model(model_dir: str, model_type: str, download_fn: Callable[[str, st
 
     download_fn(model_dir, model_type)
 
-    if path.is_dir() and not path.is_symlink():
+    if not path.is_dir():
+        raise FileNotFoundError(
+            f"download_fn did not produce a model directory at '{path}'"
+        )
+
+    if not path.is_symlink():
         migrate(path, model_type)
 
     return str(path)

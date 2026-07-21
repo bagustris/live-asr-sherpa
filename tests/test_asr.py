@@ -394,10 +394,14 @@ class TestValidateModel:
         mock_dl.assert_not_called()
 
     def test_downloads_when_dir_missing(self, tmp_path):
-        missing = str(tmp_path / "no_such_dir")
-        with patch.object(main_module, "_download_model") as mock_dl:
-            main_module._validate_model(missing, "zipformer2")
-        mock_dl.assert_called_once_with(missing, "zipformer2")
+        missing = tmp_path / "no_such_dir"
+
+        def _fake_download(model_dir, model_type):
+            Path(model_dir).mkdir(parents=True)
+
+        with patch.object(main_module, "_download_model", side_effect=_fake_download) as mock_dl:
+            main_module._validate_model(str(missing), "zipformer2")
+        mock_dl.assert_called_once_with(str(missing), "zipformer2")
 
 
 # ---------------------------------------------------------------------------

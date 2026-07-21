@@ -197,6 +197,12 @@ def ensure_model_dir(model_dir: str, model_type: str = "") -> str:
     For library consumers (e.g. proscor) that want the same "auto-download
     into models/ on first use" behavior as the sherox CLI without
     reimplementing the download/extraction logic themselves.
+
+    `model_type` defaults to "" (auto-detect from `model_dir`'s basename,
+    same as omitting --model-type on the CLI). Pass it explicitly whenever
+    `model_dir`'s name doesn't already identify the model — otherwise
+    `_download_model` may fall back to sherox's default English model
+    instead of the one you intended.
     """
     from . import model_cache
     from .asr import _download_model
