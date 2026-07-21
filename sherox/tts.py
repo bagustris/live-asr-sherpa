@@ -1091,7 +1091,7 @@ def synthesise_to_file(tts, text: str, cfg: TtsConfig) -> Optional[tuple[np.ndar
 
         audio = tts.model.generate(text, gen_config)
         samples = np.array(audio.samples, dtype=np.float32)
-        sample_rate = audio.sample_rate
+        sample_rate = tts.sample_rate
 
         if should_save:
             soundfile = _require_soundfile()

@@ -2,6 +2,9 @@ from __future__ import annotations
 
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
+
+import numpy as np
 
 from .config import Config
 
@@ -300,6 +303,20 @@ def build_offline_recognizer(cfg: Config):
     )
 
 
+def warmup_offline_recognizer(recognizer: Any, sample_rate: int) -> None:
+    """Run one throwaway decode to pay ONNX Runtime's cold-start cost up front.
+
+    The first call into a freshly-built OfflineRecognizer is slower than
+    subsequent ones (session thread-pool spin-up, kernel/algo selection).
+    Absorbing that cost here — during "Loading model…" — keeps it off the
+    user's first spoken utterance.
+    """
+    silence = np.zeros(int(sample_rate * 0.2), dtype=np.float32)
+    stream = recognizer.create_stream()
+    stream.accept_waveform(sample_rate, silence)
+    recognizer.decode_stream(stream)
+
+
 def build_vad(cfg: Config):
     """Build a VAD (Silero or Ten-VAD) for segmenting live audio into utterances.
 
@@ -320,6 +337,7 @@ def build_vad(cfg: Config):
                 threshold=cfg.vad_threshold,
                 min_silence_duration=cfg.vad_min_silence_duration,
                 min_speech_duration=cfg.vad_min_speech_duration,
+                max_speech_duration=cfg.vad_max_speech_duration,
             ),
             sample_rate=cfg.sample_rate,
             num_threads=cfg.num_threads,
@@ -331,6 +349,7 @@ def build_vad(cfg: Config):
                 threshold=cfg.vad_threshold,
                 min_silence_duration=cfg.vad_min_silence_duration,
                 min_speech_duration=cfg.vad_min_speech_duration,
+                max_speech_duration=cfg.vad_max_speech_duration,
             ),
             sample_rate=cfg.sample_rate,
             num_threads=cfg.num_threads,

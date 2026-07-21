@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-07-15
+
 ### Added
 - `sherox.wake`: new wake-word detection subcommand backed by
   `livekit-wakeword`, supporting custom ONNX models (any language) from a
@@ -24,6 +26,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   are unaffected.
 - `sherox list-models`: registry now includes `eng-kitten`, the
   Supertonic-3 entry, and the `wake` module.
+- `--model-type nemo_ctc --language en`: auto-downloads
+  `sherpa-onnx-nemo-ctc-en-conformer-medium` by default (small variant
+  available via explicit `--model-dir`), exposing per-word CTC confidence
+  for English without a manual download step.
+- `sherox.asr --vad-min-silence-duration`, `--vad-threshold`,
+  `--vad-min-speech-duration`: tunable VAD sensitivity/timing for the
+  offline pipeline (previously only settable through `Config`, not the
+  CLI), trading segmentation safety for lower end-to-end latency.
+- `sherox.asr --vad-max-speech-duration`: caps how long the offline VAD
+  will accumulate audio without a pause before force-cutting a segment
+  (sherpa-onnx's own default is 20s and was previously not exposed at
+  all); lower it for more frequent feedback during long, uninterrupted
+  dictation.
+- `sherox.asr --debug-latency`: prints per-segment `queue` / `decode` /
+  `endpoint→text` timing to stderr for the offline pipeline, to identify
+  where latency is actually going before tuning VAD or thread settings.
+- `sherox.asr --mic` now auto-saves its transcript when the session ends
+  or is interrupted with Ctrl+C — `--output`/`--output-dir` (previously
+  WAV/pipe-only) now also apply to mic mode, and when neither is given it
+  falls back to a timestamped file
+  (`sherox_asr_<model>_YYYYMMDD_HHMMSS.txt`) under the system temp
+  directory so a live session is never silently lost. Disable with
+  `--no-save-transcript`.
+
+### Changed
+- Offline recognizers (`sherox.asr`, `sherox.server`) now run a throwaway
+  warm-up decode right after model load, moving ONNX Runtime's cold-start
+  cost into "Loading model…" instead of the user's first spoken utterance.
+
+### Fixed
+- `sherox.tts` Supertonic backend now reports the model's actual sample
+  rate (`tts.sample_rate`) instead of an unset `audio.sample_rate`
+  attribute, which could write WAV files with the wrong rate.
 
 ## [0.8.0] - 2026-06-07
 
