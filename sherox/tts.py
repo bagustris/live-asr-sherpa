@@ -1003,8 +1003,10 @@ def synthesise_to_file(tts, text: str, cfg: TtsConfig) -> Optional[tuple[np.ndar
                 length_scale=length_scale,
                 language_id=getattr(tts, "language_id", None),
             )
-        if not cfg.play:
-            return None
+        # Always return in-memory samples, matching every other backend's
+        # contract - callers that only want the audio bytes (an API server,
+        # for example) shouldn't have to request playback to get them. The
+        # CLI's own cfg.play check decides whether to actually play them.
         soundfile = _require_soundfile()
         if should_save:
             samples, sample_rate = soundfile.read(cfg.output, dtype="float32")

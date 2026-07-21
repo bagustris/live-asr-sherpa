@@ -27,6 +27,7 @@ build-backend = "setuptools.build_meta"
 "sherox.kws"     = "sherox.kws:main"
 "sherox.wake"    = "sherox.wake:main"
 "sherox.server"  = "sherox.server:main"
+"sherox.tts_server" = "sherox.tts_server:main"
 "sherox.models"  = "sherox.models:main"
 
 [project.optional-dependencies]

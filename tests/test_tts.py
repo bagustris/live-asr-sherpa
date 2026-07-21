@@ -499,12 +499,17 @@ class TestSynthesiseToFile:
         mock_engine = MagicMock()
         tts = SimpleNamespace(backend="piper_plus", model=mock_engine)
         mock_wav = MagicMock()
+        mock_sf = MagicMock()
+        mock_sf.read.return_value = (np.array([0.1, 0.2], dtype=np.float32), 22050)
         cfg = TtsConfig(language="jpn", output="out.wav")
-        with patch("wave.open") as mock_wave_open:
+        with patch("wave.open") as mock_wave_open, \
+             patch.object(tts_module, "_require_soundfile", return_value=mock_sf):
             mock_wave_open.return_value.__enter__.return_value = mock_wav
-            result = tts_module.synthesise_to_file(tts, "こんにちは", cfg)
-        assert result is None
+            samples, sample_rate = tts_module.synthesise_to_file(tts, "こんにちは", cfg)
+        assert sample_rate == 22050
+        assert samples.dtype == np.float32
         mock_engine.synthesize.assert_called_once()
+        mock_sf.read.assert_called_once_with("out.wav", dtype="float32")
 
     def test_reads_piper_plus_output_for_playback(self):
         mock_engine = MagicMock()
@@ -1163,7 +1168,7 @@ class TestSupertonicTts:
 
     def test_build_tts_supertonic(self, tmp_path):
         meta = tts_module._TTS_MODELS["rus"]
-        model_dir = tmp_path / meta["extracted"]
+        model_dir = tmp_path / "models" / "supertonic" / meta["extracted"]
         model_dir.mkdir(parents=True)
         for f in meta["files"].values():
             (model_dir / f).touch()
