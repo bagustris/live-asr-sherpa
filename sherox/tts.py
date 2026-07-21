@@ -750,7 +750,7 @@ def _ensure_model(lang: str, model_dir: Optional[Path], project_dir: Path) -> Pa
 
     from . import model_cache
 
-    if model_cache.try_link(target_dir):
+    if model_cache.try_link(target_dir, f"tts_{lang}"):
         return target_dir
 
     # Download and extract
@@ -774,7 +774,7 @@ def _ensure_model(lang: str, model_dir: Optional[Path], project_dir: Path) -> Pa
     if not target_dir.is_dir():
         _error(f"Expected model directory not found after extraction: {target_dir}")
 
-    model_cache.migrate(target_dir)
+    model_cache.migrate(target_dir, f"tts_{lang}")
     _info(f"Model saved to '{target_dir}'.\n")
     return target_dir
 
