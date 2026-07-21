@@ -748,6 +748,11 @@ def _ensure_model(lang: str, model_dir: Optional[Path], project_dir: Path) -> Pa
     if target_dir.is_dir():
         return target_dir
 
+    from . import model_cache
+
+    if model_cache.try_link(target_dir):
+        return target_dir
+
     # Download and extract
     models_root.mkdir(parents=True, exist_ok=True)
     archive = models_root / meta["archive"]
@@ -769,6 +774,7 @@ def _ensure_model(lang: str, model_dir: Optional[Path], project_dir: Path) -> Pa
     if not target_dir.is_dir():
         _error(f"Expected model directory not found after extraction: {target_dir}")
 
+    model_cache.migrate(target_dir)
     _info(f"Model saved to '{target_dir}'.\n")
     return target_dir
 

@@ -101,6 +101,7 @@ from types import SimpleNamespace
 from rich.console import Console
 
 from . import ConfigError
+from . import model_cache
 from .asr_engine import build_diarization, build_offline_recognizer, build_punctuation, build_recognizer, build_vad
 from .utils import download_file as _download_file
 from .utils import run_cli as _run_cli
@@ -754,8 +755,7 @@ def _download_model(model_dir: str, model_type: str) -> None:
 
 
 def _validate_model(model_dir: str, model_type: str) -> None:
-    if not Path(model_dir).is_dir():
-        _download_model(model_dir, model_type)
+    model_cache.ensure_model(model_dir, model_type, _download_model)
 
 
 def _normalize_language(language: str) -> str:

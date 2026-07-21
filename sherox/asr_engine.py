@@ -184,6 +184,23 @@ def build_recognizer(cfg: Config):
     )
 
 
+def ensure_model_dir(model_dir: str, model_type: str = "") -> str:
+    """Ensure `model_dir` exists, auto-downloading it via sherox's model
+    registry (the same one `sherox.asr`'s CLI uses) if missing. Downloads are
+    shared across every project on this machine via `sherox.model_cache` — if
+    another project already downloaded this model, it's symlinked in instead
+    of being fetched again.
+
+    For library consumers (e.g. proscor) that want the same "auto-download
+    into models/ on first use" behavior as the sherox CLI without
+    reimplementing the download/extraction logic themselves.
+    """
+    from . import model_cache
+    from .asr import _download_model
+
+    return model_cache.ensure_model(model_dir, model_type, _download_model)
+
+
 def build_offline_recognizer(cfg: Config):
     """Load a Sherpa-ONNX offline recognizer for any supported offline model type.
 
