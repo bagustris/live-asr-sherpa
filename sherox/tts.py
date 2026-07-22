@@ -773,19 +773,40 @@ def parse_args() -> argparse.Namespace:
 
 # Pre-exported ONNX artifacts for jpn-sarashina-onnx, published from this
 # project — see sherox/sarashina_onnx_hf.py. Downloading these means end users
-# never need torch or the original PyTorch checkpoint for default-voice use.
+# never need torch or the original PyTorch checkpoint, including for zero-shot
+# voice cloning.
 _SARASHINA_ONNX_HF_REPO = "Bagus/Sarashina2.2-TTS-ONNX"
+_SARASHINA_ONNX_REQUIRED_FILES = (
+    "meta.json",
+    "flow_encoder.onnx",
+    "flow_estimator.onnx",
+    "hift.onnx",
+    "campplus.onnx",
+    "s3_tokenizer.onnx",
+    "s3_mel_filters.npz",
+    "llm/model.onnx",
+    "llm/genai_config.json",
+)
+
+
+def _sarashina_onnx_model_complete(target_dir: Path) -> bool:
+    return all((target_dir / name).is_file() for name in _SARASHINA_ONNX_REQUIRED_FILES)
 
 
 def _ensure_sarashina_onnx_model(target_dir: Path) -> None:
     """Download the pre-exported Sarashina ONNX artifacts if not already present."""
-    if (target_dir / "meta.json").is_file():
+    if _sarashina_onnx_model_complete(target_dir):
         return
 
     from . import model_cache  # noqa: PLC0415
 
     if model_cache.try_link(target_dir, "tts_jpn-sarashina-onnx"):
-        return
+        if _sarashina_onnx_model_complete(target_dir):
+            return
+        # The shared cache has an incomplete/stale copy (e.g. from before
+        # campplus.onnx/s3_tokenizer.onnx were added to the model) — clear it
+        # rather than silently running with files missing.
+        model_cache.invalidate(target_dir, "tts_jpn-sarashina-onnx")
 
     try:
         from huggingface_hub import snapshot_download  # noqa: PLC0415
@@ -796,12 +817,17 @@ def _ensure_sarashina_onnx_model(target_dir: Path) -> None:
         )
         raise AssertionError("unreachable") from exc
 
+    if target_dir.is_symlink():
+        # A dangling symlink (e.g. its cache target was removed independently)
+        # would otherwise make mkdir(exist_ok=True) raise FileExistsError,
+        # since exist_ok only special-cases a real directory, not a broken link.
+        target_dir.unlink()
     target_dir.mkdir(parents=True, exist_ok=True)
     _info(f"Sarashina ONNX model not found. Downloading from {_SARASHINA_ONNX_HF_REPO}…")
     snapshot_download(_SARASHINA_ONNX_HF_REPO, local_dir=str(target_dir))
 
-    if not (target_dir / "meta.json").is_file():
-        _error(f"Expected 'meta.json' not found in downloaded model at {target_dir}")
+    if not _sarashina_onnx_model_complete(target_dir):
+        _error(f"Expected files missing from downloaded model at {target_dir}")
 
     model_cache.migrate(target_dir, "tts_jpn-sarashina-onnx")
     _info(f"Model saved to '{target_dir}'.\n")
@@ -938,10 +964,6 @@ def build_tts(cfg: TtsConfig, project_dir: Path):
             backend="sarashina_onnx",
             model=runtime,
             model_dir=model_dir,
-            # Zero-shot cloning re-uses the torch-based feature extractors, which
-            # need the original checkpoint (flow.pt, campplus, …) — not the ONNX
-            # artifacts. Point them at the standard sarashina checkpoint dir.
-            torch_model_dir=str(project_dir / "models" / "sarashina"),
             prompt_cache=OrderedDict(),
         )
 
@@ -1208,8 +1230,7 @@ def synthesise_to_file(tts, text: str, cfg: TtsConfig) -> Optional[tuple[np.ndar
             key = _prompt_cache_key(audio_prompt_path)
             cached = prompt_cache.get(key)
             if cached is None:
-                torch_dir = getattr(tts, "torch_model_dir", tts.model_dir)
-                cached = extract_prompt_features(audio_prompt_path, torch_dir)
+                cached = extract_prompt_features(audio_prompt_path, tts.model_dir)
                 prompt_cache[key] = cached
             else:
                 prompt_cache.move_to_end(key)

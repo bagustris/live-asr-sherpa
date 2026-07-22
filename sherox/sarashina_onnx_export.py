@@ -13,12 +13,19 @@ It produces, under ``<out_dir>``::
     flow_encoder.onnx       tokens+prompt -> (mu, mask, spks, cond)
     flow_estimator.onnx     one flow-matching velocity step (driven by an Euler loop)
     hift.onnx               mel -> waveform (with manual STFT/ISTFT, no torch.istft)
+    campplus.onnx           speaker encoder (zero-shot voice cloning)
+    s3_tokenizer.onnx       semantic tokenizer for the --audio-prompt reference wav
+    s3_mel_filters.npz      mel filterbank asset needed by the semantic tokenizer
     meta.json               shapes / constants the runtime needs
 
 The flow estimator and HiFT vocoder use ``torch.istft``/``torch.stft`` internally,
 which the ONNX exporter cannot handle; this module substitutes equivalent
 real-valued matmul/conv implementations (:class:`_ManualSTFT`, :class:`_ManualISTFT`)
 that were validated to match the originals to <1e-3 on real mel spectrograms.
+
+campplus.onnx and s3_tokenizer.onnx, together with sherox.sarashina_audio_frontend's
+pure-numpy DSP, are what let zero-shot voice cloning run without torch too — see
+sherox.sarashina_onnx.extract_prompt_features.
 
 Run as::
 
@@ -293,6 +300,34 @@ def export(model_dir: str, out_dir: str, precision: str = "int4") -> None:
         dynamic_axes={"speech_feat": {0: "batch", 2: "seq_len"}, "generated_speech": {0: "batch", 1: "wav_len"}},
         opset_version=17, dynamo=False,
     )
+
+    # --- Export CAMPPlus speaker encoder (for zero-shot voice cloning) ---
+    print("[sarashina-onnx-export] Exporting CAMPPlus speaker encoder…")
+    from sarashina_tts.speech_encoder.speech_encoder import SpeechEncoder  # noqa: PLC0415
+
+    speech_encoder = SpeechEncoder(f"{model_dir}/campplus_cn_common.bin", device="cpu")
+    campplus = speech_encoder.model.eval()
+    dummy_fbank = torch.randn(1, 200, 80, dtype=torch.float32)
+    torch.onnx.export(
+        campplus, (dummy_fbank,), str(out / "campplus.onnx"),
+        input_names=["fbank"], output_names=["embedding"],
+        dynamic_axes={"fbank": {1: "time"}},
+        opset_version=17, dynamo=False,
+    )
+
+    # --- Bundle the S3 semantic tokenizer (already ships as ONNX upstream — no
+    # export needed, just copy the file s3tokenizer already downloaded/cached) ---
+    print("[sarashina-onnx-export] Bundling S3 semantic tokenizer…")
+    import os  # noqa: PLC0415
+    import shutil  # noqa: PLC0415
+    import s3tokenizer  # noqa: PLC0415
+
+    cache_default = os.path.join(os.path.expanduser("~"), ".cache")
+    s3_cache_dir = os.path.join(os.getenv("XDG_CACHE_HOME", cache_default), "s3tokenizer")
+    s3_onnx_path = s3tokenizer._download("speech_tokenizer_v2_25hz", s3_cache_dir)  # noqa: SLF001
+    shutil.copy2(s3_onnx_path, out / "s3_tokenizer.onnx")
+    mel_filters_asset = Path(s3tokenizer.__file__).parent / "assets" / "mel_filters.npz"
+    shutil.copy2(mel_filters_asset, out / "s3_mel_filters.npz")
 
     meta = {
         "sample_rate": _SAMPLE_RATE,

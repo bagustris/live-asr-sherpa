@@ -7,18 +7,29 @@ Hugging Face model repo::
     Sarashina2.2-TTS-ONNX/
     ├── README.md            model card (YAML frontmatter + docs)
     ├── LICENSE              verbatim Sarashina Model NonCommercial License
-    ├── NOTICE               required attribution notice
+    ├── NOTICE               required attribution notice (Sarashina + CosyVoice2)
     ├── meta.json            runtime constants
     ├── flow_encoder.onnx
     ├── flow_estimator.onnx
     ├── hift.onnx
+    ├── campplus.onnx        speaker encoder, for zero-shot voice cloning
+    ├── s3_tokenizer.onnx    semantic tokenizer, for zero-shot voice cloning
+    ├── s3_mel_filters.npz   mel filterbank asset for the semantic tokenizer
     └── llm/                 onnxruntime-genai model (model.onnx + .data + tokenizer)
 
-LICENSE COMPLIANCE: the source model is released under the *Sarashina Model
-NonCommercial License*, which requires that any redistributed derivative (this
-ONNX export is one) (a) ship a copy of the license, (b) carry the exact
-attribution notice, (c) keep a name beginning with "Sarashina", and (d) state
-"Built with Sarashina". This packager writes all of those; do not strip them.
+LICENSE COMPLIANCE — two different upstream licenses apply here:
+
+1. Everything derived from the Sarashina checkpoint itself (the LLM, flow,
+   HiFT, and CAMPPlus) is released under the *Sarashina Model NonCommercial
+   License*, which requires that any redistributed derivative (this ONNX
+   export is one) (a) ship a copy of the license, (b) carry the exact
+   attribution notice, (c) keep a name beginning with "Sarashina", and (d)
+   state "Built with Sarashina". This packager writes all of those; do not
+   strip them.
+2. s3_tokenizer.onnx is a *third-party* component from FunAudioLLM/CosyVoice2
+   (Apache 2.0, https://huggingface.co/FunAudioLLM/CosyVoice2-0.5B) — separate
+   from the Sarashina checkpoint and NOT covered by the NonCommercial terms.
+   It's attributed in NOTICE and the model card.
 
 Usage::
 
@@ -36,16 +47,29 @@ import shutil
 from pathlib import Path
 
 # Redistribution requirement (b) of the Sarashina Model NonCommercial License.
-_ATTRIBUTION_NOTICE = (
+_SARASHINA_ATTRIBUTION = (
     "Sarashina is licensed under the Sarashina Model NonCommercial License "
     "Agreement, Copyright ©SB Intuitions Corp. All Rights Reserved."
 )
+# s3_tokenizer.onnx is a third-party component, not part of the Sarashina
+# checkpoint — attributed separately under its own (Apache 2.0) license.
+_COSYVOICE2_ATTRIBUTION = (
+    "s3_tokenizer.onnx is redistributed from FunAudioLLM/CosyVoice2-0.5B "
+    "(https://huggingface.co/FunAudioLLM/CosyVoice2-0.5B), licensed under "
+    "Apache License 2.0, Copyright FunAudioLLM. Not covered by the Sarashina "
+    "NonCommercial License above."
+)
+_ATTRIBUTION_NOTICE = _SARASHINA_ATTRIBUTION + "\n\n" + _COSYVOICE2_ATTRIBUTION
 
 _BASE_MODEL = "sbintuitions/sarashina2.2-tts"
 _LICENSE_NAME = "sarashina-model-noncommercial-license"
 _LICENSE_LINK = "https://huggingface.co/sbintuitions/sarashina2.2-tts/blob/main/LICENSE"
 
-_ARTIFACTS = ["flow_encoder.onnx", "flow_estimator.onnx", "hift.onnx", "meta.json"]
+_ARTIFACTS = [
+    "flow_encoder.onnx", "flow_estimator.onnx", "hift.onnx",
+    "campplus.onnx", "s3_tokenizer.onnx", "s3_mel_filters.npz",
+    "meta.json",
+]
 
 
 def _model_card(repo_id: str, meta: dict) -> str:
@@ -83,13 +107,16 @@ ONNX Runtime export of [`{_BASE_MODEL}`](https://huggingface.co/{_BASE_MODEL}),
 a Japanese-centric zero-shot voice-cloning TTS model built on a 0.5B-parameter
 Llama backbone plus a CosyVoice-style flow-matching decoder and HiFT vocoder.
 
-This derivative runs the **entire inference pipeline in ONNX Runtime** — no
-PyTorch, no `transformers`, no CUDA required — making it light enough for
-CPU-only local and server deployment. The LLM stage is quantized to `{precision}`.
+This derivative runs the **entire inference pipeline in ONNX Runtime, including
+zero-shot voice cloning** — no PyTorch, no `transformers`, no CUDA required —
+making it light enough for CPU-only local and server deployment. The LLM stage
+is quantized to `{precision}`.
 
 > ⚠️ **License: NonCommercial.** This is a derivative of a model released under
 > the Sarashina Model NonCommercial License Agreement. Commercial use is **not**
 > permitted. See [`LICENSE`](LICENSE) and the attribution in [`NOTICE`](NOTICE).
+> `s3_tokenizer.onnx` is a third-party file under a separate Apache 2.0 license
+> (see `NOTICE`) — not covered by the NonCommercial terms.
 
 ## Pipeline
 
@@ -98,13 +125,21 @@ text ─▶ LLM (onnxruntime-genai, {precision}) ─▶ semantic tokens
      ─▶ flow_encoder.onnx    ─▶ mu / mask / speaker / cond
      ─▶ flow_estimator.onnx  ─▶ (Euler ODE loop, {meta.get("n_timesteps", 10)} steps) ─▶ mel
      ─▶ hift.onnx            ─▶ waveform ({meta.get("sample_rate", 24000)} Hz)
+
+--audio-prompt reference.wav (zero-shot voice cloning)
+     ─▶ numpy DSP ─▶ s3_tokenizer.onnx  ─▶ semantic tokens (LLM few-shot prime)
+                  └▶ campplus.onnx      ─▶ speaker embedding
 ```
 
 `torch.stft` / `torch.istft` in the vocoder are replaced with equivalent
 real-valued conv/matmul implementations, since the ONNX exporter cannot handle
-complex tensors. Outputs were validated against the original PyTorch model on
-real mel spectrograms (mean abs diff ~7e-4 on the vocoder; flow stages match to
-~1e-6).
+complex tensors. The reference-audio feature extraction for voice cloning
+(mel/fbank computation) is reimplemented in pure numpy. Outputs were validated
+against the original PyTorch model on real speech: vocoder mean abs diff ~7e-4,
+flow stages ~1e-6, speaker embedding cosine similarity ~0.998, semantic tokens
+match exactly in the large majority of cases (a resampling-algorithm
+difference can very occasionally flip one token to an acoustically adjacent
+codebook entry).
 
 ## Files
 
@@ -114,6 +149,9 @@ real mel spectrograms (mean abs diff ~7e-4 on the vocoder; flow stages match to
 | `flow_encoder.onnx` | tokens + prompt → conditioning tensors |
 | `flow_estimator.onnx` | one flow-matching velocity step (driven by an Euler loop) |
 | `hift.onnx` | mel spectrogram → waveform |
+| `campplus.onnx` | speaker encoder, for zero-shot voice cloning |
+| `s3_tokenizer.onnx` | semantic tokenizer for the reference wav, for zero-shot voice cloning (third-party, Apache 2.0 — see NOTICE) |
+| `s3_mel_filters.npz` | mel filterbank asset needed by `s3_tokenizer.onnx` |
 | `meta.json` | sample rate, mel channels, ODE steps, and other runtime constants |
 
 ## Usage
@@ -127,8 +165,7 @@ pip install 'sherox[tts-ja-sarashina-onnx]'
 # download this repo into models/sarashina-onnx/, then:
 sherox.tts --lang jpn-sarashina-onnx --text "こんにちは。" --output out.wav
 
-# zero-shot voice cloning (the prompt-feature extraction step additionally
-# needs the torch extras: pip install 'sherox[tts-ja-sarashina]')
+# zero-shot voice cloning — also torch-free, no extra install needed
 sherox.tts --lang jpn-sarashina-onnx \\
     --text "明日は友達と映画を見に行きます。" \\
     --audio-prompt reference.wav --audio-prompt-text "参照音声の書き起こし。" \\

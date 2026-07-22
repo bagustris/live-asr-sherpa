@@ -339,17 +339,27 @@ class TestEnsureModel:
 # ---------------------------------------------------------------------------
 
 class TestEnsureSarashinaOnnxModel:
+    def _write_complete_model(self, target: Path) -> None:
+        (target / "llm").mkdir(parents=True, exist_ok=True)
+        for name in tts_module._SARASHINA_ONNX_REQUIRED_FILES:
+            (target / name).parent.mkdir(parents=True, exist_ok=True)
+            (target / name).write_text("x")
+
     def test_noop_when_already_present(self, tmp_path):
         target = tmp_path / "sarashina-onnx"
-        target.mkdir()
-        (target / "meta.json").write_text("{}")
+        self._write_complete_model(target)
         with patch("huggingface_hub.snapshot_download") as mock_dl:
             tts_module._ensure_sarashina_onnx_model(target)
         mock_dl.assert_not_called()
 
     def test_uses_shared_cache_link_when_available(self, tmp_path):
         target = tmp_path / "sarashina-onnx"
-        with patch("sherox.model_cache.try_link", return_value=True) as mock_link, \
+
+        def fake_try_link(project_dir, model_type):
+            self._write_complete_model(project_dir)
+            return True
+
+        with patch("sherox.model_cache.try_link", side_effect=fake_try_link) as mock_link, \
              patch("huggingface_hub.snapshot_download") as mock_dl:
             tts_module._ensure_sarashina_onnx_model(target)
         mock_link.assert_called_once_with(target, "tts_jpn-sarashina-onnx")
@@ -360,8 +370,7 @@ class TestEnsureSarashinaOnnxModel:
 
         def fake_snapshot_download(repo_id, local_dir):
             assert repo_id == tts_module._SARASHINA_ONNX_HF_REPO
-            Path(local_dir).mkdir(parents=True, exist_ok=True)
-            (Path(local_dir) / "meta.json").write_text("{}")
+            self._write_complete_model(Path(local_dir))
 
         with patch("sherox.model_cache.try_link", return_value=False), \
              patch("sherox.model_cache.migrate") as mock_migrate, \
@@ -369,7 +378,7 @@ class TestEnsureSarashinaOnnxModel:
             tts_module._ensure_sarashina_onnx_model(target)
         mock_dl.assert_called_once_with(tts_module._SARASHINA_ONNX_HF_REPO, local_dir=str(target))
         mock_migrate.assert_called_once_with(target, "tts_jpn-sarashina-onnx")
-        assert (target / "meta.json").is_file()
+        assert tts_module._sarashina_onnx_model_complete(target)
 
     def test_exits_when_huggingface_hub_missing(self, tmp_path):
         target = tmp_path / "sarashina-onnx"
@@ -378,12 +387,57 @@ class TestEnsureSarashinaOnnxModel:
              pytest.raises(ConfigError):
             tts_module._ensure_sarashina_onnx_model(target)
 
-    def test_exits_when_meta_json_missing_after_download(self, tmp_path):
+    def test_exits_when_files_missing_after_download(self, tmp_path):
         target = tmp_path / "sarashina-onnx"
         with patch("sherox.model_cache.try_link", return_value=False), \
              patch("huggingface_hub.snapshot_download"), \
              pytest.raises(ConfigError):
             tts_module._ensure_sarashina_onnx_model(target)
+
+    def test_stale_cache_link_is_invalidated_and_redownloaded(self, tmp_path):
+        """A cached copy that predates campplus.onnx/s3_tokenizer.onnx being
+        added must not be silently reused — it should be invalidated and a
+        fresh download triggered instead."""
+        target = tmp_path / "sarashina-onnx"
+
+        def fake_try_link(project_dir, model_type):
+            # Simulate an old, incomplete cache: only the pre-cloning files exist.
+            project_dir.mkdir(parents=True, exist_ok=True)
+            (project_dir / "meta.json").write_text("{}")
+            return True
+
+        def fake_snapshot_download(repo_id, local_dir):
+            self._write_complete_model(Path(local_dir))
+
+        with patch("sherox.model_cache.try_link", side_effect=fake_try_link), \
+             patch("sherox.model_cache.invalidate") as mock_invalidate, \
+             patch("sherox.model_cache.migrate"), \
+             patch("huggingface_hub.snapshot_download", side_effect=fake_snapshot_download) as mock_dl:
+            tts_module._ensure_sarashina_onnx_model(target)
+
+        mock_invalidate.assert_called_once_with(target, "tts_jpn-sarashina-onnx")
+        mock_dl.assert_called_once()
+        assert tts_module._sarashina_onnx_model_complete(target)
+
+    def test_dangling_symlink_is_cleared_before_fresh_download(self, tmp_path):
+        """A broken symlink (its cache target removed independently of sherox,
+        so try_link's own cache lookup finds nothing) must not make the
+        subsequent mkdir(exist_ok=True) raise FileExistsError."""
+        target = tmp_path / "sarashina-onnx"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.symlink_to(tmp_path / "nonexistent-cache-target")
+        assert target.is_symlink() and not target.exists()
+
+        def fake_snapshot_download(repo_id, local_dir):
+            self._write_complete_model(Path(local_dir))
+
+        with patch("sherox.model_cache.try_link", return_value=False), \
+             patch("sherox.model_cache.migrate"), \
+             patch("huggingface_hub.snapshot_download", side_effect=fake_snapshot_download):
+            tts_module._ensure_sarashina_onnx_model(target)
+
+        assert not target.is_symlink()
+        assert tts_module._sarashina_onnx_model_complete(target)
 
 
 # ---------------------------------------------------------------------------
@@ -1162,7 +1216,6 @@ class TestSarashinaOnnxBackend:
         runtime.synthesise.return_value = (np.zeros(100, dtype=np.float32), 24000)
         tts = SimpleNamespace(
             backend="sarashina_onnx", model=runtime, model_dir=str(tmp_path),
-            torch_model_dir=str(tmp_path / "torch-ckpt"),
             prompt_cache=__import__("collections").OrderedDict(),
         )
         mock_sf = MagicMock()
@@ -1176,9 +1229,10 @@ class TestSarashinaOnnxBackend:
              patch.object(tts_module, "_require_soundfile", return_value=mock_sf):
             tts_module.synthesise_to_file(tts, "こんにちは。", cfg)
             tts_module.synthesise_to_file(tts, "もう一度。", cfg)
-        # Extraction runs once (against the torch checkpoint dir, not the ONNX dir)
-        # and is reused from the cache on the second call.
-        mock_extract.assert_called_once_with(str(prompt_file), str(tmp_path / "torch-ckpt"))
+        # Extraction runs once (against the ONNX model dir, which now also holds
+        # campplus.onnx / s3_tokenizer.onnx) and is reused from the cache on the
+        # second call.
+        mock_extract.assert_called_once_with(str(prompt_file), str(tmp_path))
         assert runtime.synthesise.call_count == 2
         _, kwargs = runtime.synthesise.call_args
         assert kwargs["audio_prompt_tokens"] == [1, 2, 3]

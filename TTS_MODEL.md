@@ -118,9 +118,13 @@ sherox.tts --text "こんにちは。" --lang jpn-sarashina \
 ### Sarashina ONNX (torch-free)
 
 `jpn-sarashina-onnx` runs the same model entirely in ONNX Runtime — no torch,
-`transformers`, or CUDA at inference time. The LLM stage is int4-quantized via
-`onnxruntime-genai`; the flow encoder, flow-matching estimator, and HiFT vocoder
-run as plain ONNX graphs. It is intended for light CPU-only local/server use.
+`transformers`, or CUDA at inference time, **including zero-shot voice
+cloning**. The LLM stage is int4-quantized via `onnxruntime-genai`; the flow
+encoder, flow-matching estimator, and HiFT vocoder run as plain ONNX graphs;
+the `--audio-prompt` reference-audio feature extraction (speaker embedding via
+CAMPPlus, semantic tokens via the S3 tokenizer) runs via ONNX Runtime plus
+pure-numpy mel/fbank DSP (`sherox.sarashina_audio_frontend`). It is intended
+for light CPU-only local/server use.
 
 Install the runtime deps and synthesise — the ONNX artifacts (~1.5 GB)
 auto-download on first use from
@@ -130,14 +134,21 @@ into `models/sarashina-onnx/`, no manual export step needed:
 ```bash
 pip install 'sherox[tts-ja-sarashina-onnx]'
 sherox.tts --text "こんにちは。" --lang jpn-sarashina-onnx
+
+# zero-shot voice cloning — also torch-free, no extra install needed
+sherox.tts --text "こんにちは。" --lang jpn-sarashina-onnx \
+  --audio-prompt prompt.wav --audio-prompt-text "プロンプトの文章。"
 ```
 
 Notes:
 - The LLM stage uses `repetition_penalty=1.3` by default to avoid a stuck-repeat
   failure the base model exhibits at the prompt→content handoff.
-- Zero-shot voice cloning (`--audio-prompt`) still extracts reference-audio
-  features with the torch-based extractors, so cloning additionally needs the
-  `tts-ja-sarashina` extra. Default-voice synthesis is fully torch-free.
+- The numpy DSP front-ends are validated against the original torch
+  implementations on real speech: mel/fbank max diff ~5e-4, speaker embedding
+  cosine similarity ~0.998, semantic tokens match exactly in the large
+  majority of cases (a resampling-algorithm difference can very occasionally
+  flip one token to an acoustically adjacent codebook entry — not expected to
+  be audible).
 - To re-export the ONNX artifacts yourself from the original checkpoint (e.g.
   after a model update) install `sherox[tts-ja-sarashina-onnx-export]` and run
   `python -m sherox.sarashina_onnx_export`. To republish them to Hugging Face,

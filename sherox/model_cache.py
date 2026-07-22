@@ -45,6 +45,24 @@ def try_link(project_dir: Path, model_type: str = "") -> bool:
     return True
 
 
+def invalidate(project_dir: Path, model_type: str = "") -> None:
+    """Discard a cache entry (and any symlink pointing to it) for `project_dir`.
+
+    Use when a caller discovers a cached download is incomplete or stale —
+    e.g. a newer model version ships files the cached copy predates — so the
+    next `try_link`/`migrate` cycle starts clean instead of silently reusing
+    bad data. No-op if nothing is cached."""
+    cached = cache_root() / _cache_key(project_dir, model_type)
+    if project_dir.is_symlink():
+        project_dir.unlink()
+    elif project_dir.is_dir():
+        shutil.rmtree(project_dir)
+    if cached.is_dir():
+        shutil.rmtree(cached)
+    elif cached.exists():
+        cached.unlink()
+
+
 def migrate(project_dir: Path, model_type: str = "") -> None:
     """Move an already-downloaded `project_dir` into the shared cache and
     replace it with a symlink, so sibling projects reuse it instead of

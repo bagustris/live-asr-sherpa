@@ -119,10 +119,57 @@ class TestRuntimeFlow:
 # ---------------------------------------------------------------------------
 
 class TestExtractPromptFeatures:
-    def test_missing_dependency_raises_importerror(self, tmp_path):
-        with patch.dict("sys.modules", {"sarashina_tts.generate.generate": None}):
-            with pytest.raises(ImportError):
-                rt.extract_prompt_features(str(tmp_path / "x.wav"), str(tmp_path))
+    def _make_wav(self, tmp_path, sr=22050, seconds=1.0):
+        import soundfile as sf
+        wav_path = tmp_path / "prompt.wav"
+        n = int(sr * seconds)
+        audio = (0.1 * np.sin(2 * np.pi * 220 * np.arange(n) / sr)).astype(np.float32)
+        sf.write(str(wav_path), audio, sr)
+        return wav_path
+
+    def _make_mel_filters(self, tmp_path):
+        # whisper_log_mel needs a (128, n_fft//2+1) = (128, 201) filterbank for n_fft=400.
+        path = tmp_path / "s3_mel_filters.npz"
+        np.savez(path, mel_128=np.random.RandomState(0).rand(128, 201).astype(np.float32))
+        return path
+
+    def test_extracts_tokens_embedding_and_feat(self, tmp_path):
+        wav_path = self._make_wav(tmp_path)
+        self._make_mel_filters(tmp_path)
+
+        mock_s3_sess = MagicMock()
+        mock_s3_sess.run.return_value = [np.array([[5, 6, 7]], dtype=np.int32)]
+        mock_campplus_sess = MagicMock()
+        mock_campplus_sess.run.return_value = [np.zeros((1, 192), dtype=np.float32)]
+
+        def fake_session(path, providers=None):
+            return mock_s3_sess if "s3_tokenizer" in path else mock_campplus_sess
+
+        with patch("onnxruntime.InferenceSession", side_effect=fake_session):
+            tokens, embedding, feat = rt.extract_prompt_features(str(wav_path), str(tmp_path))
+
+        assert tokens == [5, 6, 7]
+        assert embedding.shape == (1, 192)
+        assert feat.ndim == 3
+        assert feat.shape[0] == 1 and feat.shape[2] == 80
+
+    def test_uses_correct_onnx_model_paths(self, tmp_path):
+        wav_path = self._make_wav(tmp_path)
+        self._make_mel_filters(tmp_path)
+
+        mock_sess = MagicMock()
+        mock_sess.run.return_value = [np.zeros((1, 1), dtype=np.int32)]
+        seen_paths = []
+
+        def fake_session(path, providers=None):
+            seen_paths.append(path)
+            return mock_sess
+
+        with patch("onnxruntime.InferenceSession", side_effect=fake_session):
+            rt.extract_prompt_features(str(wav_path), str(tmp_path))
+
+        assert str(tmp_path / "s3_tokenizer.onnx") in seen_paths
+        assert str(tmp_path / "campplus.onnx") in seen_paths
 
 
 # ---------------------------------------------------------------------------
@@ -133,7 +180,8 @@ class TestHfPackaging:
     def _make_onnx_dir(self, tmp_path):
         d = tmp_path / "onnx"
         (d / "llm").mkdir(parents=True)
-        for name in ["flow_encoder.onnx", "flow_estimator.onnx", "hift.onnx"]:
+        for name in ["flow_encoder.onnx", "flow_estimator.onnx", "hift.onnx",
+                     "campplus.onnx", "s3_tokenizer.onnx", "s3_mel_filters.npz"]:
             (d / name).write_bytes(b"onnx")
         (d / "meta.json").write_text(json.dumps({"precision": "int4", "sample_rate": 24000, "n_timesteps": 10}))
         (d / "llm" / "model.onnx").write_bytes(b"llm")
@@ -147,6 +195,13 @@ class TestHfPackaging:
         assert "license: other" in card
         assert "base_model: sbintuitions/sarashina2.2-tts" in card
 
+    def test_attribution_covers_both_upstream_licenses(self):
+        # s3_tokenizer.onnx is a third-party (Apache 2.0) file, separate from
+        # the Sarashina checkpoint's NonCommercial terms — both must be named.
+        assert "SB Intuitions" in hf._ATTRIBUTION_NOTICE
+        assert "FunAudioLLM/CosyVoice2-0.5B" in hf._ATTRIBUTION_NOTICE
+        assert "Apache License 2.0" in hf._ATTRIBUTION_NOTICE
+
     def test_package_assembles_all_files(self, tmp_path):
         onnx = self._make_onnx_dir(tmp_path)
         ckpt = tmp_path / "ckpt"
@@ -157,6 +212,7 @@ class TestHfPackaging:
         hf.package(str(onnx), str(ckpt), str(out), "user/Sarashina2.2-TTS-ONNX")
 
         for name in ["flow_encoder.onnx", "flow_estimator.onnx", "hift.onnx",
+                     "campplus.onnx", "s3_tokenizer.onnx", "s3_mel_filters.npz",
                      "meta.json", "LICENSE", "NOTICE", "README.md", ".gitattributes"]:
             assert (out / name).is_file(), f"missing {name}"
         assert (out / "llm" / "model.onnx").is_file()
