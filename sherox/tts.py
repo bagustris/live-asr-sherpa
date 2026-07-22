@@ -73,6 +73,7 @@ Supported languages (ISO 639-3 code → model):
     zho           Chinese      — vits-icefall-zh-aishell3           (8 kHz, 174 speakers)
     jpn           Japanese     — piper-plus tsukuyomi               (22050 Hz, 1 speaker)
     jpn-sarashina Japanese     — Sarashina2.2-TTS, zero-shot        (24000 Hz, voice cloning)
+    jpn-supertonic Japanese     — Supertonic-3 (24000 Hz, 10 speakers)
     kor           Korean       — Supertonic-3 (24000 Hz, 10 speakers)
     ara           Arabic       — Supertonic-3 (24000 Hz, 10 speakers)
     bul           Bulgarian    — Supertonic-3 (24000 Hz, 10 speakers)
@@ -331,6 +332,7 @@ _SUPERTONIC_BASE: dict = {
 # Languages that already have a dedicated model in _TTS_MODELS (eng, deu, fra,
 # spa, ind, zho, jpn) keep their existing default.  All others use supertonic-3.
 # ind-supertonic provides an alternative Supertonic-3 model for Indonesian.
+# jpn-supertonic provides an alternative Supertonic-3 model for Japanese.
 _SUPERTONIC_LANGUAGES: dict[str, dict] = {
     "kor": {
         "lang_code": "ko",
@@ -436,6 +438,10 @@ _SUPERTONIC_LANGUAGES: dict[str, dict] = {
         "lang_code": "id",
         "description": "Indonesian (Supertonic-3, 10 speakers)",
     },
+    "jpn-supertonic": {
+        "lang_code": "ja",
+        "description": "Japanese (Supertonic-3, 10 speakers)",
+    },
 }
 
 # Merge supertonic entries into _TTS_MODELS
@@ -467,6 +473,8 @@ _LANGUAGE_ALIASES = {
     # Japanese Sarashina (zero-shot)
     "sarashina": "jpn-sarashina",
     "jpn_sarashina": "jpn-sarashina",
+    # Japanese Supertonic-3
+    "jpn-supertonic": "jpn-supertonic",
     # Arabic
     "ar": "ara",
     "ara": "ara",

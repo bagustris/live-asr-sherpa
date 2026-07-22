@@ -1156,6 +1156,19 @@ class TestSupertonicTts:
         assert meta["backend"] == "supertonic"
         assert meta["lang_code"] == "id"
 
+    def test_japanese_supertonic_available(self):
+        """Japanese Supertonic-3 (jpn-supertonic) should be available."""
+        meta = tts_module._TTS_MODELS["jpn-supertonic"]
+        assert meta["backend"] == "supertonic"
+        assert meta["lang_code"] == "ja"
+
+    def test_japanese_supertonic_alias_resolves(self):
+        assert tts_module._normalize_language("jpn-supertonic") == "jpn-supertonic"
+
+    def test_japanese_supertonic_shares_supertonic_url(self):
+        meta = tts_module._TTS_MODELS["jpn-supertonic"]
+        assert meta["url"] == tts_module._SUPERTONIC_BASE["url"]
+
     def test_parse_args_supertonic_lang(self):
         with patch("sys.argv", ["sherox.tts", "--lang", "kor"]):
             args = tts_module.parse_args()
