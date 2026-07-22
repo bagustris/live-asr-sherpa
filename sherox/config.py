@@ -166,6 +166,11 @@ class TtsConfig:
     audio_prompt: str = ""       # Path to reference WAV file (empty = default voice)
     audio_prompt_text: str = ""  # Transcript of the reference audio
 
+    # Sarashina backend — embed an inaudible SilentCipher watermark in the
+    # output. Off by default: it's an extra model load + a forward pass over
+    # every generated clip, which cuts against this toolkit's light/fast goal.
+    watermark: bool = False
+
 
 # ── KWS ──────────────────────────────────────────────────────────────────────
 

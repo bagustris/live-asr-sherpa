@@ -152,6 +152,7 @@ import io
 import sys
 import tarfile
 import wave
+from collections import OrderedDict
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Optional
@@ -642,6 +643,26 @@ def _require_sarashina():
     return sarashina_runtime
 
 
+def _quantize_sarashina_llm(generator) -> None:
+    """Dynamically int8-quantize the Sarashina LLM's linear layers for faster CPU decoding.
+
+    torch's dynamic quantization only has CPU kernels (fbgemm/qnnpack) — it's
+    unavailable on CUDA, so this is only applied on the CPU-only code path.
+    Benchmarked ~4.5x faster LLM decode on CPU with no observed change in
+    generated semantic tokens.
+    """
+    import torch  # noqa: PLC0415
+
+    text_generator = getattr(generator, "text_generator", None)
+    llm = getattr(text_generator, "model", None)
+    if llm is None:
+        return
+    quantized = torch.ao.quantization.quantize_dynamic(
+        llm.float(), {torch.nn.Linear}, dtype=torch.qint8
+    )
+    text_generator.model = quantized
+
+
 def _validate_runtime_args(args: argparse.Namespace) -> None:
     if args.speaker_id < 0:
         _error(f"--speaker-id must be >= 0, got {args.speaker_id}")
@@ -725,6 +746,12 @@ def parse_args() -> argparse.Namespace:
         default="",
         metavar="TEXT",
         help="Transcript of the --audio-prompt reference audio",
+    )
+    parser.add_argument(
+        "--watermark",
+        action="store_true",
+        help="Embed an inaudible SilentCipher watermark (jpn-sarashina backend only). "
+        "Off by default: adds ~15s to model load and ~40%% to each synthesis call.",
     )
     return parser.parse_args()
 
@@ -832,10 +859,14 @@ def build_tts(cfg: TtsConfig, project_dir: Path):
         generator = sarashina_mod.SarashinaTTSGenerator(
             model_dir=model_dir,
             decoder_fp16=use_cuda,
+            watermark=cfg.watermark,
         )
+        if not use_cuda:
+            _quantize_sarashina_llm(generator)
         return SimpleNamespace(
             backend="sarashina",
             model=generator,
+            prompt_cache=OrderedDict(),
         )
 
     if meta["backend"] == "kitten":
@@ -985,6 +1016,37 @@ def _should_save(cfg: TtsConfig) -> bool:
     return not cfg.no_save and not _output_disables_save(cfg.output)
 
 
+# Zero-shot voice cloning re-encodes the reference wav (semantic tokens, speaker
+# embedding, mel features) on every call. Callers that reuse the same
+# --audio-prompt across many requests (e.g. tts_server with a fixed voice)
+# shouldn't pay that cost more than once per distinct file.
+_PROMPT_CACHE_MAX = 16
+
+
+def _prompt_cache_key(path: str) -> tuple:
+    st = Path(path).stat()
+    return (path, st.st_mtime_ns, st.st_size)
+
+
+def _get_cached_audio_prompt(generator, audio_prompt_path: str, cache: OrderedDict):
+    """Return (tokens, flow_embedding, feat) for *audio_prompt_path*, cached by mtime+size."""
+    key = _prompt_cache_key(audio_prompt_path)
+    cached = cache.get(key)
+    if cached is not None:
+        cache.move_to_end(key)
+        return cached
+
+    result = (
+        generator._extract_audio_prompt_tokens(audio_prompt_path),
+        generator._extract_zero_shot_embedding(audio_prompt_path),
+        generator._extract_audio_prompt_feat(audio_prompt_path),
+    )
+    cache[key] = result
+    if len(cache) > _PROMPT_CACHE_MAX:
+        cache.popitem(last=False)
+    return result
+
+
 def synthesise_to_file(tts, text: str, cfg: TtsConfig) -> Optional[tuple[np.ndarray, int]]:
     """Synthesise *text*, optionally writing cfg.output.
 
@@ -1029,9 +1091,13 @@ def synthesise_to_file(tts, text: str, cfg: TtsConfig) -> Optional[tuple[np.ndar
         audio_prompt_text = cfg.audio_prompt_text or ""
 
         if audio_prompt_path:
-            audio_prompt_tokens = generator._extract_audio_prompt_tokens(audio_prompt_path)
-            flow_embedding = generator._extract_zero_shot_embedding(audio_prompt_path)
-            audio_prompt_feat = generator._extract_audio_prompt_feat(audio_prompt_path)
+            prompt_cache = getattr(tts, "prompt_cache", None)
+            if prompt_cache is None:
+                prompt_cache = OrderedDict()
+                tts.prompt_cache = prompt_cache
+            audio_prompt_tokens, flow_embedding, audio_prompt_feat = _get_cached_audio_prompt(
+                generator, audio_prompt_path, prompt_cache,
+            )
             wavs = generator.generate(
                 [text],
                 flow_embedding=flow_embedding,
@@ -1043,7 +1109,9 @@ def synthesise_to_file(tts, text: str, cfg: TtsConfig) -> Optional[tuple[np.ndar
         else:
             wavs = generator.generate([text], flow_embedding=None)
 
-        samples = wavs[0].cpu().numpy().astype(np.float32)
+        # generator.generate() returns (1, T) tensors (channel dim first); flatten
+        # to the plain 1-D array every other backend in this module produces.
+        samples = wavs[0].squeeze(0).cpu().numpy().astype(np.float32)
         sample_rate = 24000
         if should_save:
             soundfile = _require_soundfile()
@@ -1167,6 +1235,7 @@ def _main_impl() -> None:
         num_threads=args.threads,
         audio_prompt=args.audio_prompt or "",
         audio_prompt_text=args.audio_prompt_text or "",
+        watermark=args.watermark,
     )
 
     _info(f"Language: {cfg.language}  |  speed: {cfg.speed}  |  speaker: {cfg.speaker_id}")

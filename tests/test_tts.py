@@ -787,6 +787,27 @@ class TestRequireSarashina:
 
 
 # ---------------------------------------------------------------------------
+# _quantize_sarashina_llm
+# ---------------------------------------------------------------------------
+
+class TestQuantizeSarashinaLlm:
+    def test_replaces_text_generator_model_with_quantized_version(self):
+        torch = pytest.importorskip("torch")
+        llm = torch.nn.Linear(4, 4)
+        generator = SimpleNamespace(text_generator=SimpleNamespace(model=llm))
+
+        tts_module._quantize_sarashina_llm(generator)
+
+        assert generator.text_generator.model is not llm
+        out = generator.text_generator.model(torch.zeros(1, 4))
+        assert out.shape == (1, 4)
+
+    def test_noop_when_text_generator_missing(self):
+        generator = SimpleNamespace()
+        tts_module._quantize_sarashina_llm(generator)  # should not raise
+
+
+# ---------------------------------------------------------------------------
 # build_tts — sarashina backend
 # ---------------------------------------------------------------------------
 
@@ -804,8 +825,24 @@ class TestBuildTtsSarashina:
             result = tts_module.build_tts(cfg, tmp_path)
         assert result.backend == "sarashina"
         assert result.model is mock_generator
+        assert result.prompt_cache == {}
         call_kwargs = mock_sarashina.SarashinaTTSGenerator.call_args[1]
         assert call_kwargs["decoder_fp16"] is False
+        assert call_kwargs["watermark"] is False
+
+    def test_builds_sarashina_passes_watermark_true(self, tmp_path):
+        mock_generator = MagicMock()
+        mock_sarashina = SimpleNamespace(
+            SarashinaTTSGenerator=MagicMock(return_value=mock_generator)
+        )
+        cfg = TtsConfig(language="jpn-sarashina", watermark=True)
+        mock_torch = MagicMock()
+        mock_torch.cuda.is_available.return_value = False
+        with patch.object(tts_module, "_require_sarashina", return_value=mock_sarashina), \
+             patch.dict("sys.modules", {"torch": mock_torch}):
+            tts_module.build_tts(cfg, tmp_path)
+        call_kwargs = mock_sarashina.SarashinaTTSGenerator.call_args[1]
+        assert call_kwargs["watermark"] is True
 
     def test_builds_sarashina_fp16_enabled_on_cuda(self, tmp_path):
         mock_generator = MagicMock()
@@ -820,6 +857,34 @@ class TestBuildTtsSarashina:
             result = tts_module.build_tts(cfg, tmp_path)
         call_kwargs = mock_sarashina.SarashinaTTSGenerator.call_args[1]
         assert call_kwargs["decoder_fp16"] is True
+
+    def test_builds_sarashina_quantizes_llm_on_cpu(self, tmp_path):
+        mock_generator = MagicMock()
+        mock_sarashina = SimpleNamespace(
+            SarashinaTTSGenerator=MagicMock(return_value=mock_generator)
+        )
+        cfg = TtsConfig(language="jpn-sarashina")
+        mock_torch = MagicMock()
+        mock_torch.cuda.is_available.return_value = False
+        with patch.object(tts_module, "_require_sarashina", return_value=mock_sarashina), \
+             patch.object(tts_module, "_quantize_sarashina_llm") as mock_quantize, \
+             patch.dict("sys.modules", {"torch": mock_torch}):
+            tts_module.build_tts(cfg, tmp_path)
+        mock_quantize.assert_called_once_with(mock_generator)
+
+    def test_builds_sarashina_skips_quantization_on_cuda(self, tmp_path):
+        mock_generator = MagicMock()
+        mock_sarashina = SimpleNamespace(
+            SarashinaTTSGenerator=MagicMock(return_value=mock_generator)
+        )
+        cfg = TtsConfig(language="jpn-sarashina")
+        mock_torch = MagicMock()
+        mock_torch.cuda.is_available.return_value = True
+        with patch.object(tts_module, "_require_sarashina", return_value=mock_sarashina), \
+             patch.object(tts_module, "_quantize_sarashina_llm") as mock_quantize, \
+             patch.dict("sys.modules", {"torch": mock_torch}):
+            tts_module.build_tts(cfg, tmp_path)
+        mock_quantize.assert_not_called()
 
     def test_builds_sarashina_with_custom_model_dir(self, tmp_path):
         custom_dir = tmp_path / "my_sarashina"
@@ -864,7 +929,7 @@ class TestSynthesiseToFileSarashina:
     def _make_tts(self):
         mock_generator = MagicMock()
         import torch
-        mock_wav = torch.zeros(24000)
+        mock_wav = torch.zeros(1, 24000)
         mock_generator.generate.return_value = [mock_wav]
         return SimpleNamespace(backend="sarashina", model=mock_generator)
 
@@ -904,6 +969,50 @@ class TestSynthesiseToFileSarashina:
         tts.model._extract_audio_prompt_feat.assert_called_once_with(str(prompt_file))
         tts.model.generate.assert_called_once()
         assert result[1] == 24000
+
+    def test_audio_prompt_extraction_cached_across_calls(self, tmp_path):
+        try:
+            import torch
+        except ImportError:
+            pytest.skip("torch not installed")
+        prompt_file = tmp_path / "prompt.wav"
+        prompt_file.touch()
+        tts = self._make_tts()
+        mock_sf = MagicMock()
+        cfg = TtsConfig(
+            language="jpn-sarashina",
+            output="out.wav",
+            audio_prompt=str(prompt_file),
+            audio_prompt_text="テスト音声です。",
+        )
+        with patch.object(tts_module, "_require_soundfile", return_value=mock_sf):
+            tts_module.synthesise_to_file(tts, "こんにちは。", cfg)
+            tts_module.synthesise_to_file(tts, "もう一度。", cfg)
+        tts.model._extract_audio_prompt_tokens.assert_called_once_with(str(prompt_file))
+        tts.model._extract_zero_shot_embedding.assert_called_once_with(str(prompt_file))
+        tts.model._extract_audio_prompt_feat.assert_called_once_with(str(prompt_file))
+        assert tts.model.generate.call_count == 2
+
+    def test_audio_prompt_cache_busts_on_file_change(self, tmp_path):
+        try:
+            import torch
+        except ImportError:
+            pytest.skip("torch not installed")
+        prompt_file = tmp_path / "prompt.wav"
+        prompt_file.write_bytes(b"a")
+        tts = self._make_tts()
+        mock_sf = MagicMock()
+        cfg = TtsConfig(
+            language="jpn-sarashina",
+            output="out.wav",
+            audio_prompt=str(prompt_file),
+            audio_prompt_text="テスト音声です。",
+        )
+        with patch.object(tts_module, "_require_soundfile", return_value=mock_sf):
+            tts_module.synthesise_to_file(tts, "こんにちは。", cfg)
+            prompt_file.write_bytes(b"ab")
+            tts_module.synthesise_to_file(tts, "こんにちは。", cfg)
+        assert tts.model._extract_audio_prompt_tokens.call_count == 2
 
     def test_synthesise_returns_float32(self):
         try:
@@ -953,6 +1062,16 @@ class TestParseArgsAudioPrompt:
             args = tts_module.parse_args()
         assert args.audio_prompt_text == "テスト"
 
+    def test_watermark_default_false(self):
+        with patch("sys.argv", ["sherox.tts"]):
+            args = tts_module.parse_args()
+        assert args.watermark is False
+
+    def test_watermark_flag_enables(self):
+        with patch("sys.argv", ["sherox.tts", "--watermark"]):
+            args = tts_module.parse_args()
+        assert args.watermark is True
+
 
 # ---------------------------------------------------------------------------
 # main — sarashina integration
@@ -965,7 +1084,7 @@ class TestMainSarashina:
         except ImportError:
             return None
         mock_generator = MagicMock()
-        mock_wav = torch.zeros(24000)
+        mock_wav = torch.zeros(1, 24000)
         mock_generator.generate.return_value = [mock_wav]
         return SimpleNamespace(backend="sarashina", model=mock_generator)
 
