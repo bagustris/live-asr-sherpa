@@ -29,6 +29,10 @@ Usage:
     # Sarashina without voice cloning (default voice):
     sherox.tts --text "こんにちは。" --lang jpn-sarashina
 
+    # Synthesise Japanese with the torch-free Sarashina ONNX runtime:
+    #   (requires exported artifacts — see sherox.sarashina_onnx_export)
+    sherox.tts --text "こんにちは。" --lang jpn-sarashina-onnx
+
     # Read from file:
     sherox.tts --file input.txt --lang ind
 
@@ -73,6 +77,7 @@ Supported languages (ISO 639-3 code → model):
     zho           Chinese      — vits-icefall-zh-aishell3           (8 kHz, 174 speakers)
     jpn           Japanese     — piper-plus tsukuyomi               (22050 Hz, 1 speaker)
     jpn-sarashina Japanese     — Sarashina2.2-TTS, zero-shot        (24000 Hz, voice cloning)
+    jpn-sarashina-onnx Japanese — Sarashina2.2-TTS, ONNX runtime     (24000 Hz, torch-free)
     jpn-supertonic Japanese     — Supertonic-3 (24000 Hz, 10 speakers)
     kor           Korean       — Supertonic-3 (24000 Hz, 10 speakers)
     ara           Arabic       — Supertonic-3 (24000 Hz, 10 speakers)
@@ -289,6 +294,11 @@ _TTS_MODELS: dict[str, dict] = {
         "sample_rate": 24000,
         "description": "Japanese (Sarashina2.2-TTS, zero-shot voice cloning)",
     },
+    "jpn-sarashina-onnx": {
+        "backend": "sarashina_onnx",
+        "sample_rate": 24000,
+        "description": "Japanese (Sarashina2.2-TTS, ONNX runtime, torch-free)",
+    },
     "eng-kitten": {
         "backend": "kitten",
         "url": (
@@ -474,6 +484,9 @@ _LANGUAGE_ALIASES = {
     # Japanese Sarashina (zero-shot)
     "sarashina": "jpn-sarashina",
     "jpn_sarashina": "jpn-sarashina",
+    # Japanese Sarashina ONNX (torch-free runtime)
+    "sarashina-onnx": "jpn-sarashina-onnx",
+    "jpn_sarashina_onnx": "jpn-sarashina-onnx",
     # Japanese Supertonic-3
     "jpn-supertonic": "jpn-supertonic",
     # Arabic
@@ -869,6 +882,29 @@ def build_tts(cfg: TtsConfig, project_dir: Path):
             prompt_cache=OrderedDict(),
         )
 
+    if meta["backend"] == "sarashina_onnx":
+        from .sarashina_onnx import SarashinaOnnxRuntime  # noqa: PLC0415
+
+        models_root = project_dir / "models" / "sarashina-onnx"
+        model_dir = cfg.model_dir if cfg.model_dir else str(models_root)
+        if not (Path(model_dir) / "meta.json").is_file():
+            _error(
+                f"ONNX artifacts not found in '{model_dir}'. Export them once with:\n"
+                "  python -m sherox.sarashina_onnx_export "
+                "--model-dir models/sarashina --out-dir models/sarashina-onnx"
+            )
+        runtime = SarashinaOnnxRuntime(model_dir, num_threads=cfg.num_threads)
+        return SimpleNamespace(
+            backend="sarashina_onnx",
+            model=runtime,
+            model_dir=model_dir,
+            # Zero-shot cloning re-uses the torch-based feature extractors, which
+            # need the original checkpoint (flow.pt, campplus, …) — not the ONNX
+            # artifacts. Point them at the standard sarashina checkpoint dir.
+            torch_model_dir=str(project_dir / "models" / "sarashina"),
+            prompt_cache=OrderedDict(),
+        )
+
     if meta["backend"] == "kitten":
         models_root = project_dir / "models" / "kitten"
         models_root.mkdir(parents=True, exist_ok=True)
@@ -1113,6 +1149,42 @@ def synthesise_to_file(tts, text: str, cfg: TtsConfig) -> Optional[tuple[np.ndar
         # to the plain 1-D array every other backend in this module produces.
         samples = wavs[0].squeeze(0).cpu().numpy().astype(np.float32)
         sample_rate = 24000
+        if should_save:
+            soundfile = _require_soundfile()
+            soundfile.write(cfg.output, samples, samplerate=sample_rate)
+        return samples, sample_rate
+
+    if backend == "sarashina_onnx":
+        runtime = tts.model
+        audio_prompt_path = cfg.audio_prompt or None
+
+        if audio_prompt_path:
+            from .sarashina_onnx import extract_prompt_features  # noqa: PLC0415
+
+            prompt_cache = getattr(tts, "prompt_cache", None)
+            if prompt_cache is None:
+                prompt_cache = OrderedDict()
+                tts.prompt_cache = prompt_cache
+            key = _prompt_cache_key(audio_prompt_path)
+            cached = prompt_cache.get(key)
+            if cached is None:
+                torch_dir = getattr(tts, "torch_model_dir", tts.model_dir)
+                cached = extract_prompt_features(audio_prompt_path, torch_dir)
+                prompt_cache[key] = cached
+            else:
+                prompt_cache.move_to_end(key)
+            audio_prompt_tokens, flow_embedding, prompt_feat = cached
+            samples, sample_rate = runtime.synthesise(
+                text,
+                audio_prompt_text=cfg.audio_prompt_text or "",
+                audio_prompt_tokens=audio_prompt_tokens,
+                flow_embedding=flow_embedding,
+                prompt_feat=prompt_feat,
+            )
+        else:
+            samples, sample_rate = runtime.synthesise(text)
+
+        samples = np.asarray(samples, dtype=np.float32)
         if should_save:
             soundfile = _require_soundfile()
             soundfile.write(cfg.output, samples, samplerate=sample_rate)

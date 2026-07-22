@@ -115,6 +115,37 @@ sherox.tts --text "こんにちは。" --lang jpn-sarashina \
   --audio-prompt prompt.wav --audio-prompt-text "プロンプトの文章。"
 ```
 
+### Sarashina ONNX (torch-free)
+
+`jpn-sarashina-onnx` runs the same model entirely in ONNX Runtime — no torch,
+`transformers`, or CUDA at inference time. The LLM stage is int4-quantized via
+`onnxruntime-genai`; the flow encoder, flow-matching estimator, and HiFT vocoder
+run as plain ONNX graphs. It is intended for light CPU-only local/server use.
+
+Install the runtime deps and export the ONNX artifacts once from the original
+checkpoint:
+
+```bash
+pip install 'sherox[tts-ja-sarashina-onnx-export]'   # export needs torch + onnx tooling
+python -m sherox.sarashina_onnx_export \
+  --model-dir models/sarashina --out-dir models/sarashina-onnx
+```
+
+Then synthesise (runtime only needs `sherox[tts-ja-sarashina-onnx]`):
+
+```bash
+sherox.tts --text "こんにちは。" --lang jpn-sarashina-onnx
+```
+
+Notes:
+- The LLM stage uses `repetition_penalty=1.3` by default to avoid a stuck-repeat
+  failure the base model exhibits at the prompt→content handoff.
+- Zero-shot voice cloning (`--audio-prompt`) still extracts reference-audio
+  features with the torch-based extractors, so cloning additionally needs the
+  `tts-ja-sarashina` extra. Default-voice synthesis is fully torch-free.
+- To publish the exported artifacts to Hugging Face (license-compliant layout +
+  model card), use `python -m sherox.sarashina_onnx_hf`.
+
 ## Playback and Saving
 
 By default, `sherox.tts` writes `output.wav`. Add `--play` to play the synthesized audio after saving it:

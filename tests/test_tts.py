@@ -1042,6 +1042,78 @@ class TestSynthesiseToFileSarashina:
 
 
 # ---------------------------------------------------------------------------
+# build_tts / synthesise_to_file — sarashina_onnx backend
+# ---------------------------------------------------------------------------
+
+class TestSarashinaOnnxBackend:
+    def test_language_alias_and_registry(self):
+        assert tts_module._normalize_language("sarashina-onnx") == "jpn-sarashina-onnx"
+        assert tts_module._normalize_language("jpn_sarashina_onnx") == "jpn-sarashina-onnx"
+        assert tts_module._TTS_MODELS["jpn-sarashina-onnx"]["backend"] == "sarashina_onnx"
+
+    def test_build_errors_when_artifacts_missing(self, tmp_path):
+        cfg = TtsConfig(language="jpn-sarashina-onnx", model_dir=str(tmp_path))
+        with pytest.raises(ConfigError):
+            tts_module.build_tts(cfg, tmp_path)
+
+    def test_build_constructs_runtime(self, tmp_path):
+        model_dir = tmp_path / "sarashina-onnx"
+        model_dir.mkdir()
+        (model_dir / "meta.json").write_text("{}")
+        mock_runtime = MagicMock()
+        mock_mod = SimpleNamespace(SarashinaOnnxRuntime=MagicMock(return_value=mock_runtime))
+        cfg = TtsConfig(language="jpn-sarashina-onnx", model_dir=str(model_dir), num_threads=2)
+        with patch.dict("sys.modules", {"sherox.sarashina_onnx": mock_mod}):
+            result = tts_module.build_tts(cfg, tmp_path)
+        assert result.backend == "sarashina_onnx"
+        assert result.model is mock_runtime
+        assert result.model_dir == str(model_dir)
+        mock_mod.SarashinaOnnxRuntime.assert_called_once_with(str(model_dir), num_threads=2)
+
+    def test_synthesise_default_voice(self, tmp_path):
+        runtime = MagicMock()
+        runtime.synthesise.return_value = (np.zeros(24000, dtype=np.float32), 24000)
+        tts = SimpleNamespace(backend="sarashina_onnx", model=runtime, model_dir=str(tmp_path))
+        mock_sf = MagicMock()
+        cfg = TtsConfig(language="jpn-sarashina-onnx", output="out.wav")
+        with patch.object(tts_module, "_require_soundfile", return_value=mock_sf):
+            samples, sr = tts_module.synthesise_to_file(tts, "テスト", cfg)
+        runtime.synthesise.assert_called_once_with("テスト")
+        assert sr == 24000
+        assert samples.dtype == np.float32
+        mock_sf.write.assert_called_once()
+
+    def test_synthesise_with_audio_prompt_extracts_and_caches(self, tmp_path):
+        prompt_file = tmp_path / "prompt.wav"
+        prompt_file.touch()
+        runtime = MagicMock()
+        runtime.synthesise.return_value = (np.zeros(100, dtype=np.float32), 24000)
+        tts = SimpleNamespace(
+            backend="sarashina_onnx", model=runtime, model_dir=str(tmp_path),
+            torch_model_dir=str(tmp_path / "torch-ckpt"),
+            prompt_cache=__import__("collections").OrderedDict(),
+        )
+        mock_sf = MagicMock()
+        mock_extract = MagicMock(return_value=([1, 2, 3], np.zeros(192, dtype=np.float32), np.zeros((1, 5, 80), dtype=np.float32)))
+        mock_mod = SimpleNamespace(extract_prompt_features=mock_extract)
+        cfg = TtsConfig(
+            language="jpn-sarashina-onnx", output="out.wav",
+            audio_prompt=str(prompt_file), audio_prompt_text="プロンプト。",
+        )
+        with patch.dict("sys.modules", {"sherox.sarashina_onnx": mock_mod}), \
+             patch.object(tts_module, "_require_soundfile", return_value=mock_sf):
+            tts_module.synthesise_to_file(tts, "こんにちは。", cfg)
+            tts_module.synthesise_to_file(tts, "もう一度。", cfg)
+        # Extraction runs once (against the torch checkpoint dir, not the ONNX dir)
+        # and is reused from the cache on the second call.
+        mock_extract.assert_called_once_with(str(prompt_file), str(tmp_path / "torch-ckpt"))
+        assert runtime.synthesise.call_count == 2
+        _, kwargs = runtime.synthesise.call_args
+        assert kwargs["audio_prompt_tokens"] == [1, 2, 3]
+        assert kwargs["audio_prompt_text"] == "プロンプト。"
+
+
+# ---------------------------------------------------------------------------
 # parse_args — audio-prompt args
 # ---------------------------------------------------------------------------
 
