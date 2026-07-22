@@ -122,18 +122,13 @@ sherox.tts --text "こんにちは。" --lang jpn-sarashina \
 `onnxruntime-genai`; the flow encoder, flow-matching estimator, and HiFT vocoder
 run as plain ONNX graphs. It is intended for light CPU-only local/server use.
 
-Install the runtime deps and export the ONNX artifacts once from the original
-checkpoint:
+Install the runtime deps and synthesise — the ONNX artifacts (~1.5 GB)
+auto-download on first use from
+[huggingface.co/Bagus/Sarashina2.2-TTS-ONNX](https://huggingface.co/Bagus/Sarashina2.2-TTS-ONNX)
+into `models/sarashina-onnx/`, no manual export step needed:
 
 ```bash
-pip install 'sherox[tts-ja-sarashina-onnx-export]'   # export needs torch + onnx tooling
-python -m sherox.sarashina_onnx_export \
-  --model-dir models/sarashina --out-dir models/sarashina-onnx
-```
-
-Then synthesise (runtime only needs `sherox[tts-ja-sarashina-onnx]`):
-
-```bash
+pip install 'sherox[tts-ja-sarashina-onnx]'
 sherox.tts --text "こんにちは。" --lang jpn-sarashina-onnx
 ```
 
@@ -143,8 +138,10 @@ Notes:
 - Zero-shot voice cloning (`--audio-prompt`) still extracts reference-audio
   features with the torch-based extractors, so cloning additionally needs the
   `tts-ja-sarashina` extra. Default-voice synthesis is fully torch-free.
-- To publish the exported artifacts to Hugging Face (license-compliant layout +
-  model card), use `python -m sherox.sarashina_onnx_hf`.
+- To re-export the ONNX artifacts yourself from the original checkpoint (e.g.
+  after a model update) install `sherox[tts-ja-sarashina-onnx-export]` and run
+  `python -m sherox.sarashina_onnx_export`. To republish them to Hugging Face,
+  use `python -m sherox.sarashina_onnx_hf`.
 
 ## Playback and Saving
 

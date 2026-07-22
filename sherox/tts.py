@@ -29,8 +29,8 @@ Usage:
     # Sarashina without voice cloning (default voice):
     sherox.tts --text "こんにちは。" --lang jpn-sarashina
 
-    # Synthesise Japanese with the torch-free Sarashina ONNX runtime:
-    #   (requires exported artifacts — see sherox.sarashina_onnx_export)
+    # Synthesise Japanese with the torch-free Sarashina ONNX runtime
+    #   (auto-downloads from huggingface.co/Bagus/Sarashina2.2-TTS-ONNX on first use):
     sherox.tts --text "こんにちは。" --lang jpn-sarashina-onnx
 
     # Read from file:
@@ -771,6 +771,42 @@ def parse_args() -> argparse.Namespace:
 
 # ── Model download helpers ────────────────────────────────────────────────────
 
+# Pre-exported ONNX artifacts for jpn-sarashina-onnx, published from this
+# project — see sherox/sarashina_onnx_hf.py. Downloading these means end users
+# never need torch or the original PyTorch checkpoint for default-voice use.
+_SARASHINA_ONNX_HF_REPO = "Bagus/Sarashina2.2-TTS-ONNX"
+
+
+def _ensure_sarashina_onnx_model(target_dir: Path) -> None:
+    """Download the pre-exported Sarashina ONNX artifacts if not already present."""
+    if (target_dir / "meta.json").is_file():
+        return
+
+    from . import model_cache  # noqa: PLC0415
+
+    if model_cache.try_link(target_dir, "tts_jpn-sarashina-onnx"):
+        return
+
+    try:
+        from huggingface_hub import snapshot_download  # noqa: PLC0415
+    except ImportError as exc:  # pragma: no cover - depends on environment
+        _error(
+            "huggingface_hub is required to auto-download the Sarashina ONNX model. "
+            "Install it with: pip install 'sherox[tts-ja-sarashina-onnx]'"
+        )
+        raise AssertionError("unreachable") from exc
+
+    target_dir.mkdir(parents=True, exist_ok=True)
+    _info(f"Sarashina ONNX model not found. Downloading from {_SARASHINA_ONNX_HF_REPO}…")
+    snapshot_download(_SARASHINA_ONNX_HF_REPO, local_dir=str(target_dir))
+
+    if not (target_dir / "meta.json").is_file():
+        _error(f"Expected 'meta.json' not found in downloaded model at {target_dir}")
+
+    model_cache.migrate(target_dir, "tts_jpn-sarashina-onnx")
+    _info(f"Model saved to '{target_dir}'.\n")
+
+
 def _ensure_model(lang: str, model_dir: Optional[Path], project_dir: Path) -> Path:
     """Return the resolved TTS model directory, downloading if needed."""
     lang = _normalize_language(lang)
@@ -886,13 +922,17 @@ def build_tts(cfg: TtsConfig, project_dir: Path):
         from .sarashina_onnx import SarashinaOnnxRuntime  # noqa: PLC0415
 
         models_root = project_dir / "models" / "sarashina-onnx"
-        model_dir = cfg.model_dir if cfg.model_dir else str(models_root)
-        if not (Path(model_dir) / "meta.json").is_file():
-            _error(
-                f"ONNX artifacts not found in '{model_dir}'. Export them once with:\n"
-                "  python -m sherox.sarashina_onnx_export "
-                "--model-dir models/sarashina --out-dir models/sarashina-onnx"
-            )
+        if cfg.model_dir:
+            model_dir = cfg.model_dir
+            if not (Path(model_dir) / "meta.json").is_file():
+                _error(
+                    f"ONNX artifacts not found in '{model_dir}'. Export them with:\n"
+                    "  python -m sherox.sarashina_onnx_export "
+                    "--model-dir models/sarashina --out-dir <model_dir>"
+                )
+        else:
+            _ensure_sarashina_onnx_model(models_root)
+            model_dir = str(models_root)
         runtime = SarashinaOnnxRuntime(model_dir, num_threads=cfg.num_threads)
         return SimpleNamespace(
             backend="sarashina_onnx",

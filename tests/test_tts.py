@@ -335,6 +335,58 @@ class TestEnsureModel:
 
 
 # ---------------------------------------------------------------------------
+# _ensure_sarashina_onnx_model
+# ---------------------------------------------------------------------------
+
+class TestEnsureSarashinaOnnxModel:
+    def test_noop_when_already_present(self, tmp_path):
+        target = tmp_path / "sarashina-onnx"
+        target.mkdir()
+        (target / "meta.json").write_text("{}")
+        with patch("huggingface_hub.snapshot_download") as mock_dl:
+            tts_module._ensure_sarashina_onnx_model(target)
+        mock_dl.assert_not_called()
+
+    def test_uses_shared_cache_link_when_available(self, tmp_path):
+        target = tmp_path / "sarashina-onnx"
+        with patch("sherox.model_cache.try_link", return_value=True) as mock_link, \
+             patch("huggingface_hub.snapshot_download") as mock_dl:
+            tts_module._ensure_sarashina_onnx_model(target)
+        mock_link.assert_called_once_with(target, "tts_jpn-sarashina-onnx")
+        mock_dl.assert_not_called()
+
+    def test_downloads_from_hf_when_missing(self, tmp_path):
+        target = tmp_path / "sarashina-onnx"
+
+        def fake_snapshot_download(repo_id, local_dir):
+            assert repo_id == tts_module._SARASHINA_ONNX_HF_REPO
+            Path(local_dir).mkdir(parents=True, exist_ok=True)
+            (Path(local_dir) / "meta.json").write_text("{}")
+
+        with patch("sherox.model_cache.try_link", return_value=False), \
+             patch("sherox.model_cache.migrate") as mock_migrate, \
+             patch("huggingface_hub.snapshot_download", side_effect=fake_snapshot_download) as mock_dl:
+            tts_module._ensure_sarashina_onnx_model(target)
+        mock_dl.assert_called_once_with(tts_module._SARASHINA_ONNX_HF_REPO, local_dir=str(target))
+        mock_migrate.assert_called_once_with(target, "tts_jpn-sarashina-onnx")
+        assert (target / "meta.json").is_file()
+
+    def test_exits_when_huggingface_hub_missing(self, tmp_path):
+        target = tmp_path / "sarashina-onnx"
+        with patch("sherox.model_cache.try_link", return_value=False), \
+             patch.dict("sys.modules", {"huggingface_hub": None}), \
+             pytest.raises(ConfigError):
+            tts_module._ensure_sarashina_onnx_model(target)
+
+    def test_exits_when_meta_json_missing_after_download(self, tmp_path):
+        target = tmp_path / "sarashina-onnx"
+        with patch("sherox.model_cache.try_link", return_value=False), \
+             patch("huggingface_hub.snapshot_download"), \
+             pytest.raises(ConfigError):
+            tts_module._ensure_sarashina_onnx_model(target)
+
+
+# ---------------------------------------------------------------------------
 # build_tts
 # ---------------------------------------------------------------------------
 
@@ -1069,6 +1121,26 @@ class TestSarashinaOnnxBackend:
         assert result.model is mock_runtime
         assert result.model_dir == str(model_dir)
         mock_mod.SarashinaOnnxRuntime.assert_called_once_with(str(model_dir), num_threads=2)
+
+    def test_build_auto_downloads_when_no_model_dir_given(self, tmp_path):
+        """Without an explicit --model-dir, build_tts must try to auto-download
+        rather than erroring — this is the whole point of publishing the model
+        to Hugging Face."""
+        mock_runtime = MagicMock()
+        mock_mod = SimpleNamespace(SarashinaOnnxRuntime=MagicMock(return_value=mock_runtime))
+        cfg = TtsConfig(language="jpn-sarashina-onnx")
+
+        def fake_ensure(target_dir):
+            target_dir.mkdir(parents=True, exist_ok=True)
+            (target_dir / "meta.json").write_text("{}")
+
+        with patch.dict("sys.modules", {"sherox.sarashina_onnx": mock_mod}), \
+             patch.object(tts_module, "_ensure_sarashina_onnx_model", side_effect=fake_ensure) as mock_ensure:
+            result = tts_module.build_tts(cfg, tmp_path)
+
+        expected_dir = tmp_path / "models" / "sarashina-onnx"
+        mock_ensure.assert_called_once_with(expected_dir)
+        assert result.model_dir == str(expected_dir)
 
     def test_synthesise_default_voice(self, tmp_path):
         runtime = MagicMock()

@@ -57,12 +57,15 @@ tts-ja-sarashina = [
     "sarashina2.2-tts @ git+https://github.com/sbintuitions/sarashina2.2-tts.git",
 ]
 # jpn-sarashina-onnx backend. Runtime needs only onnxruntime + onnxruntime-genai
-# (no torch). Exporting the ONNX artifacts from the original checkpoint is a
-# one-time step that additionally needs the tts-ja-sarashina extra (torch) plus
-# onnx/onnxscript below — see sherox/sarashina_onnx_export.py.
+# + huggingface_hub (no torch). The ONNX artifacts auto-download on first use
+# from https://huggingface.co/Bagus/Sarashina2.2-TTS-ONNX. Re-exporting them
+# yourself from the original checkpoint (e.g. after a model update) needs the
+# tts-ja-sarashina extra (torch) plus onnx/onnxscript below — see
+# sherox/sarashina_onnx_export.py.
 tts-ja-sarashina-onnx = [
     "onnxruntime>=1.20.0",
     "onnxruntime-genai>=0.14.0",
+    "huggingface_hub>=0.24.0",
 ]
 tts-ja-sarashina-onnx-export = [
     "sherox[tts-ja-sarashina,tts-ja-sarashina-onnx]",
