@@ -138,6 +138,41 @@ def kaldi_fbank(waveform: np.ndarray, sample_rate: int = 16000, num_mel_bins: in
     return np.log(mel_energies).astype(np.float32)
 
 
+def _mel_scale_filterbank(
+    sr: int, n_fft: int, n_mels: int, fmin: float = 0.0, fmax: float | None = None
+) -> np.ndarray:
+    """Create a mel-scale filterbank (HTK formula, librosa-compatible).
+
+    Returns
+    -------
+    (n_mels, n_fft//2 + 1) float64 matrix of triangular mel filters.
+    """
+    if fmax is None:
+        fmax = sr / 2.0
+
+    def hz_to_mel(f):
+        return 2595.0 * np.log10(1.0 + f / 700.0)
+
+    def mel_to_hz(mel):
+        return 700.0 * (10.0 ** (mel / 2595.0) - 1.0)
+
+    mel_f_min = hz_to_mel(fmin)
+    mel_f_max = hz_to_mel(fmax)
+    mel_points = np.linspace(mel_f_min, mel_f_max, n_mels + 2)
+    hz_points = mel_to_hz(mel_points)
+
+    bin_hz = np.fft.rfftfreq(n_fft, d=1.0 / sr)
+    fb = np.zeros((n_mels, len(bin_hz)), dtype=np.float64)
+
+    for m in range(n_mels):
+        left, center, right = hz_points[m : m + 3]
+        lslope = 1.0 / (center - left) if center > left else 0.0
+        rslope = 1.0 / (right - center) if right > center else 0.0
+        fb[m, :] = np.maximum(0.0, np.minimum(lslope * (bin_hz - left), rslope * (right - bin_hz)))
+
+    return fb
+
+
 def cosyvoice_mel_spectrogram(
     y: np.ndarray,
     *,
@@ -160,9 +195,7 @@ def cosyvoice_mel_spectrogram(
     -------
     (num_mels, n_frames) float32
     """
-    import librosa.filters  # noqa: PLC0415 - only needed for this one filterbank
-
-    mel_basis = librosa.filters.mel(sr=sampling_rate, n_fft=n_fft, n_mels=num_mels, fmin=fmin, fmax=fmax).astype(np.float64)
+    mel_basis = _mel_scale_filterbank(sampling_rate, n_fft, num_mels, fmin, fmax).astype(np.float64)
     window = np.hanning(win_size + 1)[:-1].astype(np.float64)
     pad = (n_fft - hop_size) // 2
     padded = np.pad(y.astype(np.float64), (pad, pad), mode="reflect")
