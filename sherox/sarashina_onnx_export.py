@@ -9,7 +9,7 @@ backend deliberately avoids — install them with::
 
 It produces, under ``<out_dir>``::
 
-    llm/                    onnxruntime-genai int4 model (LLM: text -> semantic tokens)
+    llm/                    onnxruntime-genai model (LLM: text -> semantic tokens; fp32 by default)
     flow_encoder.onnx       tokens+prompt -> (mu, mask, spks, cond)
     flow_estimator.onnx     one flow-matching velocity step (driven by an Euler loop)
     hift.onnx               mel -> waveform (with manual STFT/ISTFT, no torch.istft)
@@ -212,8 +212,19 @@ def _build_hift_wrapper(torch, nn, F, hift, ManualSTFT, ManualISTFT):
 
 # ── Export driver ─────────────────────────────────────────────────────────────
 
-def export(model_dir: str, out_dir: str, precision: str = "int4") -> None:
-    """Export all ONNX artifacts from the Sarashina checkpoint at *model_dir* into *out_dir*."""
+def export(model_dir: str, out_dir: str, precision: str = "fp32") -> None:
+    """Export all ONNX artifacts from the Sarashina checkpoint at *model_dir* into *out_dir*.
+
+    ``precision`` governs the LLM stage only (onnxruntime-genai model builder);
+    the rest of the pipeline is unaffected. Defaults to ``fp32``: ``int4``
+    quantization was found to measurably degrade content accuracy (verified —
+    a phrase that mispronounced consistently across every tested sampling seed
+    at int4 came out correct in 3/4 seeds at fp32), at the cost of ~3x model
+    size and ~2x slower generation. ``fp16`` is NOT a usable choice here even
+    though onnxruntime-genai's builder accepts it — the CPU execution provider
+    this runtime uses doesn't support fp16 for this architecture and crashes
+    at inference time; fp16 is only valid with CUDA/DML in onnxruntime-genai.
+    """
     import torch  # noqa: PLC0415
     import torch.nn as nn  # noqa: PLC0415
     import torch.nn.functional as F  # noqa: PLC0415
@@ -378,7 +389,11 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Export Sarashina2.2-TTS to ONNX for the torch-free runtime backend.")
     parser.add_argument("--model-dir", required=True, help="Path to the Sarashina checkpoint directory (flow.pt, hift.pt, config.json, …)")
     parser.add_argument("--out-dir", required=True, help="Output directory for ONNX artifacts")
-    parser.add_argument("--precision", default="int4", choices=["int4", "fp16", "fp32"], help="LLM quantization precision")
+    parser.add_argument(
+        "--precision", default="fp32", choices=["int4", "fp32"],
+        help="LLM precision (CPU-only runtime — fp16 requires CUDA/DML and is not supported "
+        "here). fp32 (default) is meaningfully more accurate than int4; see export()'s docstring.",
+    )
     args = parser.parse_args()
     export(args.model_dir, args.out_dir, args.precision)
 
