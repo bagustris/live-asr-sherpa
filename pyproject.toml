@@ -107,6 +107,6 @@ explicit = true
 [tool.uv.sources]
 torch = { index = "pytorch-cpu" }
 torchaudio = { index = "pytorch-cpu" }
-# Shared audio plumbing (resampling, safe tar extraction) lives in the local
-# sibling package audiokit; resolved via path for local development.
-audiokit = { path = "../audiokit", editable = true }
+# Shared audio plumbing (resampling, safe tar extraction). For local development,
+# you can override with: audiokit = { path = "../audiokit", editable = true }
+audiokit = { git = "https://github.com/bagustris/audiokit.git" }
