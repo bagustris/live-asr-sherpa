@@ -1461,7 +1461,7 @@ class TestSupertonicTts:
     def test_supertonic_base_metadata(self):
         meta = tts_module._SUPERTONIC_BASE
         assert meta["backend"] == "supertonic"
-        assert meta["sample_rate"] == 24000
+        assert meta["sample_rate"] == 44100
         assert "duration_predictor" in meta["files"]
         assert "text_encoder" in meta["files"]
         assert "vocoder" in meta["files"]
@@ -1553,40 +1553,43 @@ class TestSupertonicTts:
             result = tts_module.build_tts(cfg, tmp_path)
         assert result.backend == "supertonic"
         assert result.lang_code == "ru"
-        assert result.sample_rate == 24000
 
     def test_synthesise_to_file_supertonic(self):
+        """Regression guard: the real supertonic-3 model outputs 44100 Hz, not
+        the 24000 Hz sherox used to assume — sample_rate must come from the
+        generation result (audio.sample_rate), never a static/hardcoded value,
+        or the written WAV plays back at the wrong speed/pitch."""
         mock_sf = MagicMock()
         mock_tts_instance = MagicMock()
         mock_audio = MagicMock()
         mock_audio.samples = [0.1, 0.2, 0.3]
+        mock_audio.sample_rate = 44100
         mock_tts_instance.generate.return_value = mock_audio
 
         tts = SimpleNamespace(
             backend="supertonic",
             model=mock_tts_instance,
             lang_code="ko",
-            sample_rate=24000,
         )
         cfg = TtsConfig(output="out.wav", language="kor")
         with patch.object(tts_module, "_require_soundfile", return_value=mock_sf):
             samples, sr = tts_module.synthesise_to_file(tts, "안녕하세요", cfg)
-        assert sr == 24000
+        assert sr == 44100
         assert samples.dtype == np.float32
-        mock_sf.write.assert_called_once()
+        mock_sf.write.assert_called_once_with("out.wav", samples, samplerate=44100)
 
     def test_synthesise_to_file_supertonic_passes_lang(self):
         mock_sf = MagicMock()
         mock_tts_instance = MagicMock()
         mock_audio = MagicMock()
         mock_audio.samples = [0.1, 0.2]
+        mock_audio.sample_rate = 44100
         mock_tts_instance.generate.return_value = mock_audio
 
         tts = SimpleNamespace(
             backend="supertonic",
             model=mock_tts_instance,
             lang_code="ja",
-            sample_rate=24000,
         )
         cfg = TtsConfig(output="out.wav", language="jpn")
         with patch.object(tts_module, "_require_soundfile", return_value=mock_sf):

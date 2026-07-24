@@ -54,16 +54,16 @@ Usage:
     # Synthesise English with Kitten TTS (quantized, 24 kHz):
     sherox.tts --text "Hello, how are you today?" --lang eng-kitten
 
-    # Synthesise Korean (Supertonic-3, 24 kHz):
+    # Synthesise Korean (Supertonic-3, 44.1 kHz):
     sherox.tts --text "안녕하세요." --lang kor
 
-    # Synthesise Russian (Supertonic-3, 24 kHz):
+    # Synthesise Russian (Supertonic-3, 44.1 kHz):
     sherox.tts --text "Привет, как дела?" --lang rus
 
-    # Synthesise Hindi (Supertonic-3, 24 kHz):
+    # Synthesise Hindi (Supertonic-3, 44.1 kHz):
     sherox.tts --text "नमस्ते, आप कैसे हैं?" --lang hin
 
-    # Synthesise Vietnamese (Supertonic-3, 24 kHz):
+    # Synthesise Vietnamese (Supertonic-3, 44.1 kHz):
     sherox.tts --text "Xin chào, bạn khỏe không?" --lang vie
 
 Supported languages (ISO 639-3 code → model):
@@ -73,37 +73,37 @@ Supported languages (ISO 639-3 code → model):
     fra           French       — vits-piper-fr_FR-upmc-medium       (22050 Hz, 1 speaker)
     spa           Spanish      — vits-piper-es_ES-mls_10246-medium  (22050 Hz, 1 speaker)
     ind           Indonesian   — vits-piper-id_ID-news_tts-medium   (22050 Hz, 1 speaker)
-    ind-supertonic Indonesian   — Supertonic-3 (24000 Hz, 10 speakers)
+    ind-supertonic Indonesian   — Supertonic-3 (44100 Hz, 10 speakers)
     zho           Chinese      — vits-icefall-zh-aishell3           (8 kHz, 174 speakers)
     jpn           Japanese     — piper-plus tsukuyomi               (22050 Hz, 1 speaker)
     jpn-sarashina Japanese     — Sarashina2.2-TTS, zero-shot        (24000 Hz, voice cloning)
     jpn-sarashina-onnx Japanese — Sarashina2.2-TTS, ONNX runtime     (24000 Hz, torch-free)
-    jpn-supertonic Japanese     — Supertonic-3 (24000 Hz, 10 speakers)
-    kor           Korean       — Supertonic-3 (24000 Hz, 10 speakers)
-    ara           Arabic       — Supertonic-3 (24000 Hz, 10 speakers)
-    bul           Bulgarian    — Supertonic-3 (24000 Hz, 10 speakers)
-    ces           Czech        — Supertonic-3 (24000 Hz, 10 speakers)
-    dan           Danish       — Supertonic-3 (24000 Hz, 10 speakers)
-    ell           Greek        — Supertonic-3 (24000 Hz, 10 speakers)
-    est           Estonian     — Supertonic-3 (24000 Hz, 10 speakers)
-    fin           Finnish      — Supertonic-3 (24000 Hz, 10 speakers)
-    hin           Hindi        — Supertonic-3 (24000 Hz, 10 speakers)
-    hrv           Croatian     — Supertonic-3 (24000 Hz, 10 speakers)
-    hun           Hungarian    — Supertonic-3 (24000 Hz, 10 speakers)
-    ita           Italian      — Supertonic-3 (24000 Hz, 10 speakers)
-    lit           Lithuanian   — Supertonic-3 (24000 Hz, 10 speakers)
-    lav           Latvian      — Supertonic-3 (24000 Hz, 10 speakers)
-    nld           Dutch        — Supertonic-3 (24000 Hz, 10 speakers)
-    pol           Polish       — Supertonic-3 (24000 Hz, 10 speakers)
-    por           Portuguese   — Supertonic-3 (24000 Hz, 10 speakers)
-    ron           Romanian     — Supertonic-3 (24000 Hz, 10 speakers)
-    rus           Russian      — Supertonic-3 (24000 Hz, 10 speakers)
-    slk           Slovak       — Supertonic-3 (24000 Hz, 10 speakers)
-    slv           Slovenian    — Supertonic-3 (24000 Hz, 10 speakers)
-    swe           Swedish      — Supertonic-3 (24000 Hz, 10 speakers)
-    tur           Turkish      — Supertonic-3 (24000 Hz, 10 speakers)
-    ukr           Ukrainian    — Supertonic-3 (24000 Hz, 10 speakers)
-    vie           Vietnamese   — Supertonic-3 (24000 Hz, 10 speakers)
+    jpn-supertonic Japanese     — Supertonic-3 (44100 Hz, 10 speakers)
+    kor           Korean       — Supertonic-3 (44100 Hz, 10 speakers)
+    ara           Arabic       — Supertonic-3 (44100 Hz, 10 speakers)
+    bul           Bulgarian    — Supertonic-3 (44100 Hz, 10 speakers)
+    ces           Czech        — Supertonic-3 (44100 Hz, 10 speakers)
+    dan           Danish       — Supertonic-3 (44100 Hz, 10 speakers)
+    ell           Greek        — Supertonic-3 (44100 Hz, 10 speakers)
+    est           Estonian     — Supertonic-3 (44100 Hz, 10 speakers)
+    fin           Finnish      — Supertonic-3 (44100 Hz, 10 speakers)
+    hin           Hindi        — Supertonic-3 (44100 Hz, 10 speakers)
+    hrv           Croatian     — Supertonic-3 (44100 Hz, 10 speakers)
+    hun           Hungarian    — Supertonic-3 (44100 Hz, 10 speakers)
+    ita           Italian      — Supertonic-3 (44100 Hz, 10 speakers)
+    lit           Lithuanian   — Supertonic-3 (44100 Hz, 10 speakers)
+    lav           Latvian      — Supertonic-3 (44100 Hz, 10 speakers)
+    nld           Dutch        — Supertonic-3 (44100 Hz, 10 speakers)
+    pol           Polish       — Supertonic-3 (44100 Hz, 10 speakers)
+    por           Portuguese   — Supertonic-3 (44100 Hz, 10 speakers)
+    ron           Romanian     — Supertonic-3 (44100 Hz, 10 speakers)
+    rus           Russian      — Supertonic-3 (44100 Hz, 10 speakers)
+    slk           Slovak       — Supertonic-3 (44100 Hz, 10 speakers)
+    slv           Slovenian    — Supertonic-3 (44100 Hz, 10 speakers)
+    swe           Swedish      — Supertonic-3 (44100 Hz, 10 speakers)
+    tur           Turkish      — Supertonic-3 (44100 Hz, 10 speakers)
+    ukr           Ukrainian    — Supertonic-3 (44100 Hz, 10 speakers)
+    vie           Vietnamese   — Supertonic-3 (44100 Hz, 10 speakers)
 
 Language aliases (short forms also accepted):
     en / eng-us                 → eng
@@ -146,7 +146,7 @@ Notes:
     scripts may not normalise well. Use 8 kHz output; quality is acceptable for
     voice assistants and dev/test use.
 
-    Supertonic-3: shared model for 25+ languages (24 kHz, 10 speakers).  First use
+    Supertonic-3: shared model for 25+ languages (44.1 kHz, 10 speakers).  First use
     downloads ~120 MB.  Select speaker with --speaker-id 0-9, language via --lang.
 
 Models are auto-downloaded on first use into  models/<model-dir>/  at the project root.
@@ -334,7 +334,12 @@ _SUPERTONIC_BASE: dict = {
         "unicode_indexer": "unicode_indexer.bin",
         "voice_style": "voice.bin",
     },
-    "sample_rate": 24000,
+    # Informational only — synthesise_to_file reads the true rate from the
+    # generation result (audio.sample_rate), since this static value doesn't
+    # actually match the model's real output rate (see model card comment
+    # below); a prior bug used this value directly and produced audio at the
+    # wrong speed/pitch.
+    "sample_rate": 44100,
 }
 
 # Supertonic-3 supported languages: en, ko, ja, ar, bg, cs, da, de, el, es, et,
@@ -1071,7 +1076,6 @@ def build_tts(cfg: TtsConfig, project_dir: Path):
             backend="supertonic",
             model=sherpa_onnx.OfflineTts(config),
             lang_code=meta["lang_code"],
-            sample_rate=meta["sample_rate"],
         )
 
     import sherpa_onnx  # noqa: PLC0415
@@ -1326,7 +1330,7 @@ def synthesise_to_file(tts, text: str, cfg: TtsConfig) -> Optional[tuple[np.ndar
 
         audio = tts.model.generate(text, gen_config)
         samples = np.array(audio.samples, dtype=np.float32)
-        sample_rate = tts.sample_rate
+        sample_rate = audio.sample_rate
 
         if should_save:
             soundfile = _require_soundfile()
