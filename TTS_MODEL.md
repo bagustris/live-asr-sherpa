@@ -119,7 +119,9 @@ sherox.tts --text "こんにちは。" --lang jpn-sarashina \
 
 `jpn-sarashina-onnx` runs the same model entirely in ONNX Runtime — no torch,
 `transformers`, or CUDA at inference time, **including zero-shot voice
-cloning**. The LLM stage is int4-quantized via `onnxruntime-genai`; the flow
+cloning**. The LLM stage runs at fp32 via `onnxruntime-genai` (int4 quantization
+was found to measurably degrade content accuracy — see `sarashina_onnx_export.py`);
+the flow
 encoder, flow-matching estimator, and HiFT vocoder run as plain ONNX graphs;
 the `--audio-prompt` reference-audio feature extraction (speaker embedding via
 CAMPPlus, semantic tokens via the S3 tokenizer) runs via ONNX Runtime plus

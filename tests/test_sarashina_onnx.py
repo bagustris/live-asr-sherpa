@@ -213,9 +213,10 @@ class TestHfPackaging:
         d = tmp_path / "onnx"
         (d / "llm").mkdir(parents=True)
         for name in ["flow_encoder.onnx", "flow_estimator.onnx", "hift.onnx",
-                     "campplus.onnx", "s3_tokenizer.onnx", "s3_mel_filters.npz"]:
+                     "campplus.onnx", "s3_tokenizer.onnx", "s3_mel_filters.npz",
+                     "flow_rand_noise.npy", "default_prompt.wav"]:
             (d / name).write_bytes(b"onnx")
-        (d / "meta.json").write_text(json.dumps({"precision": "int4", "sample_rate": 24000, "n_timesteps": 10}))
+        (d / "meta.json").write_text(json.dumps({"precision": "fp32", "sample_rate": 24000, "n_timesteps": 10}))
         (d / "llm" / "model.onnx").write_bytes(b"llm")
         (d / "llm" / "genai_config.json").write_text("{}")
         return d
@@ -245,6 +246,7 @@ class TestHfPackaging:
 
         for name in ["flow_encoder.onnx", "flow_estimator.onnx", "hift.onnx",
                      "campplus.onnx", "s3_tokenizer.onnx", "s3_mel_filters.npz",
+                     "flow_rand_noise.npy", "default_prompt.wav",
                      "meta.json", "LICENSE", "NOTICE", "README.md", ".gitattributes"]:
             assert (out / name).is_file(), f"missing {name}"
         assert (out / "llm" / "model.onnx").is_file()

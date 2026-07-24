@@ -59,7 +59,16 @@ _COSYVOICE2_ATTRIBUTION = (
     "Apache License 2.0, Copyright FunAudioLLM. Not covered by the Sarashina "
     "NonCommercial License above."
 )
-_ATTRIBUTION_NOTICE = _SARASHINA_ATTRIBUTION + "\n\n" + _COSYVOICE2_ATTRIBUTION
+# default_prompt.wav is sourced from sbintuitions's own official demo samples,
+# not a third-party project — same NonCommercial terms as the Sarashina model.
+_DEFAULT_PROMPT_ATTRIBUTION = (
+    "default_prompt.wav is redistributed from sbintuitions/sarashina2.2-tts's "
+    "own official demo samples (samples/samples/prompt_C.wav), under the same "
+    "Sarashina Model NonCommercial License above."
+)
+_ATTRIBUTION_NOTICE = "\n\n".join(
+    [_SARASHINA_ATTRIBUTION, _COSYVOICE2_ATTRIBUTION, _DEFAULT_PROMPT_ATTRIBUTION]
+)
 
 _BASE_MODEL = "sbintuitions/sarashina2.2-tts"
 _LICENSE_NAME = "sarashina-model-noncommercial-license"
@@ -68,20 +77,27 @@ _LICENSE_LINK = "https://huggingface.co/sbintuitions/sarashina2.2-tts/blob/main/
 _ARTIFACTS = [
     "flow_encoder.onnx", "flow_estimator.onnx", "hift.onnx",
     "campplus.onnx", "s3_tokenizer.onnx", "s3_mel_filters.npz",
-    "meta.json",
+    "flow_rand_noise.npy", "default_prompt.wav", "meta.json",
 ]
 
 
 def _model_card(repo_id: str, meta: dict) -> str:
     """Return the README.md model-card text (YAML frontmatter + body)."""
     model_name = repo_id.split("/")[-1]
-    precision = meta.get("precision", "int4")
+    precision = meta.get("precision", "fp32")
+    # int4 is a real precision-loss quantization; fp32/fp16 aren't "quantized"
+    # in the sense that tag implies, so only set it when it's actually true.
+    base_model_relation_line = "\nbase_model_relation: quantized" if precision == "int4" else ""
+    precision_note = (
+        "quantized to `int4`" if precision == "int4"
+        else f"exported at `{precision}` (not quantized — full precision, chosen for "
+        "content accuracy; see below)"
+    )
     frontmatter = f"""---
 license: other
 license_name: {_LICENSE_NAME}
 license_link: LICENSE
-base_model: {_BASE_MODEL}
-base_model_relation: quantized
+base_model: {_BASE_MODEL}{base_model_relation_line}
 language:
 - ja
 - en
@@ -110,7 +126,11 @@ Llama backbone plus a CosyVoice-style flow-matching decoder and HiFT vocoder.
 This derivative runs the **entire inference pipeline in ONNX Runtime, including
 zero-shot voice cloning** — no PyTorch, no `transformers`, no CUDA required —
 making it light enough for CPU-only local and server deployment. The LLM stage
-is quantized to `{precision}`.
+is {precision_note}. `int4` quantization was found to measurably degrade
+content accuracy versus `fp32` on an otherwise identical pipeline — see
+sherox's `sarashina_onnx_export.py` docstring for the measurements. (`fp16`
+isn't an option here: onnxruntime-genai only supports it with CUDA/DML, not
+the CPU execution provider this runtime targets.)
 
 > ⚠️ **License: NonCommercial.** This is a derivative of a model released under
 > the Sarashina Model NonCommercial License Agreement. Commercial use is **not**
@@ -152,6 +172,8 @@ codebook entry).
 | `campplus.onnx` | speaker encoder, for zero-shot voice cloning |
 | `s3_tokenizer.onnx` | semantic tokenizer for the reference wav, for zero-shot voice cloning (third-party, Apache 2.0 — see NOTICE) |
 | `s3_mel_filters.npz` | mel filterbank asset needed by `s3_tokenizer.onnx` |
+| `flow_rand_noise.npy` | fixed flow-matching ODE initial noise, extracted from the reference model |
+| `default_prompt.wav` | bundled reference voice used when no `--audio-prompt` is given (see below; third-party, same NonCommercial license — see NOTICE) |
 | `meta.json` | sample rate, mel channels, ODE steps, and other runtime constants |
 
 ## Usage
@@ -170,11 +192,35 @@ sherox.tts --lang jpn-sarashina-onnx \\
     --text "明日は友達と映画を見に行きます。" \\
     --audio-prompt reference.wav --audio-prompt-text "参照音声の書き起こし。" \\
     --output cloned.wav
+
+# --seed lets you work around a bad sample for a specific phrase (see below)
+sherox.tts --lang jpn-sarashina-onnx --text "お元気ですか。" --output out.wav --seed 2
 ```
 
 The runtime uses `repetition_penalty=1.3` by default on the LLM stage; without
 it the model tends to get stuck repeating a single semantic token at the start
 of generation (a property of the base model, independent of the ONNX export).
+
+### Default voice (no `--audio-prompt`)
+
+The reference model's own [prompting guide](https://github.com/sbintuitions/sarashina2.2-tts#prompting-guide)
+states that generation quality depends heavily on having a real audio prompt —
+it describes no supported "no prompt" mode. A zero speaker-embedding fallback
+is therefore an unsupported configuration, not just a degraded one (verified:
+the original PyTorch backend is also unstable there — e.g. 5.7s of near-silence
+for a 5-character greeting with certain seeds).
+
+When `--audio-prompt` is omitted, this model bundles `default_prompt.wav`
+(sourced from `sbintuitions/sarashina2.2-tts`'s own official demo samples,
+under the same NonCommercial license — see NOTICE) and uses it automatically
+instead of a zero embedding. This is a real but partial improvement, not a
+full fix for content accuracy: some phrases that were wrong with the old
+zero-embedding fallback now decode correctly; others that were fine with it
+can come out wrong with the bundled prompt instead (a longer reference can
+suppress/truncate the LLM's generated token count for the target text,
+sometimes severely — shorter references were empirically better here). If a
+specific phrase comes out wrong, try a different `--seed`; there is no
+evidence of one seed that's reliably correct across every phrase.
 
 ## Regenerating these artifacts
 
@@ -182,6 +228,7 @@ of generation (a property of the base model, independent of the ONNX export).
 pip install 'sherox[tts-ja-sarashina-onnx-export]'
 python -m sherox.sarashina_onnx_export \\
     --model-dir <sarashina2.2-tts checkpoint> --out-dir models/sarashina-onnx
+    # add --precision int4 for a smaller/faster but less accurate LLM
 ```
 
 ## Attribution & License
