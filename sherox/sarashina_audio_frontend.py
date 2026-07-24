@@ -17,6 +17,19 @@ single semantic token to an acoustically adjacent codebook entry (observed:
 Combined with the ONNX-exported CAMPPlus speaker encoder and the S3 semantic
 tokenizer (itself already distributed as ONNX upstream), this lets zero-shot
 voice cloning run without torch — see :func:`sherox.sarashina_onnx.extract_prompt_features`.
+
+CAUTION for future edits to ``_mel_scale_filterbank``: a prior change here
+replaced the (correct) ``librosa.filters.mel`` call with a hand-rolled
+filterbank to drop the librosa dependency, and got it wrong in two ways at
+once — the HTK mel-scale formula instead of librosa's default Slaney scale,
+and no per-filter area normalization at all (librosa's default is
+``norm="slaney"``). The normalization gap alone was a ~1.0 max filter-weight
+diff — essentially a different filterbank, not numerical noise — and shipped
+as a severe, audible zero-shot-cloning quality regression (garbled,
+inconsistent pronunciation) with no test catching it. See
+``tests/test_sarashina_audio_frontend.py`` for the ground-truth pins that now
+guard against this; keep them passing (they need librosa installed to run
+for real — install it locally even though it's not a hard runtime dep).
 """
 from __future__ import annotations
 
@@ -138,10 +151,46 @@ def kaldi_fbank(waveform: np.ndarray, sample_rate: int = 16000, num_mel_bins: in
     return np.log(mel_energies).astype(np.float32)
 
 
+def _hz_to_mel_slaney(freq: np.ndarray) -> np.ndarray:
+    """Slaney-style Hz->mel (librosa's default, htk=False) — NOT the HTK formula.
+
+    This distinction matters: below 1 kHz the two scales diverge enough to
+    produce a materially different filterbank (max filter-weight diff ~0.03
+    between them), which — combined with the missing-normalization bug this
+    function was written to fix — was audible as garbled/inconsistent voice
+    cloning output. See the commit that introduced this fix for the numbers.
+    """
+    freq = np.asarray(freq, dtype=np.float64)
+    f_sp = 200.0 / 3  # linear region: 3 mels per 200 Hz, up to 1kHz
+    min_log_hz = 1000.0
+    min_log_mel = min_log_hz / f_sp  # 15.0
+    logstep = np.log(6.4) / 27.0  # step size for log region above 1kHz
+    linear = freq / f_sp
+    log_region = np.log(np.maximum(freq, 1e-12) / min_log_hz) / logstep
+    return np.where(freq >= min_log_hz, min_log_mel + log_region, linear)
+
+
+def _mel_to_hz_slaney(mel: np.ndarray) -> np.ndarray:
+    mel = np.asarray(mel, dtype=np.float64)
+    f_sp = 200.0 / 3
+    min_log_hz = 1000.0
+    min_log_mel = min_log_hz / f_sp
+    logstep = np.log(6.4) / 27.0
+    linear = f_sp * mel
+    log_region = min_log_hz * np.exp(logstep * (mel - min_log_mel))
+    return np.where(mel >= min_log_mel, log_region, linear)
+
+
 def _mel_scale_filterbank(
     sr: int, n_fft: int, n_mels: int, fmin: float = 0.0, fmax: float | None = None
 ) -> np.ndarray:
-    """Create a mel-scale filterbank (HTK formula, librosa-compatible).
+    """Mel-scale filterbank matching librosa.filters.mel's default arguments
+    (Slaney mel scale, Slaney-style per-filter area normalization) to ~1e-9 —
+    i.e. floating-point precision, not an approximation. Both the mel scale
+    *and* the normalization matter: using the (more commonly assumed) HTK mel
+    formula alone still leaves a ~0.03 max diff, and omitting normalization
+    entirely (peak=1.0 per filter, librosa's default is area-normalized)
+    leaves a ~1.0 max diff — a completely different filterbank, not noise.
 
     Returns
     -------
@@ -150,16 +199,8 @@ def _mel_scale_filterbank(
     if fmax is None:
         fmax = sr / 2.0
 
-    def hz_to_mel(f):
-        return 2595.0 * np.log10(1.0 + f / 700.0)
-
-    def mel_to_hz(mel):
-        return 700.0 * (10.0 ** (mel / 2595.0) - 1.0)
-
-    mel_f_min = hz_to_mel(fmin)
-    mel_f_max = hz_to_mel(fmax)
-    mel_points = np.linspace(mel_f_min, mel_f_max, n_mels + 2)
-    hz_points = mel_to_hz(mel_points)
+    mel_points = np.linspace(_hz_to_mel_slaney(fmin), _hz_to_mel_slaney(fmax), n_mels + 2)
+    hz_points = _mel_to_hz_slaney(mel_points)
 
     bin_hz = np.fft.rfftfreq(n_fft, d=1.0 / sr)
     fb = np.zeros((n_mels, len(bin_hz)), dtype=np.float64)
@@ -169,6 +210,9 @@ def _mel_scale_filterbank(
         lslope = 1.0 / (center - left) if center > left else 0.0
         rslope = 1.0 / (right - center) if right > center else 0.0
         fb[m, :] = np.maximum(0.0, np.minimum(lslope * (bin_hz - left), rslope * (right - bin_hz)))
+        # librosa's default norm="slaney": scale each filter by its bandwidth
+        # so wider (higher-frequency) filters don't dominate the energy.
+        fb[m, :] *= 2.0 / (hz_points[m + 2] - hz_points[m])
 
     return fb
 
