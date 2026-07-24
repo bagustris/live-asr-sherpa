@@ -405,6 +405,32 @@ class TestValidateModel:
 
 
 # ---------------------------------------------------------------------------
+# ensure_model — public alias of _validate_model, for external embedders
+# (e.g. ai-pronunciation-trainer's sherox_wrapper.py) that shouldn't have to
+# reach into a private function to get sherox's model auto-download/caching.
+# ---------------------------------------------------------------------------
+
+class TestEnsureModelPublicApi:
+    def test_delegates_to_validate_model(self, tmp_path):
+        with patch.object(main_module, "_validate_model") as mock_validate:
+            main_module.ensure_model(str(tmp_path), "nemo_transducer")
+        mock_validate.assert_called_once_with(str(tmp_path), "nemo_transducer")
+
+    def test_actually_resolves_a_model(self, tmp_path):
+        """Not mocked — proves ensure_model really does trigger the same
+        download/cache path _validate_model does, not just a same-named stub."""
+        missing = tmp_path / "no_such_dir"
+
+        def _fake_download(model_dir, model_type):
+            Path(model_dir).mkdir(parents=True)
+
+        with patch.object(main_module, "_download_model", side_effect=_fake_download) as mock_dl:
+            main_module.ensure_model(str(missing), "zipformer2")
+        mock_dl.assert_called_once_with(str(missing), "zipformer2")
+        assert missing.is_dir()
+
+
+# ---------------------------------------------------------------------------
 # _validate_runtime_args
 # ---------------------------------------------------------------------------
 
