@@ -1,6 +1,7 @@
 """Tests for sherox.server — FastAPI HTTP/WebSocket ASR API."""
 import io
 import json
+import time
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -163,6 +164,25 @@ def _make_vad(empty_side_effects: list, samples=None) -> MagicMock:
     return vad
 
 
+def _wait_until(predicate, timeout: float = 2.0, interval: float = 0.01) -> bool:
+    """Poll *predicate* until it's true or *timeout* elapses.
+
+    The WebSocket test client's `with ... as ws:` exit sends a close frame
+    but doesn't block until the server's async disconnect handler (which
+    calls vad.flush() in a `finally` block) has actually run — that happens
+    on the server's own event-loop thread, on its own schedule. Asserting
+    immediately after the `with` block exits is a real, if infrequent, race
+    (observed failing under full-suite load, never in isolation); poll for
+    it instead of hoping the scheduler is fast enough within one test.
+    """
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if predicate():
+            return True
+        time.sleep(interval)
+    return predicate()
+
+
 class TestWebSocketOffline:
     def _frame(self, n: int = 1600) -> bytes:
         return np.zeros(n, dtype=np.int16).tobytes()
@@ -217,6 +237,9 @@ class TestWebSocketOffline:
         with patch.object(srv, "build_vad", return_value=mock_vad):
             with offline_client.websocket_connect("/ws") as ws:
                 ws.send_bytes(self._frame())
+        assert _wait_until(lambda: mock_vad.flush.call_count > 0), (
+            "vad.flush() was not called within the timeout after disconnect"
+        )
         mock_vad.flush.assert_called_once()
 
     def test_multiple_segments_in_one_chunk(self, offline_client):
