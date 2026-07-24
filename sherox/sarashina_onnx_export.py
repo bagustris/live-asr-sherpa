@@ -345,6 +345,21 @@ def export(model_dir: str, out_dir: str, precision: str = "int4") -> None:
     mel_filters_asset = Path(s3tokenizer.__file__).parent / "assets" / "mel_filters.npz"
     shutil.copy2(mel_filters_asset, out / "s3_mel_filters.npz")
 
+    # --- Bundle a default reference voice for unconditioned (no --audio-prompt)
+    # synthesis. Per the reference model's own prompting guide, generation quality
+    # depends heavily on having a real audio prompt — a zero speaker-embedding
+    # fallback is not a supported configuration and produces unreliable output
+    # (verified: mispronunciation and instability, present in both backends).
+    # Sourced from sbintuitions/sarashina2.2-tts's own official demo samples
+    # (samples/samples/prompt_C.wav — chosen as the shortest clean, complete-
+    # sentence candidate available: longer references were found to suppress
+    # the LLM's generated token count for short target texts, sometimes
+    # severely), redistributed under the same Sarashina Model NonCommercial
+    # License already governing this whole model — see NOTICE.
+    print("[sarashina-onnx-export] Bundling default reference voice…")
+    default_prompt_asset = Path(__file__).parent / "assets" / "default_prompt.wav"
+    shutil.copy2(default_prompt_asset, out / "default_prompt.wav")
+
     meta = {
         "sample_rate": _SAMPLE_RATE,
         "mel_channels": _MEL_CHANNELS,
@@ -353,6 +368,7 @@ def export(model_dir: str, out_dir: str, precision: str = "int4") -> None:
         "inference_cfg_rate": _INFERENCE_CFG_RATE,
         "num_latency_tokens": _NUM_LATENCY_TOKENS,
         "precision": precision,
+        "default_prompt_text": "ただいまご契約内容を確認しておりますので少々お待ち下さいませ。",
     }
     (out / "meta.json").write_text(json.dumps(meta, indent=2))
     print(f"[sarashina-onnx-export] Done. Artifacts written to {out}")

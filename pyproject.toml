@@ -90,6 +90,9 @@ benchmark = [
 where = ["."]
 include = ["sherox*"]
 
+[tool.setuptools.package-data]
+sherox = ["assets/*.wav"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 

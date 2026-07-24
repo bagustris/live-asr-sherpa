@@ -794,6 +794,7 @@ _SARASHINA_ONNX_REQUIRED_FILES = (
     "campplus.onnx",
     "s3_tokenizer.onnx",
     "s3_mel_filters.npz",
+    "default_prompt.wav",
     "llm/model.onnx",
     "llm/genai_config.json",
 )
@@ -1229,6 +1230,18 @@ def synthesise_to_file(tts, text: str, cfg: TtsConfig) -> Optional[tuple[np.ndar
     if backend == "sarashina_onnx":
         runtime = tts.model
         audio_prompt_path = cfg.audio_prompt or None
+        audio_prompt_text = cfg.audio_prompt_text or ""
+
+        if audio_prompt_path is None:
+            # No user-supplied reference voice: fall back to the bundled default
+            # prompt rather than a zero speaker-embedding. Per the reference
+            # model's own prompting guide, generation quality depends heavily on
+            # having a real audio prompt — synthesising with no prompt at all is
+            # an unsupported configuration that produces unreliable output.
+            default_wav = Path(tts.model_dir) / "default_prompt.wav"
+            if default_wav.is_file():
+                audio_prompt_path = str(default_wav)
+                audio_prompt_text = runtime.meta.get("default_prompt_text", "")
 
         if audio_prompt_path:
             from .sarashina_onnx import extract_prompt_features  # noqa: PLC0415
@@ -1247,7 +1260,7 @@ def synthesise_to_file(tts, text: str, cfg: TtsConfig) -> Optional[tuple[np.ndar
             audio_prompt_tokens, flow_embedding, prompt_feat = cached
             samples, sample_rate = runtime.synthesise(
                 text,
-                audio_prompt_text=cfg.audio_prompt_text or "",
+                audio_prompt_text=audio_prompt_text,
                 audio_prompt_tokens=audio_prompt_tokens,
                 flow_embedding=flow_embedding,
                 prompt_feat=prompt_feat,

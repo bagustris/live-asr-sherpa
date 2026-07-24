@@ -1238,6 +1238,45 @@ class TestSarashinaOnnxBackend:
         assert kwargs["audio_prompt_tokens"] == [1, 2, 3]
         assert kwargs["audio_prompt_text"] == "プロンプト。"
 
+    def test_synthesise_no_audio_prompt_falls_back_to_bundled_default(self, tmp_path):
+        """When the caller supplies no --audio-prompt but the model directory has
+        a bundled default_prompt.wav (shipped with every exported ONNX model),
+        it must be used automatically instead of a zero speaker-embedding —
+        see sarashina_onnx_export.py for why (the reference model's own
+        prompting guide: unconditioned generation is not a supported mode)."""
+        (tmp_path / "default_prompt.wav").touch()
+        runtime = MagicMock()
+        runtime.meta = {"default_prompt_text": "続いて本人確認のため生年月日をお知らせいただけますでしょうか？"}
+        runtime.synthesise.return_value = (np.zeros(100, dtype=np.float32), 24000)
+        tts = SimpleNamespace(
+            backend="sarashina_onnx", model=runtime, model_dir=str(tmp_path),
+            prompt_cache=__import__("collections").OrderedDict(),
+        )
+        mock_sf = MagicMock()
+        mock_extract = MagicMock(return_value=([9, 9], np.zeros(192, dtype=np.float32), np.zeros((1, 3, 80), dtype=np.float32)))
+        mock_mod = SimpleNamespace(extract_prompt_features=mock_extract)
+        cfg = TtsConfig(language="jpn-sarashina-onnx", output="out.wav")
+        with patch.dict("sys.modules", {"sherox.sarashina_onnx": mock_mod}), \
+             patch.object(tts_module, "_require_soundfile", return_value=mock_sf):
+            tts_module.synthesise_to_file(tts, "こんにちは。", cfg)
+        mock_extract.assert_called_once_with(str(tmp_path / "default_prompt.wav"), str(tmp_path))
+        _, kwargs = runtime.synthesise.call_args
+        assert kwargs["audio_prompt_tokens"] == [9, 9]
+        assert kwargs["audio_prompt_text"] == "続いて本人確認のため生年月日をお知らせいただけますでしょうか？"
+
+    def test_synthesise_no_audio_prompt_and_no_bundled_default_uses_zero_embedding(self, tmp_path):
+        """Old behavior preserved when the model dir predates the bundled
+        default prompt (e.g. a stale cache) — falls through to no-prompt
+        synthesis rather than erroring."""
+        runtime = MagicMock()
+        runtime.synthesise.return_value = (np.zeros(100, dtype=np.float32), 24000)
+        tts = SimpleNamespace(backend="sarashina_onnx", model=runtime, model_dir=str(tmp_path))
+        mock_sf = MagicMock()
+        cfg = TtsConfig(language="jpn-sarashina-onnx", output="out.wav")
+        with patch.object(tts_module, "_require_soundfile", return_value=mock_sf):
+            tts_module.synthesise_to_file(tts, "こんにちは。", cfg)
+        runtime.synthesise.assert_called_once_with("こんにちは。", seed=0)
+
 
 # ---------------------------------------------------------------------------
 # parse_args — audio-prompt args
