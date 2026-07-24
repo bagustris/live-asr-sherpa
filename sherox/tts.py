@@ -154,6 +154,7 @@ Models are auto-downloaded on first use into  models/<model-dir>/  at the projec
 
 import argparse
 import io
+import re
 import sys
 import tarfile
 import wave
@@ -1160,6 +1161,42 @@ def _get_cached_audio_prompt(generator, audio_prompt_path: str, cache: OrderedDi
     return result
 
 
+# ── Supertonic-3 inter-sentence pausing ─────────────────────────────────────
+# supertonic-3's own pausing at sentence-ending punctuation is too weak to be
+# reliably audible (~150-200ms at best), but each individual generate() call
+# pads its own clip with substantial leading/trailing silence (measured:
+# ~400-550ms per edge) — enough to swamp any pause length we'd insert between
+# clips if left untrimmed. So: split on sentence-ending punctuation, generate
+# each sentence separately, trim each clip's own silence, then join with a
+# fixed, audible gap. Validated against real audio (durations/values below
+# tuned by ear): 200ms reads as a natural sentence break without dragging.
+_SUPERTONIC_SENTENCE_PAUSE_MS = 200
+_SUPERTONIC_SILENCE_TRIM_THRESH = 0.01
+_SENTENCE_SPLIT_RE = re.compile(r"(?<=[。！？.!?])\s*")
+
+
+def _split_sentences(text: str) -> list[str]:
+    return [p for p in (s.strip() for s in _SENTENCE_SPLIT_RE.split(text)) if p]
+
+
+def _trim_silence(samples: np.ndarray, sample_rate: int, thresh: float = _SUPERTONIC_SILENCE_TRIM_THRESH, window_ms: float = 5.0) -> np.ndarray:
+    """Trim leading/trailing near-silence (RMS below *thresh* per window).
+    Leaves internal pauses (e.g. mid-sentence commas) untouched — only cuts
+    the outer edges, and never touches non-empty audio's own content since it
+    stops at the first/last window that's actually voiced."""
+    win = max(1, int(sample_rate * window_ms / 1000))
+    n_win = len(samples) // win
+    if n_win == 0:
+        return samples
+    envs = np.array([np.sqrt(np.mean(samples[i * win:(i + 1) * win] ** 2)) for i in range(n_win)])
+    voiced = np.where(envs >= thresh)[0]
+    if len(voiced) == 0:
+        return samples
+    start = int(voiced[0]) * win
+    end = min((int(voiced[-1]) + 1) * win, len(samples))
+    return samples[start:end]
+
+
 def synthesise_to_file(tts, text: str, cfg: TtsConfig) -> Optional[tuple[np.ndarray, int]]:
     """Synthesise *text*, optionally writing cfg.output.
 
@@ -1322,15 +1359,31 @@ def synthesise_to_file(tts, text: str, cfg: TtsConfig) -> Optional[tuple[np.ndar
 
         lang_code = getattr(tts, "lang_code", "en")
 
-        gen_config = sherpa_onnx.GenerationConfig()
-        gen_config.sid = cfg.speaker_id
-        gen_config.num_steps = 8
-        gen_config.speed = cfg.speed
-        gen_config.extra = {"lang": lang_code}
+        def _generate_one(sentence: str) -> tuple[np.ndarray, int]:
+            gen_config = sherpa_onnx.GenerationConfig()
+            gen_config.sid = cfg.speaker_id
+            gen_config.num_steps = 8
+            gen_config.speed = cfg.speed
+            gen_config.extra = {"lang": lang_code}
+            audio = tts.model.generate(sentence, gen_config)
+            return np.array(audio.samples, dtype=np.float32), audio.sample_rate
 
-        audio = tts.model.generate(text, gen_config)
-        samples = np.array(audio.samples, dtype=np.float32)
-        sample_rate = audio.sample_rate
+        sentences = _split_sentences(text)
+        if len(sentences) <= 1:
+            samples, sample_rate = _generate_one(text)
+            samples = _trim_silence(samples, sample_rate)
+        else:
+            sample_rate = None
+            clips = []
+            for sentence in sentences:
+                clip, sample_rate = _generate_one(sentence)
+                clips.append(_trim_silence(clip, sample_rate))
+            pause = np.zeros(int(sample_rate * _SUPERTONIC_SENTENCE_PAUSE_MS / 1000), dtype=np.float32)
+            parts = [clips[0]]
+            for clip in clips[1:]:
+                parts.append(pause)
+                parts.append(clip)
+            samples = np.concatenate(parts)
 
         if should_save:
             soundfile = _require_soundfile()

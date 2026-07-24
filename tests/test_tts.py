@@ -1598,3 +1598,92 @@ class TestSupertonicTts:
         call_args = mock_tts_instance.generate.call_args
         gen_config = call_args[0][1]
         assert gen_config.extra == {"lang": "ja"}
+
+    def test_split_sentences(self):
+        assert tts_module._split_sentences("こんにちは。今日はいい天気ですね。") == [
+            "こんにちは。", "今日はいい天気ですね。",
+        ]
+        assert tts_module._split_sentences("Hello world. How are you?") == [
+            "Hello world.", "How are you?",
+        ]
+        # No sentence-ending punctuation: treated as one sentence, unsplit.
+        assert tts_module._split_sentences("hello world") == ["hello world"]
+        # Trailing punctuation with nothing after shouldn't produce an empty segment.
+        assert tts_module._split_sentences("Only one sentence!") == ["Only one sentence!"]
+
+    def test_trim_silence_removes_only_leading_and_trailing(self):
+        silence = np.zeros(20, dtype=np.float32)
+        voiced = np.ones(50, dtype=np.float32)
+        clip = np.concatenate([silence, voiced, silence])
+        trimmed = tts_module._trim_silence(clip, sample_rate=1000)
+        np.testing.assert_array_equal(trimmed, voiced)
+
+    def test_trim_silence_all_silent_returns_unchanged(self):
+        clip = np.zeros(100, dtype=np.float32)
+        trimmed = tts_module._trim_silence(clip, sample_rate=1000)
+        np.testing.assert_array_equal(trimmed, clip)
+
+    def test_synthesise_to_file_supertonic_multi_sentence_trims_and_pauses(self):
+        """Regression guard for the reported "no pause despite a period"
+        complaint: supertonic-3's own inter-sentence pausing is too weak to
+        be reliably audible, and each generate() call pads its own clip with
+        ~400-550ms of leading/trailing silence — enough to swamp any pause
+        inserted between naively-concatenated clips. Each sentence must be
+        generated separately, trimmed to its voiced content, then joined with
+        exactly one fixed-length pause (tuned by ear against real audio)."""
+        mock_sf = MagicMock()
+        mock_tts_instance = MagicMock()
+        sr = 1000  # small rate keeps the test arrays tiny and exact
+
+        def make_clip(voiced_len):
+            silence = np.zeros(20, dtype=np.float32)
+            voiced = np.ones(voiced_len, dtype=np.float32)
+            return np.concatenate([silence, voiced, silence])
+
+        clip1 = make_clip(50)
+        clip2 = make_clip(80)
+        seen_sentences = []
+
+        def fake_generate(sentence, gen_config):
+            seen_sentences.append(sentence)
+            audio = MagicMock()
+            audio.samples = (clip1 if len(seen_sentences) == 1 else clip2).tolist()
+            audio.sample_rate = sr
+            return audio
+
+        mock_tts_instance.generate.side_effect = fake_generate
+
+        tts = SimpleNamespace(backend="supertonic", model=mock_tts_instance, lang_code="ja")
+        cfg = TtsConfig(output="out.wav", language="jpn")
+        with patch.object(tts_module, "_require_soundfile", return_value=mock_sf):
+            samples, sr_out = tts_module.synthesise_to_file(
+                tts, "こんにちは。今日はいい天気ですね。", cfg,
+            )
+
+        assert seen_sentences == ["こんにちは。", "今日はいい天気ですね。"]
+        pause_len = int(sr * tts_module._SUPERTONIC_SENTENCE_PAUSE_MS / 1000)
+        assert len(samples) == 50 + pause_len + 80
+        # the pause itself must be silent
+        pause_region = samples[50:50 + pause_len]
+        assert np.all(pause_region == 0)
+        assert sr_out == sr
+
+    def test_synthesise_to_file_supertonic_single_sentence_unaffected(self):
+        """Text with no sentence-ending punctuation must take the single-call
+        path unchanged (no splitting, no inter-clip pause to insert)."""
+        mock_sf = MagicMock()
+        mock_tts_instance = MagicMock()
+        mock_audio = MagicMock()
+        mock_audio.samples = np.concatenate([
+            np.zeros(20, dtype=np.float32), np.ones(50, dtype=np.float32), np.zeros(20, dtype=np.float32),
+        ]).tolist()
+        mock_audio.sample_rate = 1000
+        mock_tts_instance.generate.return_value = mock_audio
+
+        tts = SimpleNamespace(backend="supertonic", model=mock_tts_instance, lang_code="ja")
+        cfg = TtsConfig(output="out.wav", language="jpn")
+        with patch.object(tts_module, "_require_soundfile", return_value=mock_sf):
+            samples, sr = tts_module.synthesise_to_file(tts, "hello world", cfg)
+
+        assert mock_tts_instance.generate.call_count == 1
+        assert len(samples) == 50  # edges trimmed, no pause inserted
