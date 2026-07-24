@@ -37,6 +37,8 @@ import argparse
 import json
 from pathlib import Path
 
+import numpy as np
+
 # NOTE: torch and the sarashina_tts package are imported lazily inside functions
 # so that merely importing this module (e.g. for --help) doesn't require them.
 
@@ -238,6 +240,20 @@ def export(model_dir: str, out_dir: str, precision: str = "int4") -> None:
 
     decoder = FlowDecoder(model_dir, fp16=False, device="cpu")
     hift = decoder.hift  # weight_norm already removed inside FlowDecoder
+
+    # CausalConditionalCFM.__init__ (invoked by CausalMaskedDiffWithXvec() above) seeds
+    # torch's RNG with a fixed seed and pre-generates a (1, 80, 15000) noise buffer that
+    # every inference call slices [:, :, :T] from — this is the flow-matching ODE's
+    # initial condition, and CosyVoice2/Sarashina reuse it deterministically rather than
+    # sampling fresh noise per call. With only 10 Euler steps, the *specific* noise
+    # realization has a large effect on output quality (verified: swapping in an
+    # independently-sampled same-shape N(0,1) buffer changes the decoded mel by up to
+    # ~3.3 max abs, vs ~3e-5 for the correct buffer — enough to garble pronunciation).
+    # numpy can't reproduce PyTorch's RNG bit-for-bit, so we extract this exact buffer
+    # from the loaded module (whose __init__ already generated it correctly) and ship it
+    # as a static asset for the torch-free runtime to slice from, instead of trying to
+    # regenerate equivalent noise with a different RNG at inference time.
+    np.save(out / "flow_rand_noise.npy", flow.decoder.rand_noise.numpy().astype("float32"))
 
     ManualSTFT = _build_manual_stft(torch, nn, F)
     ManualISTFT = _build_manual_istft(torch, nn)

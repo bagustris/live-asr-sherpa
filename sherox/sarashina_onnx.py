@@ -74,6 +74,12 @@ class SarashinaOnnxRuntime:
         self._enc = ort.InferenceSession(str(self._dir / "flow_encoder.onnx"), so, providers=["CPUExecutionProvider"])
         self._est = ort.InferenceSession(str(self._dir / "flow_estimator.onnx"), so, providers=["CPUExecutionProvider"])
         self._hift = ort.InferenceSession(str(self._dir / "hift.onnx"), so, providers=["CPUExecutionProvider"])
+        # Fixed flow-matching ODE initial noise, extracted from the reference model's own
+        # torch.randn buffer at export time (see sarashina_onnx_export.py). With only 10
+        # Euler steps, using a *different* (even if equally-N(0,1)) noise realization
+        # measurably changes the decoded mel enough to garble pronunciation — this must be
+        # sliced from the real buffer, not resampled with a different RNG at inference time.
+        self._rand_noise = np.load(self._dir / "flow_rand_noise.npy")
 
     # -- Stage 1: LLM (text -> semantic token ids) --------------------------------
     def _run_llm(
@@ -151,8 +157,13 @@ class SarashinaOnnxRuntime:
         cfg_rate = self.meta["inference_cfg_rate"]
         t_span = np.linspace(0, 1, n_steps + 1).astype(np.float32)
         t_span = 1 - np.cos(t_span * 0.5 * np.pi)  # cosine scheduler
-        rng = np.random.RandomState(0)  # matches the reference model's fixed inference noise
-        x = rng.randn(1, self.meta["mel_channels"], mu.shape[2]).astype(np.float32)
+        t_frames = mu.shape[2]
+        if t_frames > self._rand_noise.shape[2]:
+            raise RuntimeError(
+                f"Requested {t_frames} mel frames but the fixed noise buffer only has "
+                f"{self._rand_noise.shape[2]} — regenerate flow_rand_noise.npy for longer utterances."
+            )
+        x = self._rand_noise[:, :, :t_frames].copy()
 
         t = float(t_span[0])
         dt = float(t_span[1] - t_span[0])

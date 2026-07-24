@@ -171,6 +171,13 @@ class TtsConfig:
     # every generated clip, which cuts against this toolkit's light/fast goal.
     watermark: bool = False
 
+    # sarashina_onnx backend — LLM sampling seed for semantic-token generation.
+    # The LLM samples (temperature/top_p), so different seeds can produce
+    # different content for the same text; a fixed default seed occasionally
+    # draws a bad sample for a specific phrase (rare, but deterministic once it
+    # happens — same seed always reproduces it). Override to work around one.
+    seed: int = 0
+
 
 # ── KWS ──────────────────────────────────────────────────────────────────────
 

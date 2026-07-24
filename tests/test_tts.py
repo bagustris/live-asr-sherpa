@@ -1204,7 +1204,7 @@ class TestSarashinaOnnxBackend:
         cfg = TtsConfig(language="jpn-sarashina-onnx", output="out.wav")
         with patch.object(tts_module, "_require_soundfile", return_value=mock_sf):
             samples, sr = tts_module.synthesise_to_file(tts, "テスト", cfg)
-        runtime.synthesise.assert_called_once_with("テスト")
+        runtime.synthesise.assert_called_once_with("テスト", seed=0)
         assert sr == 24000
         assert samples.dtype == np.float32
         mock_sf.write.assert_called_once()

@@ -58,7 +58,39 @@ class TestRuntimeFlow:
         r._enc = MagicMock()
         r._est = MagicMock()
         r._hift = MagicMock()
+        r._rand_noise = np.random.RandomState(0).randn(1, 80, 64).astype(np.float32)
         return r
+
+    def test_run_flow_slices_fixed_noise_buffer_not_fresh_random(self, tmp_path):
+        """Regression guard: the flow-matching ODE's initial noise must come
+        from the fixed buffer extracted from the reference model (see
+        sarashina_onnx_export.py), sliced [:, :, :T] — not freshly sampled
+        with a different RNG. With only 10 Euler steps, using a different
+        (even if equally N(0,1)) noise realization measurably changes the
+        decoded mel enough to garble pronunciation — verified by feeding an
+        independently-sampled same-shape buffer into the real reference
+        decoder and diffing against the correct-buffer output (max abs diff
+        ~3.3, vs ~3e-5 for a correctly-sliced buffer)."""
+        r = self._make_runtime(tmp_path)
+        T = 6
+        r._rand_noise = np.arange(1 * 80 * 64, dtype=np.float32).reshape(1, 80, 64)
+        r._enc.run.return_value = [
+            np.zeros((1, 80, T), dtype=np.float32),
+            np.ones((1, 1, T), dtype=np.float32),
+            np.zeros((1, 80), dtype=np.float32),
+            np.zeros((1, 80, T), dtype=np.float32),
+        ]
+        captured_x = {}
+        def fake_est_run(_, feed):
+            captured_x.setdefault("x", feed["x"].copy())
+            return [np.zeros((2, 80, T), dtype=np.float32)]
+        r._est.run.side_effect = fake_est_run
+
+        prompt_feat = np.zeros((1, 0, 80), dtype=np.float32)
+        r._run_flow([9, 1, 2, 3], None, np.zeros(192, dtype=np.float32), prompt_feat)
+
+        expected_x0 = r._rand_noise[:, :, :T]
+        np.testing.assert_array_equal(captured_x["x"][:1], expected_x0)
 
     def test_run_flow_drops_prompt_frames_and_latency_token(self, tmp_path):
         r = self._make_runtime(tmp_path)

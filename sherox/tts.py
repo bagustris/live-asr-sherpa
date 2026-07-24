@@ -766,6 +766,15 @@ def parse_args() -> argparse.Namespace:
         help="Embed an inaudible SilentCipher watermark (jpn-sarashina backend only). "
         "Off by default: adds ~15s to model load and ~40%% to each synthesis call.",
     )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=0,
+        metavar="N",
+        help="LLM sampling seed (jpn-sarashina-onnx backend only). The LLM samples "
+        "semantic tokens, so different seeds can produce different content for the "
+        "same text; try a different seed if a specific phrase comes out wrong.",
+    )
     return parser.parse_args()
 
 
@@ -780,6 +789,7 @@ _SARASHINA_ONNX_REQUIRED_FILES = (
     "meta.json",
     "flow_encoder.onnx",
     "flow_estimator.onnx",
+    "flow_rand_noise.npy",
     "hift.onnx",
     "campplus.onnx",
     "s3_tokenizer.onnx",
@@ -1241,9 +1251,10 @@ def synthesise_to_file(tts, text: str, cfg: TtsConfig) -> Optional[tuple[np.ndar
                 audio_prompt_tokens=audio_prompt_tokens,
                 flow_embedding=flow_embedding,
                 prompt_feat=prompt_feat,
+                seed=cfg.seed,
             )
         else:
-            samples, sample_rate = runtime.synthesise(text)
+            samples, sample_rate = runtime.synthesise(text, seed=cfg.seed)
 
         samples = np.asarray(samples, dtype=np.float32)
         if should_save:
@@ -1369,6 +1380,7 @@ def _main_impl() -> None:
         audio_prompt=args.audio_prompt or "",
         audio_prompt_text=args.audio_prompt_text or "",
         watermark=args.watermark,
+        seed=args.seed,
     )
 
     _info(f"Language: {cfg.language}  |  speed: {cfg.speed}  |  speaker: {cfg.speaker_id}")
