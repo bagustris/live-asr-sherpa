@@ -323,6 +323,53 @@ def warmup_offline_recognizer(recognizer: Any, sample_rate: int) -> None:
     recognizer.decode_stream(stream)
 
 
+def transcribe_buffer(cfg: Config, audio: np.ndarray, sample_rate: int) -> SimpleNamespace:
+    """One-shot transcription of an in-memory waveform — not the live
+    mic/pipe streaming sherox.asr's CLI is built around. Builds whichever
+    recognizer type cfg.offline calls for, feeds the whole buffer, drains
+    it, and returns a normalized result.
+
+    Returns a SimpleNamespace with:
+      text:       str
+      tokens:     list[str]
+      timestamps: list[float]  (per-token, seconds)
+      durations:  list[float]  (per-token, seconds; empty when the model
+                  doesn't predict them — true for every architecture except
+                  TDT transducers, e.g. CTC models and streaming/online models)
+
+    For library consumers (e.g. ai-pronunciation-trainer) that want a single
+    call working across sherox's online and offline model types, rather than
+    hand-rolling the accept_waveform/decode/drain loop for each.
+    """
+    audio = np.asarray(audio, dtype=np.float32)
+    if cfg.offline:
+        recognizer = build_offline_recognizer(cfg)
+        stream = recognizer.create_stream()
+        stream.accept_waveform(sample_rate, audio)
+        recognizer.decode_stream(stream)
+        result = stream.result
+        return SimpleNamespace(
+            text=result.text,
+            tokens=list(result.tokens),
+            timestamps=list(result.timestamps),
+            durations=list(getattr(result, "durations", []) or []),
+        )
+
+    recognizer = build_recognizer(cfg)
+    stream = recognizer.create_stream()
+    stream.accept_waveform(sample_rate, audio)
+    stream.input_finished()
+    while recognizer.is_ready(stream):
+        recognizer.decode_stream(stream)
+    result = recognizer.get_result_all(stream)
+    return SimpleNamespace(
+        text=result.text,
+        tokens=list(result.tokens),
+        timestamps=list(result.timestamps),
+        durations=[],
+    )
+
+
 def build_vad(cfg: Config):
     """Build a VAD (Silero or Ten-VAD) for segmenting live audio into utterances.
 

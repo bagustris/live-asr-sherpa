@@ -888,6 +888,61 @@ def _resolve_default_model(language: str, model_type: str, offline: bool) -> tup
     return model_type, _MODEL_TARGET
 
 
+# Model types that only ship an offline (VAD-segmented) pipeline — selecting
+# one of these without --offline gets --offline enabled automatically, both
+# by the CLI (_main_impl) and by resolve_language_model() below.
+_OFFLINE_ONLY_TYPES = {
+    "nemo_transducer", "whisper", "nemo_ctc", "sense_voice", "moonshine",
+    "fire_red_asr", "cohere_transcribe", "reazonspeech-ja", "reazonspeech-ja-en",
+    "reazonspeech-ja-en-mls-5k", "parakeet-ctc-ja",
+}
+_OFFLINE_ONLY_NAME_PATTERNS = (
+    "parakeet", "nemo", "whisper", "sense_voice", "moonshine", "fire_red_asr",
+    "cohere", "reazonspeech",
+)
+
+# Convenience aliases that _resolve_default_model()/CLI users can pass, remapped
+# to the model_type sherpa-onnx's from_transducer() actually accepts (it
+# auto-detects the architecture from the model files when given "").
+_TRANSDUCER_AUTODETECT_ALIASES = {
+    "reazonspeech-ja", "reazonspeech-ja-en", "reazonspeech-ja-en-mls-5k",
+    "multilingual_streaming",
+}
+# Convenience aliases remapped to the sherpa-onnx nemo_ctc model type.
+_CTC_TYPE_ALIASES = {"parakeet-ctc-ja"}
+
+
+def resolve_language_model(language: str, offline: bool = False) -> tuple[str, str, bool]:
+    """Return (model_type, model_dir_name, offline) for `language`'s default
+    ASR model — the same resolution `sherox.asr --lang <language>` performs
+    (including the offline-only auto-switch and the alias remapping needed
+    before calling asr_engine.build_recognizer/build_offline_recognizer) —
+    for library consumers that want sherox's per-language routing without
+    reimplementing its CLI-only pipeline.
+
+    `offline` mirrors --offline: matters only for languages with distinct
+    online/offline defaults (currently just German); ignored (and possibly
+    overridden to True) for languages whose only registered default is
+    offline-only, such as English and Japanese.
+    """
+    language = _normalize_language(language)
+    model_type, model_dir_name = _resolve_default_model(language, "", offline)
+
+    model_name_lower = model_dir_name.lower()
+    if not offline and (
+        model_type in _OFFLINE_ONLY_TYPES
+        or any(pat in model_name_lower for pat in _OFFLINE_ONLY_NAME_PATTERNS)
+    ):
+        offline = True
+
+    if model_type in _TRANSDUCER_AUTODETECT_ALIASES:
+        model_type = ""
+    if model_type in _CTC_TYPE_ALIASES:
+        model_type = "nemo_ctc"
+
+    return model_type, model_dir_name, offline
+
+
 def _validate_vad(vad_type: str, ten_vad_model: str, offline: bool, project_dir: Path) -> str:
     if not offline:
         return ""
@@ -1116,8 +1171,6 @@ def _main_impl() -> None:
     _validate_model(cfg.model_dir, cfg.model_type)
 
     # Auto-detect offline-only models and switch automatically.
-    _OFFLINE_ONLY_TYPES = {"nemo_transducer", "whisper", "nemo_ctc", "sense_voice", "moonshine", "fire_red_asr", "cohere_transcribe", "reazonspeech-ja", "reazonspeech-ja-en", "reazonspeech-ja-en-mls-5k", "parakeet-ctc-ja"}
-    _OFFLINE_ONLY_NAME_PATTERNS = ("parakeet", "nemo", "whisper", "sense_voice", "moonshine", "fire_red_asr", "cohere", "reazonspeech")
     model_name_lower = Path(cfg.model_dir).name.lower()
     if not cfg.offline and (
         cfg.model_type in _OFFLINE_ONLY_TYPES
@@ -1131,12 +1184,10 @@ def _main_impl() -> None:
 
     # Remap model-type aliases that sherpa-onnx doesn't accept in from_transducer.
     # Use "" so sherpa-onnx auto-detects the architecture from the model files.
-    _TRANSDUCER_AUTODETECT_ALIASES = {"reazonspeech-ja", "reazonspeech-ja-en", "reazonspeech-ja-en-mls-5k", "multilingual_streaming"}
     if cfg.model_type in _TRANSDUCER_AUTODETECT_ALIASES:
         cfg.model_type = ""
 
     # Remap convenience CTC aliases to the sherpa-onnx nemo_ctc model type.
-    _CTC_TYPE_ALIASES = {"parakeet-ctc-ja"}
     if cfg.model_type in _CTC_TYPE_ALIASES:
         cfg.model_type = "nemo_ctc"
 
