@@ -29,6 +29,10 @@ Usage:
     # Sarashina without voice cloning (default voice):
     sherox.tts --text "こんにちは。" --lang jpn-sarashina
 
+    # Synthesise Japanese with the torch-free Sarashina ONNX runtime
+    #   (auto-downloads from huggingface.co/Bagus/Sarashina2.2-TTS-ONNX on first use):
+    sherox.tts --text "こんにちは。" --lang jpn-sarashina-onnx
+
     # Read from file:
     sherox.tts --file input.txt --lang ind
 
@@ -50,16 +54,16 @@ Usage:
     # Synthesise English with Kitten TTS (quantized, 24 kHz):
     sherox.tts --text "Hello, how are you today?" --lang eng-kitten
 
-    # Synthesise Korean (Supertonic-3, 24 kHz):
+    # Synthesise Korean (Supertonic-3, 44.1 kHz):
     sherox.tts --text "안녕하세요." --lang kor
 
-    # Synthesise Russian (Supertonic-3, 24 kHz):
+    # Synthesise Russian (Supertonic-3, 44.1 kHz):
     sherox.tts --text "Привет, как дела?" --lang rus
 
-    # Synthesise Hindi (Supertonic-3, 24 kHz):
+    # Synthesise Hindi (Supertonic-3, 44.1 kHz):
     sherox.tts --text "नमस्ते, आप कैसे हैं?" --lang hin
 
-    # Synthesise Vietnamese (Supertonic-3, 24 kHz):
+    # Synthesise Vietnamese (Supertonic-3, 44.1 kHz):
     sherox.tts --text "Xin chào, bạn khỏe không?" --lang vie
 
 Supported languages (ISO 639-3 code → model):
@@ -69,35 +73,37 @@ Supported languages (ISO 639-3 code → model):
     fra           French       — vits-piper-fr_FR-upmc-medium       (22050 Hz, 1 speaker)
     spa           Spanish      — vits-piper-es_ES-mls_10246-medium  (22050 Hz, 1 speaker)
     ind           Indonesian   — vits-piper-id_ID-news_tts-medium   (22050 Hz, 1 speaker)
-    ind-supertonic Indonesian   — Supertonic-3 (24000 Hz, 10 speakers)
+    ind-supertonic Indonesian   — Supertonic-3 (44100 Hz, 10 speakers)
     zho           Chinese      — vits-icefall-zh-aishell3           (8 kHz, 174 speakers)
     jpn           Japanese     — piper-plus tsukuyomi               (22050 Hz, 1 speaker)
     jpn-sarashina Japanese     — Sarashina2.2-TTS, zero-shot        (24000 Hz, voice cloning)
-    kor           Korean       — Supertonic-3 (24000 Hz, 10 speakers)
-    ara           Arabic       — Supertonic-3 (24000 Hz, 10 speakers)
-    bul           Bulgarian    — Supertonic-3 (24000 Hz, 10 speakers)
-    ces           Czech        — Supertonic-3 (24000 Hz, 10 speakers)
-    dan           Danish       — Supertonic-3 (24000 Hz, 10 speakers)
-    ell           Greek        — Supertonic-3 (24000 Hz, 10 speakers)
-    est           Estonian     — Supertonic-3 (24000 Hz, 10 speakers)
-    fin           Finnish      — Supertonic-3 (24000 Hz, 10 speakers)
-    hin           Hindi        — Supertonic-3 (24000 Hz, 10 speakers)
-    hrv           Croatian     — Supertonic-3 (24000 Hz, 10 speakers)
-    hun           Hungarian    — Supertonic-3 (24000 Hz, 10 speakers)
-    ita           Italian      — Supertonic-3 (24000 Hz, 10 speakers)
-    lit           Lithuanian   — Supertonic-3 (24000 Hz, 10 speakers)
-    lav           Latvian      — Supertonic-3 (24000 Hz, 10 speakers)
-    nld           Dutch        — Supertonic-3 (24000 Hz, 10 speakers)
-    pol           Polish       — Supertonic-3 (24000 Hz, 10 speakers)
-    por           Portuguese   — Supertonic-3 (24000 Hz, 10 speakers)
-    ron           Romanian     — Supertonic-3 (24000 Hz, 10 speakers)
-    rus           Russian      — Supertonic-3 (24000 Hz, 10 speakers)
-    slk           Slovak       — Supertonic-3 (24000 Hz, 10 speakers)
-    slv           Slovenian    — Supertonic-3 (24000 Hz, 10 speakers)
-    swe           Swedish      — Supertonic-3 (24000 Hz, 10 speakers)
-    tur           Turkish      — Supertonic-3 (24000 Hz, 10 speakers)
-    ukr           Ukrainian    — Supertonic-3 (24000 Hz, 10 speakers)
-    vie           Vietnamese   — Supertonic-3 (24000 Hz, 10 speakers)
+    jpn-sarashina-onnx Japanese — Sarashina2.2-TTS, ONNX runtime     (24000 Hz, torch-free)
+    jpn-supertonic Japanese     — Supertonic-3 (44100 Hz, 10 speakers)
+    kor           Korean       — Supertonic-3 (44100 Hz, 10 speakers)
+    ara           Arabic       — Supertonic-3 (44100 Hz, 10 speakers)
+    bul           Bulgarian    — Supertonic-3 (44100 Hz, 10 speakers)
+    ces           Czech        — Supertonic-3 (44100 Hz, 10 speakers)
+    dan           Danish       — Supertonic-3 (44100 Hz, 10 speakers)
+    ell           Greek        — Supertonic-3 (44100 Hz, 10 speakers)
+    est           Estonian     — Supertonic-3 (44100 Hz, 10 speakers)
+    fin           Finnish      — Supertonic-3 (44100 Hz, 10 speakers)
+    hin           Hindi        — Supertonic-3 (44100 Hz, 10 speakers)
+    hrv           Croatian     — Supertonic-3 (44100 Hz, 10 speakers)
+    hun           Hungarian    — Supertonic-3 (44100 Hz, 10 speakers)
+    ita           Italian      — Supertonic-3 (44100 Hz, 10 speakers)
+    lit           Lithuanian   — Supertonic-3 (44100 Hz, 10 speakers)
+    lav           Latvian      — Supertonic-3 (44100 Hz, 10 speakers)
+    nld           Dutch        — Supertonic-3 (44100 Hz, 10 speakers)
+    pol           Polish       — Supertonic-3 (44100 Hz, 10 speakers)
+    por           Portuguese   — Supertonic-3 (44100 Hz, 10 speakers)
+    ron           Romanian     — Supertonic-3 (44100 Hz, 10 speakers)
+    rus           Russian      — Supertonic-3 (44100 Hz, 10 speakers)
+    slk           Slovak       — Supertonic-3 (44100 Hz, 10 speakers)
+    slv           Slovenian    — Supertonic-3 (44100 Hz, 10 speakers)
+    swe           Swedish      — Supertonic-3 (44100 Hz, 10 speakers)
+    tur           Turkish      — Supertonic-3 (44100 Hz, 10 speakers)
+    ukr           Ukrainian    — Supertonic-3 (44100 Hz, 10 speakers)
+    vie           Vietnamese   — Supertonic-3 (44100 Hz, 10 speakers)
 
 Language aliases (short forms also accepted):
     en / eng-us                 → eng
@@ -140,7 +146,7 @@ Notes:
     scripts may not normalise well. Use 8 kHz output; quality is acceptable for
     voice assistants and dev/test use.
 
-    Supertonic-3: shared model for 25+ languages (24 kHz, 10 speakers).  First use
+    Supertonic-3: shared model for 25+ languages (44.1 kHz, 10 speakers).  First use
     downloads ~120 MB.  Select speaker with --speaker-id 0-9, language via --lang.
 
 Models are auto-downloaded on first use into  models/<model-dir>/  at the project root.
@@ -148,9 +154,11 @@ Models are auto-downloaded on first use into  models/<model-dir>/  at the projec
 
 import argparse
 import io
+import re
 import sys
 import tarfile
 import wave
+from collections import OrderedDict
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Optional
@@ -287,6 +295,11 @@ _TTS_MODELS: dict[str, dict] = {
         "sample_rate": 24000,
         "description": "Japanese (Sarashina2.2-TTS, zero-shot voice cloning)",
     },
+    "jpn-sarashina-onnx": {
+        "backend": "sarashina_onnx",
+        "sample_rate": 24000,
+        "description": "Japanese (Sarashina2.2-TTS, ONNX runtime, torch-free)",
+    },
     "eng-kitten": {
         "backend": "kitten",
         "url": (
@@ -322,7 +335,12 @@ _SUPERTONIC_BASE: dict = {
         "unicode_indexer": "unicode_indexer.bin",
         "voice_style": "voice.bin",
     },
-    "sample_rate": 24000,
+    # Informational only — synthesise_to_file reads the true rate from the
+    # generation result (audio.sample_rate), since this static value doesn't
+    # actually match the model's real output rate (see model card comment
+    # below); a prior bug used this value directly and produced audio at the
+    # wrong speed/pitch.
+    "sample_rate": 44100,
 }
 
 # Supertonic-3 supported languages: en, ko, ja, ar, bg, cs, da, de, el, es, et,
@@ -331,6 +349,7 @@ _SUPERTONIC_BASE: dict = {
 # Languages that already have a dedicated model in _TTS_MODELS (eng, deu, fra,
 # spa, ind, zho, jpn) keep their existing default.  All others use supertonic-3.
 # ind-supertonic provides an alternative Supertonic-3 model for Indonesian.
+# jpn-supertonic provides an alternative Supertonic-3 model for Japanese.
 _SUPERTONIC_LANGUAGES: dict[str, dict] = {
     "kor": {
         "lang_code": "ko",
@@ -436,6 +455,10 @@ _SUPERTONIC_LANGUAGES: dict[str, dict] = {
         "lang_code": "id",
         "description": "Indonesian (Supertonic-3, 10 speakers)",
     },
+    "jpn-supertonic": {
+        "lang_code": "ja",
+        "description": "Japanese (Supertonic-3, 10 speakers)",
+    },
 }
 
 # Merge supertonic entries into _TTS_MODELS
@@ -467,6 +490,11 @@ _LANGUAGE_ALIASES = {
     # Japanese Sarashina (zero-shot)
     "sarashina": "jpn-sarashina",
     "jpn_sarashina": "jpn-sarashina",
+    # Japanese Sarashina ONNX (torch-free runtime)
+    "sarashina-onnx": "jpn-sarashina-onnx",
+    "jpn_sarashina_onnx": "jpn-sarashina-onnx",
+    # Japanese Supertonic-3
+    "jpn-supertonic": "jpn-supertonic",
     # Arabic
     "ar": "ara",
     "ara": "ara",
@@ -634,6 +662,26 @@ def _require_sarashina():
     return sarashina_runtime
 
 
+def _quantize_sarashina_llm(generator) -> None:
+    """Dynamically int8-quantize the Sarashina LLM's linear layers for faster CPU decoding.
+
+    torch's dynamic quantization only has CPU kernels (fbgemm/qnnpack) — it's
+    unavailable on CUDA, so this is only applied on the CPU-only code path.
+    Benchmarked ~4.5x faster LLM decode on CPU with no observed change in
+    generated semantic tokens.
+    """
+    import torch  # noqa: PLC0415
+
+    text_generator = getattr(generator, "text_generator", None)
+    llm = getattr(text_generator, "model", None)
+    if llm is None:
+        return
+    quantized = torch.ao.quantization.quantize_dynamic(
+        llm.float(), {torch.nn.Linear}, dtype=torch.qint8
+    )
+    text_generator.model = quantized
+
+
 def _validate_runtime_args(args: argparse.Namespace) -> None:
     if args.speaker_id < 0:
         _error(f"--speaker-id must be >= 0, got {args.speaker_id}")
@@ -718,10 +766,89 @@ def parse_args() -> argparse.Namespace:
         metavar="TEXT",
         help="Transcript of the --audio-prompt reference audio",
     )
+    parser.add_argument(
+        "--watermark",
+        action="store_true",
+        help="Embed an inaudible SilentCipher watermark (jpn-sarashina backend only). "
+        "Off by default: adds ~15s to model load and ~40%% to each synthesis call.",
+    )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=0,
+        metavar="N",
+        help="LLM sampling seed (jpn-sarashina-onnx backend only). The LLM samples "
+        "semantic tokens, so different seeds can produce different content for the "
+        "same text; try a different seed if a specific phrase comes out wrong.",
+    )
     return parser.parse_args()
 
 
 # ── Model download helpers ────────────────────────────────────────────────────
+
+# Pre-exported ONNX artifacts for jpn-sarashina-onnx, published from this
+# project — see sherox/sarashina_onnx_hf.py. Downloading these means end users
+# never need torch or the original PyTorch checkpoint, including for zero-shot
+# voice cloning.
+_SARASHINA_ONNX_HF_REPO = "Bagus/Sarashina2.2-TTS-ONNX"
+_SARASHINA_ONNX_REQUIRED_FILES = (
+    "meta.json",
+    "flow_encoder.onnx",
+    "flow_estimator.onnx",
+    "flow_rand_noise.npy",
+    "hift.onnx",
+    "campplus.onnx",
+    "s3_tokenizer.onnx",
+    "s3_mel_filters.npz",
+    "default_prompt.wav",
+    "llm/model.onnx",
+    "llm/genai_config.json",
+)
+
+
+def _sarashina_onnx_model_complete(target_dir: Path) -> bool:
+    return all((target_dir / name).is_file() for name in _SARASHINA_ONNX_REQUIRED_FILES)
+
+
+def _ensure_sarashina_onnx_model(target_dir: Path) -> None:
+    """Download the pre-exported Sarashina ONNX artifacts if not already present."""
+    if _sarashina_onnx_model_complete(target_dir):
+        return
+
+    from . import model_cache  # noqa: PLC0415
+
+    if model_cache.try_link(target_dir, "tts_jpn-sarashina-onnx"):
+        if _sarashina_onnx_model_complete(target_dir):
+            return
+        # The shared cache has an incomplete/stale copy (e.g. from before
+        # campplus.onnx/s3_tokenizer.onnx were added to the model) — clear it
+        # rather than silently running with files missing.
+        model_cache.invalidate(target_dir, "tts_jpn-sarashina-onnx")
+
+    try:
+        from huggingface_hub import snapshot_download  # noqa: PLC0415
+    except ImportError as exc:  # pragma: no cover - depends on environment
+        _error(
+            "huggingface_hub is required to auto-download the Sarashina ONNX model. "
+            "Install it with: pip install 'sherox[tts-ja-sarashina-onnx]'"
+        )
+        raise AssertionError("unreachable") from exc
+
+    if target_dir.is_symlink():
+        # A dangling symlink (e.g. its cache target was removed independently)
+        # would otherwise make mkdir(exist_ok=True) raise FileExistsError,
+        # since exist_ok only special-cases a real directory, not a broken link.
+        target_dir.unlink()
+    target_dir.mkdir(parents=True, exist_ok=True)
+    _info(f"Sarashina ONNX model not found. Downloading from {_SARASHINA_ONNX_HF_REPO}…")
+    snapshot_download(_SARASHINA_ONNX_HF_REPO, local_dir=str(target_dir))
+
+    if not _sarashina_onnx_model_complete(target_dir):
+        _error(f"Expected files missing from downloaded model at {target_dir}")
+
+    model_cache.migrate(target_dir, "tts_jpn-sarashina-onnx")
+    _info(f"Model saved to '{target_dir}'.\n")
+
 
 def _ensure_model(lang: str, model_dir: Optional[Path], project_dir: Path) -> Path:
     """Return the resolved TTS model directory, downloading if needed."""
@@ -824,10 +951,37 @@ def build_tts(cfg: TtsConfig, project_dir: Path):
         generator = sarashina_mod.SarashinaTTSGenerator(
             model_dir=model_dir,
             decoder_fp16=use_cuda,
+            watermark=cfg.watermark,
         )
+        if not use_cuda:
+            _quantize_sarashina_llm(generator)
         return SimpleNamespace(
             backend="sarashina",
             model=generator,
+            prompt_cache=OrderedDict(),
+        )
+
+    if meta["backend"] == "sarashina_onnx":
+        from .sarashina_onnx import SarashinaOnnxRuntime  # noqa: PLC0415
+
+        models_root = project_dir / "models" / "sarashina-onnx"
+        if cfg.model_dir:
+            model_dir = cfg.model_dir
+            if not (Path(model_dir) / "meta.json").is_file():
+                _error(
+                    f"ONNX artifacts not found in '{model_dir}'. Export them with:\n"
+                    "  python -m sherox.sarashina_onnx_export "
+                    "--model-dir models/sarashina --out-dir <model_dir>"
+                )
+        else:
+            _ensure_sarashina_onnx_model(models_root)
+            model_dir = str(models_root)
+        runtime = SarashinaOnnxRuntime(model_dir, num_threads=cfg.num_threads)
+        return SimpleNamespace(
+            backend="sarashina_onnx",
+            model=runtime,
+            model_dir=model_dir,
+            prompt_cache=OrderedDict(),
         )
 
     if meta["backend"] == "kitten":
@@ -923,7 +1077,6 @@ def build_tts(cfg: TtsConfig, project_dir: Path):
             backend="supertonic",
             model=sherpa_onnx.OfflineTts(config),
             lang_code=meta["lang_code"],
-            sample_rate=meta["sample_rate"],
         )
 
     import sherpa_onnx  # noqa: PLC0415
@@ -977,6 +1130,73 @@ def _should_save(cfg: TtsConfig) -> bool:
     return not cfg.no_save and not _output_disables_save(cfg.output)
 
 
+# Zero-shot voice cloning re-encodes the reference wav (semantic tokens, speaker
+# embedding, mel features) on every call. Callers that reuse the same
+# --audio-prompt across many requests (e.g. tts_server with a fixed voice)
+# shouldn't pay that cost more than once per distinct file.
+_PROMPT_CACHE_MAX = 16
+
+
+def _prompt_cache_key(path: str) -> tuple:
+    st = Path(path).stat()
+    return (path, st.st_mtime_ns, st.st_size)
+
+
+def _get_cached_audio_prompt(generator, audio_prompt_path: str, cache: OrderedDict):
+    """Return (tokens, flow_embedding, feat) for *audio_prompt_path*, cached by mtime+size."""
+    key = _prompt_cache_key(audio_prompt_path)
+    cached = cache.get(key)
+    if cached is not None:
+        cache.move_to_end(key)
+        return cached
+
+    result = (
+        generator._extract_audio_prompt_tokens(audio_prompt_path),
+        generator._extract_zero_shot_embedding(audio_prompt_path),
+        generator._extract_audio_prompt_feat(audio_prompt_path),
+    )
+    cache[key] = result
+    if len(cache) > _PROMPT_CACHE_MAX:
+        cache.popitem(last=False)
+    return result
+
+
+# ── Supertonic-3 inter-sentence pausing ─────────────────────────────────────
+# supertonic-3's own pausing at sentence-ending punctuation is too weak to be
+# reliably audible (~150-200ms at best), but each individual generate() call
+# pads its own clip with substantial leading/trailing silence (measured:
+# ~400-550ms per edge) — enough to swamp any pause length we'd insert between
+# clips if left untrimmed. So: split on sentence-ending punctuation, generate
+# each sentence separately, trim each clip's own silence, then join with a
+# fixed, audible gap. Validated against real audio (durations/values below
+# tuned by ear): 200ms reads as a natural sentence break without dragging.
+_SUPERTONIC_SENTENCE_PAUSE_MS = 200
+_SUPERTONIC_SILENCE_TRIM_THRESH = 0.01
+_SENTENCE_SPLIT_RE = re.compile(r"(?<=[。！？.!?])\s*")
+
+
+def _split_sentences(text: str) -> list[str]:
+    return [p for p in (s.strip() for s in _SENTENCE_SPLIT_RE.split(text)) if p]
+
+
+def _trim_silence(samples: np.ndarray, sample_rate: int, thresh: float = _SUPERTONIC_SILENCE_TRIM_THRESH, window_ms: float = 5.0) -> np.ndarray:
+    """Trim leading/trailing near-silence (RMS below *thresh* per window).
+    Leaves internal pauses (e.g. mid-sentence commas) untouched — only cuts
+    the outer edges, and never touches non-empty audio's own content since it
+    stops at the first/last window that's actually voiced."""
+    win = max(1, int(sample_rate * window_ms / 1000))
+    n_win = len(samples) // win
+    if n_win == 0:
+        return samples
+    envs = np.array([np.sqrt(np.mean(samples[i * win:(i + 1) * win] ** 2)) for i in range(n_win)])
+    voiced = np.where(envs >= thresh)[0]
+    if len(voiced) == 0:
+        return samples
+    start = int(voiced[0]) * win
+    end = min((int(voiced[-1]) + 1) * win, len(samples))
+    return samples[start:end]
+
+
 def synthesise_to_file(tts, text: str, cfg: TtsConfig) -> Optional[tuple[np.ndarray, int]]:
     """Synthesise *text*, optionally writing cfg.output.
 
@@ -1021,9 +1241,13 @@ def synthesise_to_file(tts, text: str, cfg: TtsConfig) -> Optional[tuple[np.ndar
         audio_prompt_text = cfg.audio_prompt_text or ""
 
         if audio_prompt_path:
-            audio_prompt_tokens = generator._extract_audio_prompt_tokens(audio_prompt_path)
-            flow_embedding = generator._extract_zero_shot_embedding(audio_prompt_path)
-            audio_prompt_feat = generator._extract_audio_prompt_feat(audio_prompt_path)
+            prompt_cache = getattr(tts, "prompt_cache", None)
+            if prompt_cache is None:
+                prompt_cache = OrderedDict()
+                tts.prompt_cache = prompt_cache
+            audio_prompt_tokens, flow_embedding, audio_prompt_feat = _get_cached_audio_prompt(
+                generator, audio_prompt_path, prompt_cache,
+            )
             wavs = generator.generate(
                 [text],
                 flow_embedding=flow_embedding,
@@ -1035,8 +1259,58 @@ def synthesise_to_file(tts, text: str, cfg: TtsConfig) -> Optional[tuple[np.ndar
         else:
             wavs = generator.generate([text], flow_embedding=None)
 
-        samples = wavs[0].cpu().numpy().astype(np.float32)
+        # generator.generate() returns (1, T) tensors (channel dim first); flatten
+        # to the plain 1-D array every other backend in this module produces.
+        samples = wavs[0].squeeze(0).cpu().numpy().astype(np.float32)
         sample_rate = 24000
+        if should_save:
+            soundfile = _require_soundfile()
+            soundfile.write(cfg.output, samples, samplerate=sample_rate)
+        return samples, sample_rate
+
+    if backend == "sarashina_onnx":
+        runtime = tts.model
+        audio_prompt_path = cfg.audio_prompt or None
+        audio_prompt_text = cfg.audio_prompt_text or ""
+
+        if audio_prompt_path is None:
+            # No user-supplied reference voice: fall back to the bundled default
+            # prompt rather than a zero speaker-embedding. Per the reference
+            # model's own prompting guide, generation quality depends heavily on
+            # having a real audio prompt — synthesising with no prompt at all is
+            # an unsupported configuration that produces unreliable output.
+            default_wav = Path(tts.model_dir) / "default_prompt.wav"
+            if default_wav.is_file():
+                audio_prompt_path = str(default_wav)
+                audio_prompt_text = runtime.meta.get("default_prompt_text", "")
+
+        if audio_prompt_path:
+            from .sarashina_onnx import extract_prompt_features  # noqa: PLC0415
+
+            prompt_cache = getattr(tts, "prompt_cache", None)
+            if prompt_cache is None:
+                prompt_cache = OrderedDict()
+                tts.prompt_cache = prompt_cache
+            key = _prompt_cache_key(audio_prompt_path)
+            cached = prompt_cache.get(key)
+            if cached is None:
+                cached = extract_prompt_features(audio_prompt_path, tts.model_dir)
+                prompt_cache[key] = cached
+            else:
+                prompt_cache.move_to_end(key)
+            audio_prompt_tokens, flow_embedding, prompt_feat = cached
+            samples, sample_rate = runtime.synthesise(
+                text,
+                audio_prompt_text=audio_prompt_text,
+                audio_prompt_tokens=audio_prompt_tokens,
+                flow_embedding=flow_embedding,
+                prompt_feat=prompt_feat,
+                seed=cfg.seed,
+            )
+        else:
+            samples, sample_rate = runtime.synthesise(text, seed=cfg.seed)
+
+        samples = np.asarray(samples, dtype=np.float32)
         if should_save:
             soundfile = _require_soundfile()
             soundfile.write(cfg.output, samples, samplerate=sample_rate)
@@ -1085,15 +1359,31 @@ def synthesise_to_file(tts, text: str, cfg: TtsConfig) -> Optional[tuple[np.ndar
 
         lang_code = getattr(tts, "lang_code", "en")
 
-        gen_config = sherpa_onnx.GenerationConfig()
-        gen_config.sid = cfg.speaker_id
-        gen_config.num_steps = 8
-        gen_config.speed = cfg.speed
-        gen_config.extra = {"lang": lang_code}
+        def _generate_one(sentence: str) -> tuple[np.ndarray, int]:
+            gen_config = sherpa_onnx.GenerationConfig()
+            gen_config.sid = cfg.speaker_id
+            gen_config.num_steps = 8
+            gen_config.speed = cfg.speed
+            gen_config.extra = {"lang": lang_code}
+            audio = tts.model.generate(sentence, gen_config)
+            return np.array(audio.samples, dtype=np.float32), audio.sample_rate
 
-        audio = tts.model.generate(text, gen_config)
-        samples = np.array(audio.samples, dtype=np.float32)
-        sample_rate = tts.sample_rate
+        sentences = _split_sentences(text)
+        if len(sentences) <= 1:
+            samples, sample_rate = _generate_one(text)
+            samples = _trim_silence(samples, sample_rate)
+        else:
+            sample_rate = None
+            clips = []
+            for sentence in sentences:
+                clip, sample_rate = _generate_one(sentence)
+                clips.append(_trim_silence(clip, sample_rate))
+            pause = np.zeros(int(sample_rate * _SUPERTONIC_SENTENCE_PAUSE_MS / 1000), dtype=np.float32)
+            parts = [clips[0]]
+            for clip in clips[1:]:
+                parts.append(pause)
+                parts.append(clip)
+            samples = np.concatenate(parts)
 
         if should_save:
             soundfile = _require_soundfile()
@@ -1159,6 +1449,8 @@ def _main_impl() -> None:
         num_threads=args.threads,
         audio_prompt=args.audio_prompt or "",
         audio_prompt_text=args.audio_prompt_text or "",
+        watermark=args.watermark,
+        seed=args.seed,
     )
 
     _info(f"Language: {cfg.language}  |  speed: {cfg.speed}  |  speaker: {cfg.speaker_id}")

@@ -25,10 +25,12 @@ Supported tasks:
 - **Speaker identification** — enroll speakers via microphone or WAV files and identify them in real-time using neural embeddings
 - **Unified model loading** — all sherpa-onnx model families supported via a single `--model-type` flag
 - **CPU-optimized** — runs efficiently on any modern CPU using ONNX Runtime
+- **GPU support** — to run on the network/server 
 - **Auto model download** — fetches default models on first run
 - **Endpoint detection** — intelligently segments speech with configurable silence rules
 - **Wake-word detection** — run custom `livekit-wakeword` ONNX triggers from a microphone or WAV file
 - **Rich terminal output** — colour-coded speaker labels and styled status messages via the `rich` library
+- **Pytorch free** — targetting ONNX format, avoid whole pytorch when possible  
 
 ## Prerequisites
 

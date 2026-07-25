@@ -61,6 +61,37 @@ def test_try_link_ignores_cache_entry_that_is_a_file(tmp_path, monkeypatch):
     assert not project_dir.exists()
 
 
+def test_invalidate_removes_symlink_and_cache_entry(tmp_path, monkeypatch):
+    monkeypatch.setenv("SHEROX_CACHE_DIR", str(tmp_path / "cache"))
+    cached = _make_dir(tmp_path / "cache" / "asr__foo")
+    project_dir = tmp_path / "proj" / "models" / "foo"
+    assert model_cache.try_link(project_dir, "asr") is True
+
+    model_cache.invalidate(project_dir, "asr")
+
+    assert not project_dir.exists()
+    assert not cached.exists()
+
+
+def test_invalidate_removes_real_directory_not_just_symlink(tmp_path, monkeypatch):
+    monkeypatch.setenv("SHEROX_CACHE_DIR", str(tmp_path / "cache"))
+    _make_dir(tmp_path / "cache" / "asr__foo")
+    project_dir = _make_dir(tmp_path / "proj" / "models" / "foo", filename="local.txt")
+    assert not project_dir.is_symlink()
+
+    model_cache.invalidate(project_dir, "asr")
+
+    assert not project_dir.exists()
+    assert not (tmp_path / "cache" / "asr__foo").exists()
+
+
+def test_invalidate_is_noop_when_nothing_cached(tmp_path, monkeypatch):
+    monkeypatch.setenv("SHEROX_CACHE_DIR", str(tmp_path / "cache"))
+    project_dir = tmp_path / "proj" / "models" / "foo"
+    model_cache.invalidate(project_dir, "asr")  # should not raise
+    assert not project_dir.exists()
+
+
 def test_migrate_moves_into_cache_and_symlinks(tmp_path, monkeypatch):
     monkeypatch.setenv("SHEROX_CACHE_DIR", str(tmp_path / "cache"))
     project_dir = _make_dir(tmp_path / "proj" / "models" / "foo")

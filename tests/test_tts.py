@@ -335,6 +335,112 @@ class TestEnsureModel:
 
 
 # ---------------------------------------------------------------------------
+# _ensure_sarashina_onnx_model
+# ---------------------------------------------------------------------------
+
+class TestEnsureSarashinaOnnxModel:
+    def _write_complete_model(self, target: Path) -> None:
+        (target / "llm").mkdir(parents=True, exist_ok=True)
+        for name in tts_module._SARASHINA_ONNX_REQUIRED_FILES:
+            (target / name).parent.mkdir(parents=True, exist_ok=True)
+            (target / name).write_text("x")
+
+    def test_noop_when_already_present(self, tmp_path):
+        target = tmp_path / "sarashina-onnx"
+        self._write_complete_model(target)
+        with patch("huggingface_hub.snapshot_download") as mock_dl:
+            tts_module._ensure_sarashina_onnx_model(target)
+        mock_dl.assert_not_called()
+
+    def test_uses_shared_cache_link_when_available(self, tmp_path):
+        target = tmp_path / "sarashina-onnx"
+
+        def fake_try_link(project_dir, model_type):
+            self._write_complete_model(project_dir)
+            return True
+
+        with patch("sherox.model_cache.try_link", side_effect=fake_try_link) as mock_link, \
+             patch("huggingface_hub.snapshot_download") as mock_dl:
+            tts_module._ensure_sarashina_onnx_model(target)
+        mock_link.assert_called_once_with(target, "tts_jpn-sarashina-onnx")
+        mock_dl.assert_not_called()
+
+    def test_downloads_from_hf_when_missing(self, tmp_path):
+        target = tmp_path / "sarashina-onnx"
+
+        def fake_snapshot_download(repo_id, local_dir):
+            assert repo_id == tts_module._SARASHINA_ONNX_HF_REPO
+            self._write_complete_model(Path(local_dir))
+
+        with patch("sherox.model_cache.try_link", return_value=False), \
+             patch("sherox.model_cache.migrate") as mock_migrate, \
+             patch("huggingface_hub.snapshot_download", side_effect=fake_snapshot_download) as mock_dl:
+            tts_module._ensure_sarashina_onnx_model(target)
+        mock_dl.assert_called_once_with(tts_module._SARASHINA_ONNX_HF_REPO, local_dir=str(target))
+        mock_migrate.assert_called_once_with(target, "tts_jpn-sarashina-onnx")
+        assert tts_module._sarashina_onnx_model_complete(target)
+
+    def test_exits_when_huggingface_hub_missing(self, tmp_path):
+        target = tmp_path / "sarashina-onnx"
+        with patch("sherox.model_cache.try_link", return_value=False), \
+             patch.dict("sys.modules", {"huggingface_hub": None}), \
+             pytest.raises(ConfigError):
+            tts_module._ensure_sarashina_onnx_model(target)
+
+    def test_exits_when_files_missing_after_download(self, tmp_path):
+        target = tmp_path / "sarashina-onnx"
+        with patch("sherox.model_cache.try_link", return_value=False), \
+             patch("huggingface_hub.snapshot_download"), \
+             pytest.raises(ConfigError):
+            tts_module._ensure_sarashina_onnx_model(target)
+
+    def test_stale_cache_link_is_invalidated_and_redownloaded(self, tmp_path):
+        """A cached copy that predates campplus.onnx/s3_tokenizer.onnx being
+        added must not be silently reused — it should be invalidated and a
+        fresh download triggered instead."""
+        target = tmp_path / "sarashina-onnx"
+
+        def fake_try_link(project_dir, model_type):
+            # Simulate an old, incomplete cache: only the pre-cloning files exist.
+            project_dir.mkdir(parents=True, exist_ok=True)
+            (project_dir / "meta.json").write_text("{}")
+            return True
+
+        def fake_snapshot_download(repo_id, local_dir):
+            self._write_complete_model(Path(local_dir))
+
+        with patch("sherox.model_cache.try_link", side_effect=fake_try_link), \
+             patch("sherox.model_cache.invalidate") as mock_invalidate, \
+             patch("sherox.model_cache.migrate"), \
+             patch("huggingface_hub.snapshot_download", side_effect=fake_snapshot_download) as mock_dl:
+            tts_module._ensure_sarashina_onnx_model(target)
+
+        mock_invalidate.assert_called_once_with(target, "tts_jpn-sarashina-onnx")
+        mock_dl.assert_called_once()
+        assert tts_module._sarashina_onnx_model_complete(target)
+
+    def test_dangling_symlink_is_cleared_before_fresh_download(self, tmp_path):
+        """A broken symlink (its cache target removed independently of sherox,
+        so try_link's own cache lookup finds nothing) must not make the
+        subsequent mkdir(exist_ok=True) raise FileExistsError."""
+        target = tmp_path / "sarashina-onnx"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.symlink_to(tmp_path / "nonexistent-cache-target")
+        assert target.is_symlink() and not target.exists()
+
+        def fake_snapshot_download(repo_id, local_dir):
+            self._write_complete_model(Path(local_dir))
+
+        with patch("sherox.model_cache.try_link", return_value=False), \
+             patch("sherox.model_cache.migrate"), \
+             patch("huggingface_hub.snapshot_download", side_effect=fake_snapshot_download):
+            tts_module._ensure_sarashina_onnx_model(target)
+
+        assert not target.is_symlink()
+        assert tts_module._sarashina_onnx_model_complete(target)
+
+
+# ---------------------------------------------------------------------------
 # build_tts
 # ---------------------------------------------------------------------------
 
@@ -787,6 +893,27 @@ class TestRequireSarashina:
 
 
 # ---------------------------------------------------------------------------
+# _quantize_sarashina_llm
+# ---------------------------------------------------------------------------
+
+class TestQuantizeSarashinaLlm:
+    def test_replaces_text_generator_model_with_quantized_version(self):
+        torch = pytest.importorskip("torch")
+        llm = torch.nn.Linear(4, 4)
+        generator = SimpleNamespace(text_generator=SimpleNamespace(model=llm))
+
+        tts_module._quantize_sarashina_llm(generator)
+
+        assert generator.text_generator.model is not llm
+        out = generator.text_generator.model(torch.zeros(1, 4))
+        assert out.shape == (1, 4)
+
+    def test_noop_when_text_generator_missing(self):
+        generator = SimpleNamespace()
+        tts_module._quantize_sarashina_llm(generator)  # should not raise
+
+
+# ---------------------------------------------------------------------------
 # build_tts — sarashina backend
 # ---------------------------------------------------------------------------
 
@@ -804,8 +931,24 @@ class TestBuildTtsSarashina:
             result = tts_module.build_tts(cfg, tmp_path)
         assert result.backend == "sarashina"
         assert result.model is mock_generator
+        assert result.prompt_cache == {}
         call_kwargs = mock_sarashina.SarashinaTTSGenerator.call_args[1]
         assert call_kwargs["decoder_fp16"] is False
+        assert call_kwargs["watermark"] is False
+
+    def test_builds_sarashina_passes_watermark_true(self, tmp_path):
+        mock_generator = MagicMock()
+        mock_sarashina = SimpleNamespace(
+            SarashinaTTSGenerator=MagicMock(return_value=mock_generator)
+        )
+        cfg = TtsConfig(language="jpn-sarashina", watermark=True)
+        mock_torch = MagicMock()
+        mock_torch.cuda.is_available.return_value = False
+        with patch.object(tts_module, "_require_sarashina", return_value=mock_sarashina), \
+             patch.dict("sys.modules", {"torch": mock_torch}):
+            tts_module.build_tts(cfg, tmp_path)
+        call_kwargs = mock_sarashina.SarashinaTTSGenerator.call_args[1]
+        assert call_kwargs["watermark"] is True
 
     def test_builds_sarashina_fp16_enabled_on_cuda(self, tmp_path):
         mock_generator = MagicMock()
@@ -820,6 +963,34 @@ class TestBuildTtsSarashina:
             result = tts_module.build_tts(cfg, tmp_path)
         call_kwargs = mock_sarashina.SarashinaTTSGenerator.call_args[1]
         assert call_kwargs["decoder_fp16"] is True
+
+    def test_builds_sarashina_quantizes_llm_on_cpu(self, tmp_path):
+        mock_generator = MagicMock()
+        mock_sarashina = SimpleNamespace(
+            SarashinaTTSGenerator=MagicMock(return_value=mock_generator)
+        )
+        cfg = TtsConfig(language="jpn-sarashina")
+        mock_torch = MagicMock()
+        mock_torch.cuda.is_available.return_value = False
+        with patch.object(tts_module, "_require_sarashina", return_value=mock_sarashina), \
+             patch.object(tts_module, "_quantize_sarashina_llm") as mock_quantize, \
+             patch.dict("sys.modules", {"torch": mock_torch}):
+            tts_module.build_tts(cfg, tmp_path)
+        mock_quantize.assert_called_once_with(mock_generator)
+
+    def test_builds_sarashina_skips_quantization_on_cuda(self, tmp_path):
+        mock_generator = MagicMock()
+        mock_sarashina = SimpleNamespace(
+            SarashinaTTSGenerator=MagicMock(return_value=mock_generator)
+        )
+        cfg = TtsConfig(language="jpn-sarashina")
+        mock_torch = MagicMock()
+        mock_torch.cuda.is_available.return_value = True
+        with patch.object(tts_module, "_require_sarashina", return_value=mock_sarashina), \
+             patch.object(tts_module, "_quantize_sarashina_llm") as mock_quantize, \
+             patch.dict("sys.modules", {"torch": mock_torch}):
+            tts_module.build_tts(cfg, tmp_path)
+        mock_quantize.assert_not_called()
 
     def test_builds_sarashina_with_custom_model_dir(self, tmp_path):
         custom_dir = tmp_path / "my_sarashina"
@@ -864,7 +1035,7 @@ class TestSynthesiseToFileSarashina:
     def _make_tts(self):
         mock_generator = MagicMock()
         import torch
-        mock_wav = torch.zeros(24000)
+        mock_wav = torch.zeros(1, 24000)
         mock_generator.generate.return_value = [mock_wav]
         return SimpleNamespace(backend="sarashina", model=mock_generator)
 
@@ -905,6 +1076,50 @@ class TestSynthesiseToFileSarashina:
         tts.model.generate.assert_called_once()
         assert result[1] == 24000
 
+    def test_audio_prompt_extraction_cached_across_calls(self, tmp_path):
+        try:
+            import torch
+        except ImportError:
+            pytest.skip("torch not installed")
+        prompt_file = tmp_path / "prompt.wav"
+        prompt_file.touch()
+        tts = self._make_tts()
+        mock_sf = MagicMock()
+        cfg = TtsConfig(
+            language="jpn-sarashina",
+            output="out.wav",
+            audio_prompt=str(prompt_file),
+            audio_prompt_text="テスト音声です。",
+        )
+        with patch.object(tts_module, "_require_soundfile", return_value=mock_sf):
+            tts_module.synthesise_to_file(tts, "こんにちは。", cfg)
+            tts_module.synthesise_to_file(tts, "もう一度。", cfg)
+        tts.model._extract_audio_prompt_tokens.assert_called_once_with(str(prompt_file))
+        tts.model._extract_zero_shot_embedding.assert_called_once_with(str(prompt_file))
+        tts.model._extract_audio_prompt_feat.assert_called_once_with(str(prompt_file))
+        assert tts.model.generate.call_count == 2
+
+    def test_audio_prompt_cache_busts_on_file_change(self, tmp_path):
+        try:
+            import torch
+        except ImportError:
+            pytest.skip("torch not installed")
+        prompt_file = tmp_path / "prompt.wav"
+        prompt_file.write_bytes(b"a")
+        tts = self._make_tts()
+        mock_sf = MagicMock()
+        cfg = TtsConfig(
+            language="jpn-sarashina",
+            output="out.wav",
+            audio_prompt=str(prompt_file),
+            audio_prompt_text="テスト音声です。",
+        )
+        with patch.object(tts_module, "_require_soundfile", return_value=mock_sf):
+            tts_module.synthesise_to_file(tts, "こんにちは。", cfg)
+            prompt_file.write_bytes(b"ab")
+            tts_module.synthesise_to_file(tts, "こんにちは。", cfg)
+        assert tts.model._extract_audio_prompt_tokens.call_count == 2
+
     def test_synthesise_returns_float32(self):
         try:
             import torch
@@ -933,6 +1148,137 @@ class TestSynthesiseToFileSarashina:
 
 
 # ---------------------------------------------------------------------------
+# build_tts / synthesise_to_file — sarashina_onnx backend
+# ---------------------------------------------------------------------------
+
+class TestSarashinaOnnxBackend:
+    def test_language_alias_and_registry(self):
+        assert tts_module._normalize_language("sarashina-onnx") == "jpn-sarashina-onnx"
+        assert tts_module._normalize_language("jpn_sarashina_onnx") == "jpn-sarashina-onnx"
+        assert tts_module._TTS_MODELS["jpn-sarashina-onnx"]["backend"] == "sarashina_onnx"
+
+    def test_build_errors_when_artifacts_missing(self, tmp_path):
+        cfg = TtsConfig(language="jpn-sarashina-onnx", model_dir=str(tmp_path))
+        with pytest.raises(ConfigError):
+            tts_module.build_tts(cfg, tmp_path)
+
+    def test_build_constructs_runtime(self, tmp_path):
+        model_dir = tmp_path / "sarashina-onnx"
+        model_dir.mkdir()
+        (model_dir / "meta.json").write_text("{}")
+        mock_runtime = MagicMock()
+        mock_mod = SimpleNamespace(SarashinaOnnxRuntime=MagicMock(return_value=mock_runtime))
+        cfg = TtsConfig(language="jpn-sarashina-onnx", model_dir=str(model_dir), num_threads=2)
+        with patch.dict("sys.modules", {"sherox.sarashina_onnx": mock_mod}):
+            result = tts_module.build_tts(cfg, tmp_path)
+        assert result.backend == "sarashina_onnx"
+        assert result.model is mock_runtime
+        assert result.model_dir == str(model_dir)
+        mock_mod.SarashinaOnnxRuntime.assert_called_once_with(str(model_dir), num_threads=2)
+
+    def test_build_auto_downloads_when_no_model_dir_given(self, tmp_path):
+        """Without an explicit --model-dir, build_tts must try to auto-download
+        rather than erroring — this is the whole point of publishing the model
+        to Hugging Face."""
+        mock_runtime = MagicMock()
+        mock_mod = SimpleNamespace(SarashinaOnnxRuntime=MagicMock(return_value=mock_runtime))
+        cfg = TtsConfig(language="jpn-sarashina-onnx")
+
+        def fake_ensure(target_dir):
+            target_dir.mkdir(parents=True, exist_ok=True)
+            (target_dir / "meta.json").write_text("{}")
+
+        with patch.dict("sys.modules", {"sherox.sarashina_onnx": mock_mod}), \
+             patch.object(tts_module, "_ensure_sarashina_onnx_model", side_effect=fake_ensure) as mock_ensure:
+            result = tts_module.build_tts(cfg, tmp_path)
+
+        expected_dir = tmp_path / "models" / "sarashina-onnx"
+        mock_ensure.assert_called_once_with(expected_dir)
+        assert result.model_dir == str(expected_dir)
+
+    def test_synthesise_default_voice(self, tmp_path):
+        runtime = MagicMock()
+        runtime.synthesise.return_value = (np.zeros(24000, dtype=np.float32), 24000)
+        tts = SimpleNamespace(backend="sarashina_onnx", model=runtime, model_dir=str(tmp_path))
+        mock_sf = MagicMock()
+        cfg = TtsConfig(language="jpn-sarashina-onnx", output="out.wav")
+        with patch.object(tts_module, "_require_soundfile", return_value=mock_sf):
+            samples, sr = tts_module.synthesise_to_file(tts, "テスト", cfg)
+        runtime.synthesise.assert_called_once_with("テスト", seed=0)
+        assert sr == 24000
+        assert samples.dtype == np.float32
+        mock_sf.write.assert_called_once()
+
+    def test_synthesise_with_audio_prompt_extracts_and_caches(self, tmp_path):
+        prompt_file = tmp_path / "prompt.wav"
+        prompt_file.touch()
+        runtime = MagicMock()
+        runtime.synthesise.return_value = (np.zeros(100, dtype=np.float32), 24000)
+        tts = SimpleNamespace(
+            backend="sarashina_onnx", model=runtime, model_dir=str(tmp_path),
+            prompt_cache=__import__("collections").OrderedDict(),
+        )
+        mock_sf = MagicMock()
+        mock_extract = MagicMock(return_value=([1, 2, 3], np.zeros(192, dtype=np.float32), np.zeros((1, 5, 80), dtype=np.float32)))
+        mock_mod = SimpleNamespace(extract_prompt_features=mock_extract)
+        cfg = TtsConfig(
+            language="jpn-sarashina-onnx", output="out.wav",
+            audio_prompt=str(prompt_file), audio_prompt_text="プロンプト。",
+        )
+        with patch.dict("sys.modules", {"sherox.sarashina_onnx": mock_mod}), \
+             patch.object(tts_module, "_require_soundfile", return_value=mock_sf):
+            tts_module.synthesise_to_file(tts, "こんにちは。", cfg)
+            tts_module.synthesise_to_file(tts, "もう一度。", cfg)
+        # Extraction runs once (against the ONNX model dir, which now also holds
+        # campplus.onnx / s3_tokenizer.onnx) and is reused from the cache on the
+        # second call.
+        mock_extract.assert_called_once_with(str(prompt_file), str(tmp_path))
+        assert runtime.synthesise.call_count == 2
+        _, kwargs = runtime.synthesise.call_args
+        assert kwargs["audio_prompt_tokens"] == [1, 2, 3]
+        assert kwargs["audio_prompt_text"] == "プロンプト。"
+
+    def test_synthesise_no_audio_prompt_falls_back_to_bundled_default(self, tmp_path):
+        """When the caller supplies no --audio-prompt but the model directory has
+        a bundled default_prompt.wav (shipped with every exported ONNX model),
+        it must be used automatically instead of a zero speaker-embedding —
+        see sarashina_onnx_export.py for why (the reference model's own
+        prompting guide: unconditioned generation is not a supported mode)."""
+        (tmp_path / "default_prompt.wav").touch()
+        runtime = MagicMock()
+        runtime.meta = {"default_prompt_text": "続いて本人確認のため生年月日をお知らせいただけますでしょうか？"}
+        runtime.synthesise.return_value = (np.zeros(100, dtype=np.float32), 24000)
+        tts = SimpleNamespace(
+            backend="sarashina_onnx", model=runtime, model_dir=str(tmp_path),
+            prompt_cache=__import__("collections").OrderedDict(),
+        )
+        mock_sf = MagicMock()
+        mock_extract = MagicMock(return_value=([9, 9], np.zeros(192, dtype=np.float32), np.zeros((1, 3, 80), dtype=np.float32)))
+        mock_mod = SimpleNamespace(extract_prompt_features=mock_extract)
+        cfg = TtsConfig(language="jpn-sarashina-onnx", output="out.wav")
+        with patch.dict("sys.modules", {"sherox.sarashina_onnx": mock_mod}), \
+             patch.object(tts_module, "_require_soundfile", return_value=mock_sf):
+            tts_module.synthesise_to_file(tts, "こんにちは。", cfg)
+        mock_extract.assert_called_once_with(str(tmp_path / "default_prompt.wav"), str(tmp_path))
+        _, kwargs = runtime.synthesise.call_args
+        assert kwargs["audio_prompt_tokens"] == [9, 9]
+        assert kwargs["audio_prompt_text"] == "続いて本人確認のため生年月日をお知らせいただけますでしょうか？"
+
+    def test_synthesise_no_audio_prompt_and_no_bundled_default_uses_zero_embedding(self, tmp_path):
+        """Old behavior preserved when the model dir predates the bundled
+        default prompt (e.g. a stale cache) — falls through to no-prompt
+        synthesis rather than erroring."""
+        runtime = MagicMock()
+        runtime.synthesise.return_value = (np.zeros(100, dtype=np.float32), 24000)
+        tts = SimpleNamespace(backend="sarashina_onnx", model=runtime, model_dir=str(tmp_path))
+        mock_sf = MagicMock()
+        cfg = TtsConfig(language="jpn-sarashina-onnx", output="out.wav")
+        with patch.object(tts_module, "_require_soundfile", return_value=mock_sf):
+            tts_module.synthesise_to_file(tts, "こんにちは。", cfg)
+        runtime.synthesise.assert_called_once_with("こんにちは。", seed=0)
+
+
+# ---------------------------------------------------------------------------
 # parse_args — audio-prompt args
 # ---------------------------------------------------------------------------
 
@@ -953,6 +1299,16 @@ class TestParseArgsAudioPrompt:
             args = tts_module.parse_args()
         assert args.audio_prompt_text == "テスト"
 
+    def test_watermark_default_false(self):
+        with patch("sys.argv", ["sherox.tts"]):
+            args = tts_module.parse_args()
+        assert args.watermark is False
+
+    def test_watermark_flag_enables(self):
+        with patch("sys.argv", ["sherox.tts", "--watermark"]):
+            args = tts_module.parse_args()
+        assert args.watermark is True
+
 
 # ---------------------------------------------------------------------------
 # main — sarashina integration
@@ -965,7 +1321,7 @@ class TestMainSarashina:
         except ImportError:
             return None
         mock_generator = MagicMock()
-        mock_wav = torch.zeros(24000)
+        mock_wav = torch.zeros(1, 24000)
         mock_generator.generate.return_value = [mock_wav]
         return SimpleNamespace(backend="sarashina", model=mock_generator)
 
@@ -1105,7 +1461,7 @@ class TestSupertonicTts:
     def test_supertonic_base_metadata(self):
         meta = tts_module._SUPERTONIC_BASE
         assert meta["backend"] == "supertonic"
-        assert meta["sample_rate"] == 24000
+        assert meta["sample_rate"] == 44100
         assert "duration_predictor" in meta["files"]
         assert "text_encoder" in meta["files"]
         assert "vocoder" in meta["files"]
@@ -1156,6 +1512,19 @@ class TestSupertonicTts:
         assert meta["backend"] == "supertonic"
         assert meta["lang_code"] == "id"
 
+    def test_japanese_supertonic_available(self):
+        """Japanese Supertonic-3 (jpn-supertonic) should be available."""
+        meta = tts_module._TTS_MODELS["jpn-supertonic"]
+        assert meta["backend"] == "supertonic"
+        assert meta["lang_code"] == "ja"
+
+    def test_japanese_supertonic_alias_resolves(self):
+        assert tts_module._normalize_language("jpn-supertonic") == "jpn-supertonic"
+
+    def test_japanese_supertonic_shares_supertonic_url(self):
+        meta = tts_module._TTS_MODELS["jpn-supertonic"]
+        assert meta["url"] == tts_module._SUPERTONIC_BASE["url"]
+
     def test_parse_args_supertonic_lang(self):
         with patch("sys.argv", ["sherox.tts", "--lang", "kor"]):
             args = tts_module.parse_args()
@@ -1184,40 +1553,43 @@ class TestSupertonicTts:
             result = tts_module.build_tts(cfg, tmp_path)
         assert result.backend == "supertonic"
         assert result.lang_code == "ru"
-        assert result.sample_rate == 24000
 
     def test_synthesise_to_file_supertonic(self):
+        """Regression guard: the real supertonic-3 model outputs 44100 Hz, not
+        the 24000 Hz sherox used to assume — sample_rate must come from the
+        generation result (audio.sample_rate), never a static/hardcoded value,
+        or the written WAV plays back at the wrong speed/pitch."""
         mock_sf = MagicMock()
         mock_tts_instance = MagicMock()
         mock_audio = MagicMock()
         mock_audio.samples = [0.1, 0.2, 0.3]
+        mock_audio.sample_rate = 44100
         mock_tts_instance.generate.return_value = mock_audio
 
         tts = SimpleNamespace(
             backend="supertonic",
             model=mock_tts_instance,
             lang_code="ko",
-            sample_rate=24000,
         )
         cfg = TtsConfig(output="out.wav", language="kor")
         with patch.object(tts_module, "_require_soundfile", return_value=mock_sf):
             samples, sr = tts_module.synthesise_to_file(tts, "안녕하세요", cfg)
-        assert sr == 24000
+        assert sr == 44100
         assert samples.dtype == np.float32
-        mock_sf.write.assert_called_once()
+        mock_sf.write.assert_called_once_with("out.wav", samples, samplerate=44100)
 
     def test_synthesise_to_file_supertonic_passes_lang(self):
         mock_sf = MagicMock()
         mock_tts_instance = MagicMock()
         mock_audio = MagicMock()
         mock_audio.samples = [0.1, 0.2]
+        mock_audio.sample_rate = 44100
         mock_tts_instance.generate.return_value = mock_audio
 
         tts = SimpleNamespace(
             backend="supertonic",
             model=mock_tts_instance,
             lang_code="ja",
-            sample_rate=24000,
         )
         cfg = TtsConfig(output="out.wav", language="jpn")
         with patch.object(tts_module, "_require_soundfile", return_value=mock_sf):
@@ -1226,3 +1598,92 @@ class TestSupertonicTts:
         call_args = mock_tts_instance.generate.call_args
         gen_config = call_args[0][1]
         assert gen_config.extra == {"lang": "ja"}
+
+    def test_split_sentences(self):
+        assert tts_module._split_sentences("こんにちは。今日はいい天気ですね。") == [
+            "こんにちは。", "今日はいい天気ですね。",
+        ]
+        assert tts_module._split_sentences("Hello world. How are you?") == [
+            "Hello world.", "How are you?",
+        ]
+        # No sentence-ending punctuation: treated as one sentence, unsplit.
+        assert tts_module._split_sentences("hello world") == ["hello world"]
+        # Trailing punctuation with nothing after shouldn't produce an empty segment.
+        assert tts_module._split_sentences("Only one sentence!") == ["Only one sentence!"]
+
+    def test_trim_silence_removes_only_leading_and_trailing(self):
+        silence = np.zeros(20, dtype=np.float32)
+        voiced = np.ones(50, dtype=np.float32)
+        clip = np.concatenate([silence, voiced, silence])
+        trimmed = tts_module._trim_silence(clip, sample_rate=1000)
+        np.testing.assert_array_equal(trimmed, voiced)
+
+    def test_trim_silence_all_silent_returns_unchanged(self):
+        clip = np.zeros(100, dtype=np.float32)
+        trimmed = tts_module._trim_silence(clip, sample_rate=1000)
+        np.testing.assert_array_equal(trimmed, clip)
+
+    def test_synthesise_to_file_supertonic_multi_sentence_trims_and_pauses(self):
+        """Regression guard for the reported "no pause despite a period"
+        complaint: supertonic-3's own inter-sentence pausing is too weak to
+        be reliably audible, and each generate() call pads its own clip with
+        ~400-550ms of leading/trailing silence — enough to swamp any pause
+        inserted between naively-concatenated clips. Each sentence must be
+        generated separately, trimmed to its voiced content, then joined with
+        exactly one fixed-length pause (tuned by ear against real audio)."""
+        mock_sf = MagicMock()
+        mock_tts_instance = MagicMock()
+        sr = 1000  # small rate keeps the test arrays tiny and exact
+
+        def make_clip(voiced_len):
+            silence = np.zeros(20, dtype=np.float32)
+            voiced = np.ones(voiced_len, dtype=np.float32)
+            return np.concatenate([silence, voiced, silence])
+
+        clip1 = make_clip(50)
+        clip2 = make_clip(80)
+        seen_sentences = []
+
+        def fake_generate(sentence, gen_config):
+            seen_sentences.append(sentence)
+            audio = MagicMock()
+            audio.samples = (clip1 if len(seen_sentences) == 1 else clip2).tolist()
+            audio.sample_rate = sr
+            return audio
+
+        mock_tts_instance.generate.side_effect = fake_generate
+
+        tts = SimpleNamespace(backend="supertonic", model=mock_tts_instance, lang_code="ja")
+        cfg = TtsConfig(output="out.wav", language="jpn")
+        with patch.object(tts_module, "_require_soundfile", return_value=mock_sf):
+            samples, sr_out = tts_module.synthesise_to_file(
+                tts, "こんにちは。今日はいい天気ですね。", cfg,
+            )
+
+        assert seen_sentences == ["こんにちは。", "今日はいい天気ですね。"]
+        pause_len = int(sr * tts_module._SUPERTONIC_SENTENCE_PAUSE_MS / 1000)
+        assert len(samples) == 50 + pause_len + 80
+        # the pause itself must be silent
+        pause_region = samples[50:50 + pause_len]
+        assert np.all(pause_region == 0)
+        assert sr_out == sr
+
+    def test_synthesise_to_file_supertonic_single_sentence_unaffected(self):
+        """Text with no sentence-ending punctuation must take the single-call
+        path unchanged (no splitting, no inter-clip pause to insert)."""
+        mock_sf = MagicMock()
+        mock_tts_instance = MagicMock()
+        mock_audio = MagicMock()
+        mock_audio.samples = np.concatenate([
+            np.zeros(20, dtype=np.float32), np.ones(50, dtype=np.float32), np.zeros(20, dtype=np.float32),
+        ]).tolist()
+        mock_audio.sample_rate = 1000
+        mock_tts_instance.generate.return_value = mock_audio
+
+        tts = SimpleNamespace(backend="supertonic", model=mock_tts_instance, lang_code="ja")
+        cfg = TtsConfig(output="out.wav", language="jpn")
+        with patch.object(tts_module, "_require_soundfile", return_value=mock_sf):
+            samples, sr = tts_module.synthesise_to_file(tts, "hello world", cfg)
+
+        assert mock_tts_instance.generate.call_count == 1
+        assert len(samples) == 50  # edges trimmed, no pause inserted

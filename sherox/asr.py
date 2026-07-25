@@ -849,6 +849,18 @@ def _validate_model(model_dir: str, model_type: str) -> None:
     model_cache.ensure_model(model_dir, model_type, _download_model)
 
 
+def ensure_model(model_dir: str, model_type: str) -> None:
+    """Download (or link from sherox's shared cache) the ASR model at
+    *model_dir* if it isn't already there — the same resolution every
+    language's default model goes through when --model-dir is omitted.
+
+    Public entry point for embedding sherox's ASR engine directly (see
+    sherox.asr_engine.build_offline_recognizer) without reimplementing model
+    download/caching — e.g. ai-pronunciation-trainer's sherox_wrapper.py.
+    """
+    _validate_model(model_dir, model_type)
+
+
 def _normalize_language(language: str) -> str:
     normalized = language.lower().replace("_", "-")
     return _LANGUAGE_ALIASES.get(normalized, normalized)

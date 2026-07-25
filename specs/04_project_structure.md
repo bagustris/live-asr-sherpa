@@ -1,13 +1,13 @@
 # Project Structure
 
-src/
-│
-├── main.py
-├── asr_engine.py
-├── streaming.py
-├── audio.py
-├── config.py
-└── requirements.txt
+src/  
+│  
+├── main.py  
+├── asr_engine.py  
+├── streaming.py  
+├── audio.py  
+├── config.py  
+└── requirements.txt  
 
 ## Responsibilities
 
