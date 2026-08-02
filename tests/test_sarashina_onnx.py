@@ -10,6 +10,8 @@ from unittest.mock import MagicMock, patch
 import numpy as np
 import pytest
 
+librosa = pytest.importorskip("librosa", reason="librosa is required for sarashina audio frontend tests")
+
 import sherox.sarashina_onnx as rt
 import sherox.sarashina_onnx_hf as hf
 

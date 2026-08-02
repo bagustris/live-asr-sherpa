@@ -13,6 +13,19 @@ import sherox.tts as tts_module
 from sherox import AudioError, ConfigError, SherpaError
 from sherox.config import TtsConfig
 
+# Optional dependencies for specific test suites
+try:
+    import huggingface_hub
+    HAS_HUGGINGFACE_HUB = True
+except ImportError:
+    HAS_HUGGINGFACE_HUB = False
+
+try:
+    import torch
+    HAS_TORCH = True
+except ImportError:
+    HAS_TORCH = False
+
 
 # ---------------------------------------------------------------------------
 # parse_args
@@ -338,6 +351,7 @@ class TestEnsureModel:
 # _ensure_sarashina_onnx_model
 # ---------------------------------------------------------------------------
 
+@pytest.mark.skipif(not HAS_HUGGINGFACE_HUB, reason="huggingface_hub is required for sarashina ONNX model tests")
 class TestEnsureSarashinaOnnxModel:
     def _write_complete_model(self, target: Path) -> None:
         (target / "llm").mkdir(parents=True, exist_ok=True)
@@ -896,9 +910,9 @@ class TestRequireSarashina:
 # _quantize_sarashina_llm
 # ---------------------------------------------------------------------------
 
+@pytest.mark.skipif(not HAS_TORCH, reason="torch is required for sarashina LLM quantization tests")
 class TestQuantizeSarashinaLlm:
     def test_replaces_text_generator_model_with_quantized_version(self):
-        torch = pytest.importorskip("torch")
         llm = torch.nn.Linear(4, 4)
         generator = SimpleNamespace(text_generator=SimpleNamespace(model=llm))
 

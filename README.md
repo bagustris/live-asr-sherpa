@@ -267,6 +267,89 @@ sherox.tts --text "こんにちは、今日は良い天気ですね。" --lang j
 
 See [TTS_MODEL.md](TTS_MODEL.md) for the supported built-in TTS languages, backends, and model details.
 
+## Practical Examples
+
+### Meeting Transcription with Speaker Diarization
+
+```bash
+# Record a meeting and transcribe with speaker identification
+sherox.asr --mic --offline --diarization --num-speakers 3 --output meeting.txt
+```
+
+### Multi-language Speech Recognition
+
+```bash
+# Transcribe Japanese audio
+sherox.asr --wav japanese_speech.wav --offline --language ja --model-type zipformer2
+
+# Transcribe German audio  
+sherox.asr --wav german_speech.wav --offline --language de --model-type nemo_ctc
+```
+
+### Voice Identification System
+
+```bash
+# Enroll speakers from reference recordings
+sherox.sid --enroll alice alice_ref1.wav alice_ref2.wav
+sherox.sid --enroll bob bob_ref1.wav bob_ref2.wav
+
+# Identify speakers in real-time
+sherox.sid --mic --speaker-file speakers.txt
+```
+
+### Batch Audio Processing
+
+```bash
+# Process multiple WAV files with ASR
+for file in recordings/*.wav; do
+    sherox.asr --wav "$file" --offline --output "transcripts/$(basename $file .wav).txt"
+done
+```
+
+### Custom Wake Word Detection
+
+```bash
+# Train and use custom wake word (requires livekit-wakeword)
+livekit-wakeword run configs/my_wake_word.yaml
+sherox.wake --mic --model models/my_wake_word.onnx
+```
+
+## Troubleshooting
+
+### Common Issues
+
+**Problem**: "No input devices found" error
+- **Solution**: Check microphone permissions and ensure a microphone is connected. Use `arecord -l` (Linux) to list available devices.
+
+**Problem**: Model download fails
+- **Solution**: Check internet connection and firewall settings. Models are downloaded from GitHub releases and Hugging Face.
+
+**Problem**: High CPU usage during transcription
+- **Solution**: Reduce `--threads` parameter, use a smaller model, or enable GPU support with `--device cuda`.
+
+**Problem**: Poor transcription accuracy
+- **Solution**: Ensure audio is mono, 16kHz WAV format. Use `--offline` mode for better accuracy on files. Try different model types.
+
+**Problem**: Segmentation issues with silence detection
+- **Solution**: Adjust VAD parameters with `--vad-model` and experiment with different segmentation thresholds.
+
+### Performance Tips
+
+1. **Use smaller models for real-time**: `parakeet-tdt-0.6b-v2-int8` is optimized for CPU
+2. **Batch process files**: Use `--offline` mode for better accuracy on pre-recorded audio
+3. **Adjust thread count**: Set `--threads` based on your CPU cores (typically 2-4x physical cores)
+4. **Use appropriate sample rates**: Ensure audio matches model expectations (usually 16kHz)
+
+### Model Selection Guide
+
+| Use Case | Recommended Model | Speed | Accuracy |
+|----------|------------------|-------|----------|
+| Real-time English | `parakeet-tdt-0.6b-v2-int8` | Fast | Good |
+| Offline English | `whisper-large-v3` | Slow | Excellent |
+| Japanese | `reazon-ja` | Medium | Good |
+| Multilingual | `whisper-turbo` | Fast | Good |
+| German | `nemo_ctc` (de) | Fast | Good |
+
 ### `sherox.kws`
 
 ```
@@ -409,3 +492,76 @@ sherox/
 | Rule 1 | 2.4 s trailing silence → hard endpoint |
 | Rule 2 | 1.2 s silence after sufficient speech → early endpoint |
 | Rule 3 | 300 s max utterance → forced endpoint (effectively disabled) |
+
+## Advanced Usage Examples
+
+### Keyword Spotting
+
+```bash
+# Detect specific keywords in real-time audio
+sherox.kws --mic --keywords "hello,goodbye,stop" --keywords-threshold 0.3
+
+# Detect keywords from a file
+sherox.kws --wav recording.wav --keywords-file keywords.txt
+```
+
+### Language Identification
+
+```bash
+# Identify language in an audio file
+sherox.lid --wav unknown_language.wav
+
+# Real-time language identification
+sherox.lid --mic
+```
+
+### Speech Segmentation
+
+```bash
+# Segment speech from silence in real-time
+sherox.segment --mic --output-dir segments/
+
+# Segment a pre-recorded file
+sherox.segment --wav interview.wav --output-dir interview_segments/
+```
+
+### HTTP Server Mode
+
+```bash
+# Start a simple HTTP server for ASR
+sherox.server --host 0.0.0.0 --port 8000
+
+# Server with custom model and language
+sherox.server --model-type whisper-turbo --language ja --port 8080
+```
+
+## Integration Examples
+
+### Python API for Custom Workflows
+
+```python
+from sherox.asr_engine import build_recognizer
+from sherox.audio import read_wav
+
+# Build recognizer
+recognizer = build_recognizer(
+    model_dir="models/parakeet-tdt-0.6b-v2-int8",
+    model_type="transducer",
+    sample_rate=16000,
+)
+
+# Process audio file
+for chunk in read_wav("audio.wav", target_sr=16000, chunk_size=0.1):
+    recognizer.accept_waveform(chunk)
+    if recognizer.is_endpoint():
+        result = recognizer.get_result()
+        print(f"Transcript: {result.text}")
+```
+
+### Combining Multiple Sherox Features
+
+```bash
+# Workflow: Identify language → Transcribe with appropriate model
+LANG=$(sherox.lid --wav audio.wav --output json | jq -r '.language')
+sherox.asr --wav audio.wav --language "$LANG" --offline
+```
