@@ -24,8 +24,6 @@ build-backend = "setuptools.build_meta"
 "sherox.lid"     = "sherox.lid:main"
 "sherox.segment" = "sherox.segment:main"
 "sherox.tts"     = "sherox.tts:main"
-"sherox.sarashina_onnx_export" = "sherox.sarashina_onnx_export:main"
-"sherox.sarashina_onnx_hf" = "sherox.sarashina_onnx_hf:main"
 "sherox.kws"     = "sherox.kws:main"
 "sherox.wake"    = "sherox.wake:main"
 "sherox.server"  = "sherox.server:main"
@@ -51,31 +49,6 @@ server = [
 tts-ja = [
     "piper-plus",
 ]
-tts-ja-sarashina = [
-    # torch/torchaudio are sourced from the pytorch-cpu index (see [tool.uv.sources]).
-    # With plain pip, pre-install CPU torch first:
-    #   pip install torch torchaudio --index-url https://download.pytorch.org/whl/cpu
-    "sarashina2.2-tts @ git+https://github.com/sbintuitions/sarashina2.2-tts.git",
-]
-# jpn-sarashina-onnx backend, including zero-shot voice cloning. Runtime needs
-# only onnxruntime + onnxruntime-genai + huggingface_hub (no torch).
-# audiokit (a core sherox dep) supplies resampling; numpy/scipy provide mel
-# filterbank computation. The ONNX artifacts auto-download on first use from
-# https://huggingface.co/Bagus/Sarashina2.2-TTS-ONNX. Re-exporting them
-# yourself from the original checkpoint (e.g. after a model update) needs the
-# tts-ja-sarashina extra (torch) plus onnx/onnxscript below — see
-# sherox/sarashina_onnx_export.py.
-tts-ja-sarashina-onnx = [
-    "onnxruntime>=1.20.0",
-    "onnxruntime-genai>=0.14.0",
-    "huggingface_hub>=0.24.0",
-]
-tts-ja-sarashina-onnx-export = [
-    "sherox[tts-ja-sarashina,tts-ja-sarashina-onnx]",
-    "onnx>=1.17.0",
-    "onnxscript>=0.7.0",
-    "onnx-ir>=0.2.0",
-]
 denoise = [
     "noisereduce>=3.0",
 ]
@@ -97,18 +70,7 @@ sherox = ["assets/*.wav"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 
-# ── uv: pull torch/torchaudio from the CPU-only wheel index ──────────────────
-# This prevents uv from resolving CUDA-enabled torch from PyPI when the
-# tts-ja-sarashina extra (sarashina2.2-tts) pulls in torch as a dependency.
-# GPU users: change the url to https://download.pytorch.org/whl/cu<version>
-[[tool.uv.index]]
-name = "pytorch-cpu"
-url = "https://download.pytorch.org/whl/cpu"
-explicit = true
-
 [tool.uv.sources]
-torch = { index = "pytorch-cpu" }
-torchaudio = { index = "pytorch-cpu" }
 # Shared audio plumbing (resampling, safe tar extraction). For local development,
 # you can override with: audiokit = { path = "../audiokit", editable = true }
 audiokit = { git = "https://github.com/bagustris/audiokit.git" }

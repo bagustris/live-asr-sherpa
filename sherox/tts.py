@@ -22,17 +22,6 @@ Usage:
     # Synthesise Japanese with Piper Plus:
     sherox.tts --text "こんにちは、今日は良い天気ですね。" --lang jpn
 
-    # Synthesise Japanese with Sarashina2.2-TTS (zero-shot voice cloning):
-    sherox.tts --text "こんにちは。" --lang jpn-sarashina \\
-        --audio-prompt prompt.wav --audio-prompt-text "プロンプトの文章。"
-
-    # Sarashina without voice cloning (default voice):
-    sherox.tts --text "こんにちは。" --lang jpn-sarashina
-
-    # Synthesise Japanese with the torch-free Sarashina ONNX runtime
-    #   (auto-downloads from huggingface.co/Bagus/Sarashina2.2-TTS-ONNX on first use):
-    sherox.tts --text "こんにちは。" --lang jpn-sarashina-onnx
-
     # Read from file:
     sherox.tts --file input.txt --lang ind
 
@@ -76,8 +65,6 @@ Supported languages (ISO 639-3 code → model):
     ind-supertonic Indonesian   — Supertonic-3 (44100 Hz, 10 speakers)
     zho           Chinese      — vits-icefall-zh-aishell3           (8 kHz, 174 speakers)
     jpn           Japanese     — piper-plus tsukuyomi               (22050 Hz, 1 speaker)
-    jpn-sarashina Japanese     — Sarashina2.2-TTS, zero-shot        (24000 Hz, voice cloning)
-    jpn-sarashina-onnx Japanese — Sarashina2.2-TTS, ONNX runtime     (24000 Hz, torch-free)
     jpn-supertonic Japanese     — Supertonic-3 (44100 Hz, 10 speakers)
     kor           Korean       — Supertonic-3 (44100 Hz, 10 speakers)
     ara           Arabic       — Supertonic-3 (44100 Hz, 10 speakers)
@@ -114,7 +101,6 @@ Language aliases (short forms also accepted):
     id / id-id                  → ind
     zh / zh-cn / zh-tw / cmn    → zho
     ja / jp / ja-jp             → jpn
-    sarashina / jpn_sarashina   → jpn-sarashina
     ko                          → kor
     ar                          → ara
     bg                          → bul
@@ -158,7 +144,6 @@ import re
 import sys
 import tarfile
 import wave
-from collections import OrderedDict
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Optional
@@ -174,7 +159,6 @@ from .utils import safe_tar_members as _safe_tar_members
 
 sf = SimpleNamespace(write=None)
 piper_runtime = None
-sarashina_runtime = None
 
 _console = Console()
 _err_console = Console(stderr=True)
@@ -288,17 +272,6 @@ _TTS_MODELS: dict[str, dict] = {
         "language_id": 0,
         "sample_rate": 22050,
         "description": "Japanese (Piper Plus Tsukuyomi)",
-    },
-    "jpn-sarashina": {
-        "backend": "sarashina",
-        "model_id": "sbintuitions/Sarashina-TTS",
-        "sample_rate": 24000,
-        "description": "Japanese (Sarashina2.2-TTS, zero-shot voice cloning)",
-    },
-    "jpn-sarashina-onnx": {
-        "backend": "sarashina_onnx",
-        "sample_rate": 24000,
-        "description": "Japanese (Sarashina2.2-TTS, ONNX runtime, torch-free)",
     },
     "eng-kitten": {
         "backend": "kitten",
@@ -487,12 +460,6 @@ _LANGUAGE_ALIASES = {
     "ja": "jpn",
     "jp": "jpn",
     "ja-jp": "jpn",
-    # Japanese Sarashina (zero-shot)
-    "sarashina": "jpn-sarashina",
-    "jpn_sarashina": "jpn-sarashina",
-    # Japanese Sarashina ONNX (torch-free runtime)
-    "sarashina-onnx": "jpn-sarashina-onnx",
-    "jpn_sarashina_onnx": "jpn-sarashina-onnx",
     # Japanese Supertonic-3
     "jpn-supertonic": "jpn-supertonic",
     # Arabic
@@ -645,43 +612,6 @@ def _require_piper_plus():
     return piper_runtime
 
 
-def _require_sarashina():
-    global sarashina_runtime
-    if sarashina_runtime is not None:
-        return sarashina_runtime
-    try:
-        from sarashina_tts.generate.generate import SarashinaTTSGenerator  # noqa: PLC0415
-    except ImportError as exc:  # pragma: no cover - depends on environment
-        _error(
-            "sarashina-tts is required for Sarashina Japanese TTS. "
-            "Install it with: pip install 'sherox[tts-ja-sarashina]' or "
-            "git clone https://github.com/sbintuitions/sarashina2.2-tts && pip install -e sarashina2.2-tts"
-        )
-        raise AssertionError("unreachable") from exc
-    sarashina_runtime = SimpleNamespace(SarashinaTTSGenerator=SarashinaTTSGenerator)
-    return sarashina_runtime
-
-
-def _quantize_sarashina_llm(generator) -> None:
-    """Dynamically int8-quantize the Sarashina LLM's linear layers for faster CPU decoding.
-
-    torch's dynamic quantization only has CPU kernels (fbgemm/qnnpack) — it's
-    unavailable on CUDA, so this is only applied on the CPU-only code path.
-    Benchmarked ~4.5x faster LLM decode on CPU with no observed change in
-    generated semantic tokens.
-    """
-    import torch  # noqa: PLC0415
-
-    text_generator = getattr(generator, "text_generator", None)
-    llm = getattr(text_generator, "model", None)
-    if llm is None:
-        return
-    quantized = torch.ao.quantization.quantize_dynamic(
-        llm.float(), {torch.nn.Linear}, dtype=torch.qint8
-    )
-    text_generator.model = quantized
-
-
 def _validate_runtime_args(args: argparse.Namespace) -> None:
     if args.speaker_id < 0:
         _error(f"--speaker-id must be >= 0, got {args.speaker_id}")
@@ -754,101 +684,10 @@ def parse_args() -> argparse.Namespace:
         default=4,
         help="CPU thread count for ONNX runtime",
     )
-    parser.add_argument(
-        "--audio-prompt",
-        default=None,
-        metavar="PATH",
-        help="Reference WAV for zero-shot voice cloning (jpn-sarashina backend only)",
-    )
-    parser.add_argument(
-        "--audio-prompt-text",
-        default="",
-        metavar="TEXT",
-        help="Transcript of the --audio-prompt reference audio",
-    )
-    parser.add_argument(
-        "--watermark",
-        action="store_true",
-        help="Embed an inaudible SilentCipher watermark (jpn-sarashina backend only). "
-        "Off by default: adds ~15s to model load and ~40%% to each synthesis call.",
-    )
-    parser.add_argument(
-        "--seed",
-        type=int,
-        default=0,
-        metavar="N",
-        help="LLM sampling seed (jpn-sarashina-onnx backend only). The LLM samples "
-        "semantic tokens, so different seeds can produce different content for the "
-        "same text; try a different seed if a specific phrase comes out wrong.",
-    )
     return parser.parse_args()
 
 
 # ── Model download helpers ────────────────────────────────────────────────────
-
-# Pre-exported ONNX artifacts for jpn-sarashina-onnx, published from this
-# project — see sherox/sarashina_onnx_hf.py. Downloading these means end users
-# never need torch or the original PyTorch checkpoint, including for zero-shot
-# voice cloning.
-_SARASHINA_ONNX_HF_REPO = "Bagus/Sarashina2.2-TTS-ONNX"
-_SARASHINA_ONNX_REQUIRED_FILES = (
-    "meta.json",
-    "flow_encoder.onnx",
-    "flow_estimator.onnx",
-    "flow_rand_noise.npy",
-    "hift.onnx",
-    "campplus.onnx",
-    "s3_tokenizer.onnx",
-    "s3_mel_filters.npz",
-    "default_prompt.wav",
-    "llm/model.onnx",
-    "llm/genai_config.json",
-)
-
-
-def _sarashina_onnx_model_complete(target_dir: Path) -> bool:
-    return all((target_dir / name).is_file() for name in _SARASHINA_ONNX_REQUIRED_FILES)
-
-
-def _ensure_sarashina_onnx_model(target_dir: Path) -> None:
-    """Download the pre-exported Sarashina ONNX artifacts if not already present."""
-    if _sarashina_onnx_model_complete(target_dir):
-        return
-
-    from . import model_cache  # noqa: PLC0415
-
-    if model_cache.try_link(target_dir, "tts_jpn-sarashina-onnx"):
-        if _sarashina_onnx_model_complete(target_dir):
-            return
-        # The shared cache has an incomplete/stale copy (e.g. from before
-        # campplus.onnx/s3_tokenizer.onnx were added to the model) — clear it
-        # rather than silently running with files missing.
-        model_cache.invalidate(target_dir, "tts_jpn-sarashina-onnx")
-
-    try:
-        from huggingface_hub import snapshot_download  # noqa: PLC0415
-    except ImportError as exc:  # pragma: no cover - depends on environment
-        _error(
-            "huggingface_hub is required to auto-download the Sarashina ONNX model. "
-            "Install it with: pip install 'sherox[tts-ja-sarashina-onnx]'"
-        )
-        raise AssertionError("unreachable") from exc
-
-    if target_dir.is_symlink():
-        # A dangling symlink (e.g. its cache target was removed independently)
-        # would otherwise make mkdir(exist_ok=True) raise FileExistsError,
-        # since exist_ok only special-cases a real directory, not a broken link.
-        target_dir.unlink()
-    target_dir.mkdir(parents=True, exist_ok=True)
-    _info(f"Sarashina ONNX model not found. Downloading from {_SARASHINA_ONNX_HF_REPO}…")
-    snapshot_download(_SARASHINA_ONNX_HF_REPO, local_dir=str(target_dir))
-
-    if not _sarashina_onnx_model_complete(target_dir):
-        _error(f"Expected files missing from downloaded model at {target_dir}")
-
-    model_cache.migrate(target_dir, "tts_jpn-sarashina-onnx")
-    _info(f"Model saved to '{target_dir}'.\n")
-
 
 def _ensure_model(lang: str, model_dir: Optional[Path], project_dir: Path) -> Path:
     """Return the resolved TTS model directory, downloading if needed."""
@@ -939,49 +778,6 @@ def build_tts(cfg: TtsConfig, project_dir: Path):
             backend="piper_plus",
             model=piper_plus_mod.PiperVoice.load(model_path, config_path),
             language_id=meta["language_id"],
-        )
-
-    if meta["backend"] == "sarashina":
-        sarashina_mod = _require_sarashina()
-        models_root = project_dir / "models" / "sarashina"
-        models_root.mkdir(parents=True, exist_ok=True)
-        model_dir = cfg.model_dir if cfg.model_dir else str(models_root)
-        import torch  # noqa: PLC0415
-        use_cuda = torch.cuda.is_available()
-        generator = sarashina_mod.SarashinaTTSGenerator(
-            model_dir=model_dir,
-            decoder_fp16=use_cuda,
-            watermark=cfg.watermark,
-        )
-        if not use_cuda:
-            _quantize_sarashina_llm(generator)
-        return SimpleNamespace(
-            backend="sarashina",
-            model=generator,
-            prompt_cache=OrderedDict(),
-        )
-
-    if meta["backend"] == "sarashina_onnx":
-        from .sarashina_onnx import SarashinaOnnxRuntime  # noqa: PLC0415
-
-        models_root = project_dir / "models" / "sarashina-onnx"
-        if cfg.model_dir:
-            model_dir = cfg.model_dir
-            if not (Path(model_dir) / "meta.json").is_file():
-                _error(
-                    f"ONNX artifacts not found in '{model_dir}'. Export them with:\n"
-                    "  python -m sherox.sarashina_onnx_export "
-                    "--model-dir models/sarashina --out-dir <model_dir>"
-                )
-        else:
-            _ensure_sarashina_onnx_model(models_root)
-            model_dir = str(models_root)
-        runtime = SarashinaOnnxRuntime(model_dir, num_threads=cfg.num_threads)
-        return SimpleNamespace(
-            backend="sarashina_onnx",
-            model=runtime,
-            model_dir=model_dir,
-            prompt_cache=OrderedDict(),
         )
 
     if meta["backend"] == "kitten":
@@ -1130,37 +926,6 @@ def _should_save(cfg: TtsConfig) -> bool:
     return not cfg.no_save and not _output_disables_save(cfg.output)
 
 
-# Zero-shot voice cloning re-encodes the reference wav (semantic tokens, speaker
-# embedding, mel features) on every call. Callers that reuse the same
-# --audio-prompt across many requests (e.g. tts_server with a fixed voice)
-# shouldn't pay that cost more than once per distinct file.
-_PROMPT_CACHE_MAX = 16
-
-
-def _prompt_cache_key(path: str) -> tuple:
-    st = Path(path).stat()
-    return (path, st.st_mtime_ns, st.st_size)
-
-
-def _get_cached_audio_prompt(generator, audio_prompt_path: str, cache: OrderedDict):
-    """Return (tokens, flow_embedding, feat) for *audio_prompt_path*, cached by mtime+size."""
-    key = _prompt_cache_key(audio_prompt_path)
-    cached = cache.get(key)
-    if cached is not None:
-        cache.move_to_end(key)
-        return cached
-
-    result = (
-        generator._extract_audio_prompt_tokens(audio_prompt_path),
-        generator._extract_zero_shot_embedding(audio_prompt_path),
-        generator._extract_audio_prompt_feat(audio_prompt_path),
-    )
-    cache[key] = result
-    if len(cache) > _PROMPT_CACHE_MAX:
-        cache.popitem(last=False)
-    return result
-
-
 # ── Supertonic-3 inter-sentence pausing ─────────────────────────────────────
 # supertonic-3's own pausing at sentence-ending punctuation is too weak to be
 # reliably audible (~150-200ms at best), but each individual generate() call
@@ -1234,87 +999,6 @@ def synthesise_to_file(tts, text: str, cfg: TtsConfig) -> Optional[tuple[np.ndar
             wav_target.seek(0)
             samples, sample_rate = soundfile.read(wav_target, dtype="float32")
         return np.asarray(samples, dtype=np.float32), sample_rate
-
-    if backend == "sarashina":
-        generator = tts.model
-        audio_prompt_path = cfg.audio_prompt or None
-        audio_prompt_text = cfg.audio_prompt_text or ""
-
-        if audio_prompt_path:
-            prompt_cache = getattr(tts, "prompt_cache", None)
-            if prompt_cache is None:
-                prompt_cache = OrderedDict()
-                tts.prompt_cache = prompt_cache
-            audio_prompt_tokens, flow_embedding, audio_prompt_feat = _get_cached_audio_prompt(
-                generator, audio_prompt_path, prompt_cache,
-            )
-            wavs = generator.generate(
-                [text],
-                flow_embedding=flow_embedding,
-                audio_prompt_text=audio_prompt_text,
-                audio_prompt_tokens=audio_prompt_tokens,
-                audio_prompt_feat=audio_prompt_feat,
-                audio_prompt_path=audio_prompt_path,
-            )
-        else:
-            wavs = generator.generate([text], flow_embedding=None)
-
-        # generator.generate() returns (1, T) tensors (channel dim first); flatten
-        # to the plain 1-D array every other backend in this module produces.
-        samples = wavs[0].squeeze(0).cpu().numpy().astype(np.float32)
-        sample_rate = 24000
-        if should_save:
-            soundfile = _require_soundfile()
-            soundfile.write(cfg.output, samples, samplerate=sample_rate)
-        return samples, sample_rate
-
-    if backend == "sarashina_onnx":
-        runtime = tts.model
-        audio_prompt_path = cfg.audio_prompt or None
-        audio_prompt_text = cfg.audio_prompt_text or ""
-
-        if audio_prompt_path is None:
-            # No user-supplied reference voice: fall back to the bundled default
-            # prompt rather than a zero speaker-embedding. Per the reference
-            # model's own prompting guide, generation quality depends heavily on
-            # having a real audio prompt — synthesising with no prompt at all is
-            # an unsupported configuration that produces unreliable output.
-            default_wav = Path(tts.model_dir) / "default_prompt.wav"
-            if default_wav.is_file():
-                audio_prompt_path = str(default_wav)
-                audio_prompt_text = runtime.meta.get("default_prompt_text", "")
-
-        if audio_prompt_path:
-            from .sarashina_onnx import extract_prompt_features  # noqa: PLC0415
-
-            prompt_cache = getattr(tts, "prompt_cache", None)
-            if prompt_cache is None:
-                prompt_cache = OrderedDict()
-                tts.prompt_cache = prompt_cache
-            key = _prompt_cache_key(audio_prompt_path)
-            cached = prompt_cache.get(key)
-            if cached is None:
-                cached = extract_prompt_features(audio_prompt_path, tts.model_dir)
-                prompt_cache[key] = cached
-            else:
-                prompt_cache.move_to_end(key)
-            audio_prompt_tokens, flow_embedding, prompt_feat = cached
-            samples, sample_rate = runtime.synthesise(
-                text,
-                audio_prompt_text=audio_prompt_text,
-                audio_prompt_tokens=audio_prompt_tokens,
-                flow_embedding=flow_embedding,
-                prompt_feat=prompt_feat,
-                seed=cfg.seed,
-            )
-        else:
-            samples, sample_rate = runtime.synthesise(text, seed=cfg.seed)
-
-        samples = np.asarray(samples, dtype=np.float32)
-        if should_save:
-            soundfile = _require_soundfile()
-            soundfile.write(cfg.output, samples, samplerate=sample_rate)
-        return samples, sample_rate
 
     if backend == "kitten":
         import sherpa_onnx  # noqa: PLC0415
@@ -1434,9 +1118,6 @@ def _main_impl() -> None:
     if not text:
         _error("No text provided. Use --text, --file, or pipe text via stdin.")
 
-    if args.audio_prompt and not Path(args.audio_prompt).exists():
-        _error(f"Audio prompt file not found: {args.audio_prompt}")
-
     model_dir_arg = Path(args.model_dir) if args.model_dir else None
     cfg = TtsConfig(
         model_dir=str(model_dir_arg) if model_dir_arg else "",
@@ -1447,10 +1128,6 @@ def _main_impl() -> None:
         play=args.play,
         no_save=args.no_save or _output_disables_save(args.output),
         num_threads=args.threads,
-        audio_prompt=args.audio_prompt or "",
-        audio_prompt_text=args.audio_prompt_text or "",
-        watermark=args.watermark,
-        seed=args.seed,
     )
 
     _info(f"Language: {cfg.language}  |  speed: {cfg.speed}  |  speaker: {cfg.speaker_id}")

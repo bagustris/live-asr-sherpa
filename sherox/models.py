@@ -161,7 +161,6 @@ _TTS_MODELS: list[tuple[str, str, str, str, str]] = [
     ("ind (vits-piper-id_ID-news_tts-medium)", "id", "offline", "~50 MB", "Piper VITS Indonesian"),
     ("zho (vits-icefall-zh-aishell3)", "zh", "offline", "~50 MB", "VITS Mandarin Chinese (AiShell3, 174 speakers)"),
     ("jpn (vits-piper-ja_JA-nakamura-medium)", "ja", "offline", "~50 MB", "Piper VITS Japanese (Nakamura)"),
-    ("jpn-sarashina (zero-shot voice cloning)", "ja", "offline", "~1.5 GB", "Sarashina TTS zero-shot cloning"),
     (
         "supertonic-3 (shared model)",
         "ko, ar, bg, cs, da, el, et, fi, hi, hr, hu, it, lt, lv, nl, "
