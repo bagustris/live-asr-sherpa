@@ -162,7 +162,7 @@ def test_segment_has_expected_fields():
 # ── TtsConfig ─────────────────────────────────────────────────────────────────
 
 def test_tts_default_language():
-    assert TtsConfig().language == "ind"
+    assert TtsConfig().language == "eng"
 
 
 def test_tts_default_speaker_id():

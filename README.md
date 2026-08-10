@@ -236,7 +236,8 @@ See [ASR_MODEL.md](ASR_MODEL.md) for the complete supported ASR model catalog, g
 ```
 --text TEXT             Text to synthesise
 --file PATH             Read text from a file
---lang LANG             ISO 639-3 language code (default: ind)
+--lang LANG             ISO 639-3 language code (default: eng)
+                        eng = English (Sherpa-ONNX Piper VITS)
                         ind = Indonesian (Sherpa-ONNX Piper VITS)
                         jpn = Japanese (Piper Plus Tsukuyomi)
 --model-dir PATH        Custom Sherpa-ONNX TTS model directory
@@ -252,14 +253,14 @@ See [ASR_MODEL.md](ASR_MODEL.md) for the complete supported ASR model catalog, g
 Examples:
 
 ```bash
-# Default Indonesian model via sherpa-onnx
-sherox.tts --text "Halo dunia"
+# Default English model via sherpa-onnx
+sherox.tts --text "Hello world"
 
 # Play without saving a WAV file
-sherox.tts --text "Halo dunia" --play --no-save
+sherox.tts --text "Hello world" --play --no-save
 
 # Equivalent playback-only form
-sherox.tts --text "Halo dunia" --play --output none
+sherox.tts --text "Hello world" --play --output none
 
 # Japanese via Piper Plus Tsukuyomi
 sherox.tts --text "こんにちは、今日は良い天気ですね。" --lang jpn

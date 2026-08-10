@@ -45,7 +45,7 @@ class TestParseArgs:
     def test_defaults(self):
         with patch("sys.argv", ["sherox.tts"]):
             args = tts_module.parse_args()
-        assert args.lang == "ind"
+        assert args.lang == "eng"
         assert args.model_dir is None
         assert args.speaker_id == 0
         assert args.speed == 1.0

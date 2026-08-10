@@ -147,7 +147,7 @@ class TtsConfig:
     # ISO 639-3 language code.
     # Supported: "eng", "deu", "fra", "spa", "ind", "zho", "jpn".
     # Short aliases are also accepted (e.g., "en", "de", "zh", "ja").
-    language: str = "ind"
+    language: str = "eng"
 
     speaker_id: int = 0
     speed: float = 1.0

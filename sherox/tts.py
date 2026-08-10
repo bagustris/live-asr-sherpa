@@ -1,11 +1,11 @@
 """Text-to-speech synthesis — entry point.
 
 Usage:
-    # Synthesise from inline text (Indonesian, default):
-    sherox.tts --text "Selamat pagi, apa kabar?"
+    # Synthesise from inline text (English, default):
+    sherox.tts --text "Hello, how are you today?"
 
-    # Synthesise English:
-    sherox.tts --text "Hello, how are you today?" --lang eng
+    # Synthesise Indonesian:
+    sherox.tts --text "Selamat pagi, apa kabar?" --lang ind
 
     # Synthesise Chinese (Mandarin, 8 kHz VITS, plain Chinese text):
     sherox.tts --text "你好，今天天气不错。" --lang zho
@@ -635,7 +635,7 @@ def parse_args() -> argparse.Namespace:
 
     parser.add_argument(
         "--lang",
-        default="ind",
+        default="eng",
         metavar="LANG",
         help=f"ISO 639-3 language code. Supported: {_SUPPORTED_LANGS}",
     )
